@@ -119,6 +119,16 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
         // premiere date. It must never bypass source preparation and fall back
         // to Jellyfin's non-playable .strm placeholder on ordinary Play.
         var homeItem = _libraryManager.GetItemById(itemId);
+        // Real local media must use Jellyfin's native source handling. The
+        // persisted dynamic-item fallback below cannot resolve an MP4/MKV and
+        // previously returned an empty response for every such native file.
+        if (homeItem?.Path is string localPath
+            && !localPath.EndsWith(".strm", StringComparison.OrdinalIgnoreCase)
+            && File.Exists(localPath))
+        {
+            await next();
+            return;
+        }
         if (Config.StreamProvider == StreamProvider.AIOStreams
             && homeItem?.Path?.StartsWith("/catalogue/", StringComparison.Ordinal) == true
             && homeItem.Path.EndsWith(".strm", StringComparison.OrdinalIgnoreCase))

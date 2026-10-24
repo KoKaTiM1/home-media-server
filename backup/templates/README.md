@@ -22,6 +22,7 @@ full disk image or a complete application-data backup.
   downloads move into the existing movies/shows storage and are preferred on
   the original title page; managed retention removes them after viewing or age.
 - Four catalogue syncs per day, mount-aware startup and enabled background timers.
+- OMV Diagnostics > Media workers: live schedules, health, current check and queue counters.
 - Persistent video validation and failed-title retry queue; only validated sources
   or saved copies appear in the online watch catalogue. Backoff reduces repeated
   requests; checks pause between probes during playback and resume after reboot.
@@ -50,7 +51,7 @@ The authoritative current catalogue behavior is described in
 stack README is retained as a historical setup document; some early manual-only
 instructions and library names there predate the integrated catalogue.
 
-Jellyfin is pinned to 10.11.11; the modified Dynamic Library is 1.4.0.9.
+Jellyfin is pinned to 10.11.11; the modified Dynamic Library is 1.4.0.10.
 Upstream Dynamic Library source retains its MIT license. Wizdom is included as
 the original provider package; its licensing remains with its authors.
 

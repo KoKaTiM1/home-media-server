@@ -105,6 +105,14 @@ class CatalogueTests(unittest.TestCase):
                 a.import_item('movie',meta,'Recent Releases')
                 self.assertEqual(file.read_text(),'existing-stream')
 
+    def test_aac_main_opt_in_is_limited_to_the_requested_movie(self):
+        with tempfile.TemporaryDirectory() as directory,patch.object(a,'DATA',Path(directory)):
+            key='movie:tt16155872'
+            self.assertFalse(a.aac_main_test(key))
+            (a.DATA/'aac-main-tv-test.json').write_text('{"keys":["movie:tt16155872"]}')
+            self.assertTrue(a.aac_main_test(key))
+            self.assertFalse(a.aac_main_test('movie:tt1234567'))
+
     def test_trailer_links_only_accept_youtube_identities_and_deduplicate(self):
         meta={'trailerStreams':[{'ytId':'FVI84Dfx2-I'},{'ytId':'invalid'}],
               'trailers':[{'source':'FVI84Dfx2-I'},

@@ -667,6 +667,12 @@ def probe(selected,key,deadline=None):
     return json.loads(result.stdout)
 
 
+def aac_main_test(key):
+    # Only the explicit owner-requested title bypasses AAC Main filtering.
+    try:return key in json.loads((DATA/'aac-main-tv-test.json').read_text()).get('keys',[])
+    except (OSError,ValueError,TypeError):return False
+
+
 def prepared(key,background=False):
     with LOCKS_LOCK: lock=LOCKS.setdefault(key,threading.Lock())
     with lock:
@@ -690,7 +696,7 @@ def prepared(key,background=False):
                 if video.get('codec_name') not in ('h264','mpeg4','vp8','vp9'):
                     raise RuntimeError('Source requires unsupported video decoding')
                 audio=[t for t in info.get('streams',[]) if t.get('codec_type')=='audio']
-                if audio and all(t.get('codec_name')=='aac' and t.get('profile')=='Main' for t in audio):
+                if audio and all(t.get('codec_name')=='aac' and t.get('profile')=='Main' for t in audio) and not aac_main_test(key):
                     raise RuntimeError('AAC Main audio is incompatible with this TV')
                 if background:
                     remaining=max(.1,deadline-time.monotonic())
@@ -745,7 +751,7 @@ def prepared(key,background=False):
             'languages':sorted(languages),'checked_at':time.time()}
         with db() as conn:
             conn.execute('INSERT OR REPLACE INTO playback VALUES (?,?,?)',(key,json.dumps(output),time.time()))
-        F.validation_result(key,True,proof={'version':2,'checked_at':output['checked_at'],'source_hash':selected['hash'],'filename':selected['filename'],'Container':output['Container']})
+        F.validation_result(key,True,proof={'version':2,'checked_at':output['checked_at'],'source_hash':selected['hash'],'filename':selected['filename'],'Container':output['Container'],'aac_main_test':aac_main_test(key) and any(t.get('codec_name')=='aac' and t.get('profile')=='Main' for t in info.get('streams',[]))})
         kind,imdb,*_=key.split(':')
         with db() as conn: row=conn.execute('SELECT meta FROM items WHERE key=?',(kind+':'+imdb,)).fetchone()
         if row:

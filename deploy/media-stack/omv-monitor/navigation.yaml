@@ -1,0 +1,11 @@
+version: '1.0'
+type: navigation-item
+data:
+  path: diagnostics.media-workers
+  position: 35
+  text: Media workers
+  icon: cogs
+  url: /diagnostics/media-workers
+  permissions:
+    role:
+    - admin

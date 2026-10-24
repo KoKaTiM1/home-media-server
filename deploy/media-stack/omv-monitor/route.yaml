@@ -1,0 +1,6 @@
+version: '1.0'
+type: route
+data:
+  url: /diagnostics/media-workers
+  title: Media workers
+  component: omv-home-media-workers-page

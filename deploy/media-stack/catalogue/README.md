@@ -310,3 +310,24 @@ longer describe the ready-only live library.
 One in five probes is reserved for due failed entries, preventing retries from
 being starved by a large new-title backlog. Remaining probes prioritize searched
 and previously opened titles, then recent discovery pages and popular titles.
+
+## OMV worker page and first-pass breadth (1.4.0.10)
+
+OMV Diagnostics > Media workers has auto-refreshing schedules/health and queue
+counter tabs. Most initial probes now check distinct movies and first show
+episodes; one in five slots covers extra episodes and one in five reserves due
+retries. Previously extra episodes could take priority over most new titles,
+so a high passed-source count could still mean only a few visible shows.
+
+An owner-requested 60-second AAC Main test is stored separately under local
+Movies/Tests/AAC Main TV test. It uses Big Buck Bunny H264 video with AAC Main
+stereo audio. Search `AAC Main TV test` in Jellyfin. It is not a full downloaded
+film or a torrent-readiness claim. Check TV picture/sound and whether playback
+is Direct Play before widening AAC Main acceptance. Canelones' torrent stalled
+in preparation; it was not falsely marked ready. The test override allowlist
+is empty, so the general AAC Main source policy remains unchanged.
+
+Dynamic Library 1.4.0.10 lets actual existing local video files use Jellyfin's
+native PlaybackInfo handler. Upstream's persisted-item branch previously
+returned an empty response even for ordinary local MP4/MKV files. Catalogue
+.strm files retain their verified bridge source handling and explicit errors.

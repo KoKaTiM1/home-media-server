@@ -26,6 +26,14 @@ class FeatureTests(unittest.TestCase):
         with a.F.db() as conn:
             conn.executemany("INSERT INTO validation(key,state,checked,proof) VALUES (?,'verified',?,?)",((kind+':'+imdb,time.time(),json.dumps({'version':2})) for kind,imdb in rows))
 
+    def test_first_pass_prefers_new_titles_over_more_episodes(self):
+        self.make_search_index()
+        movie='movie:tt1234567';episode='series:tt2345678:7:18'
+        a.F.enqueue(movie,20);a.F.enqueue(episode,100)
+        with patch.object(a.F,'jf',return_value=[]),patch.object(a,'prepared',return_value={}) as prepare,patch('features.time.sleep'):
+            a.F.warm_availability(1)
+            prepare.assert_called_once_with(movie,background=True)
+
     def test_due_failure_gets_a_retry_ahead_of_large_pending_backlog(self):
         self.make_search_index()
         failed='movie:tt1234567';new='movie:tt2345678'
