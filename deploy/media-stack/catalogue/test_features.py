@@ -5,6 +5,7 @@ import sqlite3
 import tempfile
 import time
 import unittest
+from urllib.parse import parse_qs, urlsplit
 from unittest.mock import patch
 
 spec=importlib.util.spec_from_file_location('feature_test_app',Path(__file__).with_name('app.py'))
@@ -86,7 +87,7 @@ class FeatureTests(unittest.TestCase):
         self.assertEqual(a.poster_status('movie','tt0145487'),'HE')
         preview={'id':'tt0145487','type':'movie','poster':'https://example.org/poster.jpg'}
         result=a.F.decorate_posters([preview])
-        self.assertTrue(result[0]['poster'].endswith('?badge=HE'))
+        self.assertEqual(parse_qs(urlsplit(result[0]['poster']).query)['badge'],['HE'])
         self.assertEqual(a.poster_status('movie','tt0316654'),'?')
 
     def test_save_selects_only_requested_torrent_file(self):

@@ -115,6 +115,25 @@ public class PlaybackInfoFilter : IAsyncActionFilter, IOrderedFilter
             }
         }
 
+        // A browse preview can have only a production year, with no exact
+        // premiere date. It must never bypass source preparation and fall back
+        // to Jellyfin's non-playable .strm placeholder on ordinary Play.
+        var homeItem = _libraryManager.GetItemById(itemId);
+        if (Config.StreamProvider == StreamProvider.AIOStreams
+            && homeItem?.Path?.StartsWith("/catalogue/", StringComparison.Ordinal) == true
+            && homeItem.Path.EndsWith(".strm", StringComparison.OrdinalIgnoreCase))
+        {
+            var homeResponse = await HandleAIOStreamsPlaybackForPersistedItemAsync(homeItem,
+                selectedMediaSourceId, context.HttpContext.RequestAborted);
+            context.Result = new OkObjectResult(homeResponse ?? new PlaybackInfoResponse
+            {
+                MediaSources = Array.Empty<MediaSourceInfo>(),
+                ErrorCode = PlaybackErrorCode.NoCompatibleStream,
+                PlaySessionId = Guid.NewGuid().ToString("N")
+            });
+            return;
+        }
+
         // Check if this is a dynamic item in cache
         var cachedItem = _itemCache.GetItem(itemId);
 

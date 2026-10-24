@@ -46,7 +46,7 @@ The authoritative current catalogue behavior is described in
 stack README is retained as a historical setup document; some early manual-only
 instructions and library names there predate the integrated catalogue.
 
-Jellyfin is pinned to 10.11.11; the modified Dynamic Library is 1.4.0.5.
+Jellyfin is pinned to 10.11.11; the modified Dynamic Library is 1.4.0.6.
 Upstream Dynamic Library source retains its MIT license. Wizdom is included as
 the original provider package; its licensing remains with its authors.
 
@@ -62,8 +62,14 @@ python3 /opt/media-stack/backup/export_project.py --verify-only /root/home-media
 Commit the reviewed snapshot using the repository's dedicated SSH deploy key.
 The private key stays outside this repository. `<READ_ONLY_COLLABORATOR>` can remain read-only;
 repository owner `<GITHUB_OWNER>` authorizes the server deploy key. Pushes must preserve
-remote history and never force-replace unrelated changes. No unattended push
-schedule is enabled merely by creating this backup.
+remote history and never force-replace unrelated changes. For the configured checkout, update and verify the remote backup with:
+
+```sh
+python3 /opt/media-stack/backup/push_project.py
+```
+
+This stops if the checkout is dirty, the remote differs, or the remote history
+cannot be fast-forwarded. No unattended push schedule is enabled.
 
 For a complete recovery, maintain a separate encrypted off-server backup of
 credentials and application data. Never commit that unencrypted data here.

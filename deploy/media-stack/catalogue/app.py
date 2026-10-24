@@ -40,7 +40,7 @@ PROVIDER = 'https://torrentio.strem.fun'
 VIDEO = {'.mkv', '.mp4', '.webm', '.m4v', '.avi', '.ts'}
 LOCKS = {}
 LOCKS_LOCK = threading.Lock()
-POSTER_STYLE = '2'
+POSTER_STYLE = '3'
 STREAM_LIMIT = threading.Semaphore(1)
 POSTER_LIMIT = threading.Semaphore(3)
 POSTER_LOCKS = [threading.Lock() for _ in range(64)]
@@ -237,20 +237,35 @@ def refresh_subtitle_badges(limit=25):
 def make_poster(folder,meta,kind,imdb):
     from PIL import Image,ImageDraw,ImageFont
     original=folder/'poster-original.jpg'
-    if not original.exists() and meta.get('poster'):
-        url=meta['poster']
-        if not url.startswith('https://'): return
+    updated_original=False
+    missing=folder/'poster-unavailable-at'
+    retry=not missing.exists() or time.time()-missing.stat().st_mtime>6*3600
+    if (not original.exists() or missing.exists()) and retry:
+        url=meta.get('poster','')
         try:
-            content=fetch(url,raw=True)
+            if not url.startswith('https://'):raise ValueError('No artwork URL')
+            content=fetch(url,raw=True,timeout=3)
             image=Image.open(io.BytesIO(content)).convert('RGB')
             image.thumbnail((360,540))
             image.save(original,quality=82)
+            missing.unlink(missing_ok=True)
+            updated_original=True
         except Exception:
-            log('Artwork unavailable for '+imdb)
-            return
+            # A provider's missing image must not turn a valid catalogue card
+            # into a 404 storm. Retry generated placeholders after six hours.
+            missing.write_text('Artwork temporarily unavailable')
+            if not original.exists():
+                image=Image.new('RGB',(360,540),'#20252b')
+                draw=ImageDraw.Draw(image)
+                font=ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',18)
+                import textwrap
+                label=meta.get('name') or imdb
+                for line,text in enumerate(textwrap.wrap(label,width=25)[:8]):
+                    draw.text((18,150+line*29),text,font=font,fill='white')
+                image.save(original,quality=82)
     if not original.exists(): return
     badge=poster_status(kind,imdb)
-    if (folder/'badge.txt').exists() and (folder/'badge.txt').read_text()==badge and (folder/'badge-style.txt').exists() and (folder/'badge-style.txt').read_text()==POSTER_STYLE: return
+    if (folder/'badge.txt').exists() and (folder/'badge.txt').read_text()==badge and (folder/'badge-style.txt').exists() and (folder/'badge-style.txt').read_text()==POSTER_STYLE and not updated_original: return
     image=Image.open(original).convert('RGB')
     draw=ImageDraw.Draw(image)
     font=ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',23)

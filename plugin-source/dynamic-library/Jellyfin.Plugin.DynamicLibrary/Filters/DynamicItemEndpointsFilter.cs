@@ -95,7 +95,8 @@ public class DynamicItemEndpointsFilter : IAsyncActionFilter, IOrderedFilter
             {
                 Items = Array.Empty<BaseItemDto>()
             }),
-            "GetSpecialFeatures" or "GetLocalTrailers" or "GetIntros" => new OkObjectResult(Array.Empty<BaseItemDto>()),
+            "GetIntros" => new OkObjectResult(new QueryResult<BaseItemDto> { Items = Array.Empty<BaseItemDto>(), TotalRecordCount = 0 }),
+            "GetSpecialFeatures" or "GetLocalTrailers" => new OkObjectResult(Array.Empty<BaseItemDto>()),
             _ => new OkObjectResult(new { })
         };
     }

@@ -201,9 +201,14 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
                 {
                     logger.LogWarning("Home catalogue source unavailable ({Reason})", error.GetType().Name);
                     playback.MediaSources = Array.Empty<MediaSourceInfo>();
+                    playback.ErrorCode = MediaBrowser.Model.Dlna.PlaybackErrorCode.NoCompatibleStream;
                     break;
                 }
             }
+            // Android TV 0.19.10 treats a successful empty response as a stream
+            // and dereferences its null MediaSource. Use the documented error.
+            if (playback.MediaSources.Count == 0 && playback.ErrorCode is null)
+                playback.ErrorCode = MediaBrowser.Model.Dlna.PlaybackErrorCode.NoCompatibleStream;
         }
         await next();
     }

@@ -12,6 +12,17 @@ spec.loader.exec_module(a)
 
 
 class CatalogueTests(unittest.TestCase):
+    @unittest.skipUnless(importlib.util.find_spec('PIL'), 'Pillow is installed in the bridge image')
+    def test_missing_artwork_uses_badged_placeholder_and_suppresses_retries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder=Path(directory)
+            with patch.object(a,'fetch',side_effect=OSError('Provider image missing')) as fetch, patch.object(a,'poster_status',return_value='HE'):
+                for _ in range(2):a.make_poster(folder,{'name':'Example movie','poster':'https://example.org/missing.jpg'},'movie','tt1234567')
+                self.assertEqual(fetch.call_count,1)
+                self.assertTrue((folder/'poster.jpg').is_file())
+                self.assertEqual((folder/'badge.txt').read_text(),'HE')
+
+
     def test_dead_source_is_hidden_after_preparation_failure(self):
         with tempfile.TemporaryDirectory() as directory,patch.object(a,'DATA',Path(directory)), \
              patch.object(a,'resolve',side_effect=RuntimeError('No working source')):

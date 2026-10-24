@@ -15,6 +15,25 @@ public sealed class HomeYearSortFilter(ILibraryManager library) : IAsyncResource
     {
         var request = context.HttpContext.Request;
         var query = request.Query;
+        // Clients can retain collection IDs from before a supported library
+        // rename. Translate only our two known IDs, before model binding.
+        if (Guid.TryParse(query["parentId"], out var legacyParent))
+        {
+            var replacement = legacyParent.ToString("N") switch
+            {
+                "<LEGACY_MOVIES_LIBRARY_ID>" => "<ONLINE_MOVIES_LIBRARY_ID>",
+                "<LEGACY_SHOWS_LIBRARY_ID>" => "<ONLINE_SHOWS_LIBRARY_ID>",
+                _ => null
+            };
+            if (replacement is not null && library.GetItemById(Guid.Parse(replacement)) is CollectionFolder current
+                && current.PhysicalLocations.Any(p => p is "/catalogue/movies" or "/catalogue/shows"))
+            {
+                var rewritten = query.ToDictionary(p => p.Key, p => p.Value, StringComparer.OrdinalIgnoreCase);
+                rewritten["parentId"] = replacement;
+                request.Query = new QueryCollection(rewritten);
+                query = request.Query;
+            }
+        }
         if (HttpMethods.IsGet(request.Method)
             && context.ActionDescriptor is ControllerActionDescriptor action
             && (action.ActionName == "GetItems" || action.ActionName == "GetItemsByUserIdLegacy")

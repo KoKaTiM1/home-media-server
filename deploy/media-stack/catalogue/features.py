@@ -21,6 +21,8 @@ class Features:
     def __init__(self, runtime):
         self.g=runtime
         self.download_lock=threading.Lock()
+        self.count_lock=threading.Lock()
+        self.count_cache={}
 
     def db(self):
         conn=self.g['db']()
@@ -65,7 +67,7 @@ class Features:
             kind=meta.get('type');imdb=meta.get('id','')
             if kind in ('movie','series') and re.fullmatch(r'tt\d{5,12}',imdb):
                 badge=badges[(kind,imdb)]
-                meta['poster']=f"{self.g['BASE']}/poster/{kind}/{imdb}.jpg?style={self.g.get('POSTER_STYLE','2')}&badge={badge}"
+                meta['poster']=f"{self.g['BASE']}/poster/{kind}/{imdb}.jpg?style={self.g.get('POSTER_STYLE','3')}&badge={badge}"
         return metas
 
     def source_state(self,key):
@@ -129,7 +131,16 @@ class Features:
                     params.extend(unavailable)
                 indexes={row[1] for row in conn.execute('PRAGMA index_list(titles)')}
                 count_source='titles t INDEXED BY browse_titles' if 'browse_titles' in indexes else 'titles t'
-                total=conn.execute('SELECT COUNT(*) FROM '+count_source+' WHERE '+where,params).fetchone()[0]
+                identity=index.stat()
+                count_key=(kind,tuple(years_filter),identity.st_ino,identity.st_mtime_ns,
+                    hashlib.sha256(json.dumps(sorted(unavailable)).encode()).digest())
+                with self.count_lock:
+                    entry=self.count_cache.get(count_key)
+                    if entry and entry[0]>time.monotonic():total=entry[1]
+                    else:
+                        total=conn.execute('SELECT COUNT(*) FROM '+count_source+' WHERE '+where,params).fetchone()[0]
+                        if len(self.count_cache)>=64:self.count_cache.clear()
+                        self.count_cache[count_key]=(time.monotonic()+60,total)
                 columns={r[1] for r in conn.execute('PRAGMA table_info(titles)')}
                 sorts={'votes':'t.votes','popularity':'t.votes','sortname':'t.name COLLATE NOCASE','name':'t.name COLLATE NOCASE',
                     'communityrating':'t.rating','rating':'t.rating','runtime':'t.runtime','premieredate':'t.released',
@@ -139,6 +150,8 @@ class Features:
                 if field not in columns:expression='NULL'
                 order='ASC' if str(sort_order).lower() in ('ascending','asc') else 'DESC'
                 preferred={'t.votes':'browse_titles','t.rating':'browse_score','t.name COLLATE NOCASE':'browse_name'}.get(expression)
+                covering={'t.votes':'browse_titles','t.rating':'browse_score_cover','t.name COLLATE NOCASE':'browse_name_cover','t.runtime':'browse_runtime_cover'}.get(expression)
+                if covering in indexes:preferred=covering
                 rank_source='titles t'+(' INDEXED BY '+preferred if preferred in indexes else '')
                 ordering=f't.year DESC,{expression} {order} NULLS LAST,t.imdb'
                 # Rank compact index entries first; fetch full rows/aliases only
@@ -240,7 +253,7 @@ class Features:
 
     def ensure_sort_index(self,target):
         with closing(sqlite3.connect('file:'+str(target)+'?mode=ro',uri=True)) as conn:
-            if {'rating','runtime','released','added_at','official_rating','critic_rating'}.issubset({r[1] for r in conn.execute('PRAGMA table_info(titles)')}):return
+            if {'rating','runtime','released','added_at','official_rating','critic_rating'}.issubset({r[1] for r in conn.execute('PRAGMA table_info(titles)')}):return self.ensure_browse_indexes(target)
         staging=target.with_name('catalogue.sort-building.sqlite');shutil.copyfile(target,staging)
         with closing(sqlite3.connect(staging)) as conn:
             conn.execute('PRAGMA journal_mode=OFF');conn.execute('PRAGMA cache_size=-16384')
@@ -267,7 +280,9 @@ class Features:
             conn.execute('CREATE INDEX IF NOT EXISTS browse_score ON titles(kind,year DESC,rating DESC,imdb)')
             conn.execute('CREATE INDEX IF NOT EXISTS browse_name ON titles(kind,year DESC,name COLLATE NOCASE,imdb)')
             conn.commit()
-        staging.replace(target);self.log('IMDb score and runtime sorting data ready')
+        staging.replace(target)
+        self.ensure_browse_indexes(target)
+        self.log('IMDb score and runtime sorting data ready')
 
     def ensure_search_index(self,target):
         with closing(sqlite3.connect('file:'+str(target)+'?mode=ro',uri=True)) as conn:
@@ -280,6 +295,20 @@ class Features:
             conn.execute("INSERT INTO title_fts(title_fts) VALUES ('rebuild')");conn.commit()
         staging.replace(target)
         self.log('Full-text title search index ready')
+
+    def ensure_browse_indexes(self,target):
+        expected={'browse_name_cover','browse_score_cover','browse_runtime_cover'}
+        with closing(sqlite3.connect('file:'+str(target)+'?mode=ro',uri=True)) as conn:
+            if expected.issubset({row[1] for row in conn.execute('PRAGMA index_list(titles)')}):return
+        staging=target.with_name('catalogue.covering-building.sqlite')
+        shutil.copyfile(target,staging)
+        with closing(sqlite3.connect(staging)) as conn:
+            conn.execute('PRAGMA journal_mode=OFF');conn.execute('PRAGMA cache_size=-16384')
+            for name,expression in [('name','name COLLATE NOCASE'),('score','rating DESC'),('runtime','runtime DESC')]:
+                conn.execute(f'CREATE INDEX IF NOT EXISTS browse_{name}_cover ON titles(kind,year DESC,{expression},imdb,votes)')
+            conn.commit();conn.execute('PRAGMA optimize')
+        staging.replace(target)
+        self.log('Covering catalogue sort indexes ready; reader files replaced atomically')
 
     def hebrew_search(self,kind,query):
         key='hebrew-search-v2:'+kind+':'+query.strip()

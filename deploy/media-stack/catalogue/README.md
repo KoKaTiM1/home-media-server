@@ -1,7 +1,7 @@
 # Home media catalogue
 
 Jellyfin 10.11.11 is pinned in /opt/media-stack/compose.yaml. The local Dynamic
-Library extension is version 1.4.0.5; WizdomSubs Downloader is version 0.2.0.0.
+Library extension is version 1.4.0.6; WizdomSubs Downloader is version 0.2.0.0.
 Do not automatically update these plugins/Jellyfin without integration testing.
 
 ## Watching and browsing
@@ -190,3 +190,22 @@ does not fetch complete title metadata or query subtitle providers per image.
 The hourly badge job prioritizes recently browsed titles within its 200 daily
 lookup budget. Image tags incorporate poster URL and current badge, invalidating
 previously unbadged previews and changing when cached availability changes.
+
+## Android TV recovery fixes (1.4.0.6)
+
+Failed/empty PlaybackInfo responses now carry NoCompatibleStream. The Android
+TV 0.19.10 client checks this error before creating StreamInfo; without it the
+client dereferences a null MediaSource and crashes. Intros returns QueryResult
+instead of an array. The two library IDs retained by clients before the Hebrew
+rename translate to the current collection IDs before model binding.
+
+Covering name/score/runtime indexes avoid table seeks while filtering the current
+year; catalogue counts cache for60 seconds with index/source-state invalidation.
+Missing artwork returns a generated title/badge JPEG and caches failures for six
+hours rather than retrying an absent image for every card.
+
+Ordinary Play for persisted catalogue movies/episodes uses the bridge even when
+a cached browse preview lacks a full premiere date. It cannot fall through to
+the native .strm placeholder. Recovery checks cover both empty listings and
+listed sources with failed preparation, verifying NoCompatibleStream; the saved
+Big Buck Bunny movie returns real prepared metadata and seekable HTTP206 bytes.
