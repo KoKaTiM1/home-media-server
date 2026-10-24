@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh compatible torrent source listings without downloading videos
+Requires=media-stack.service
+After=media-stack.service
+RequiresMountsFor=/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker exec catalogue-bridge python /app/app.py availability
+TimeoutStartSec=20min
+Nice=15

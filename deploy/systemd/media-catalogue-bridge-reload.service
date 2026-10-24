@@ -1,0 +1,8 @@
+[Unit]
+Description=Reload catalogue bridge with updated subtitle credentials
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/media-stack
+ExecStart=/usr/bin/docker compose restart catalogue-bridge

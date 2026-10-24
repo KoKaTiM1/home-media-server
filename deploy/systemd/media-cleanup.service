@@ -1,0 +1,14 @@
+[Unit]
+Description=Apply watched and age retention to completed media downloads
+After=media-stack.service
+RequiresMountsFor=/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/media-stack/cleanup.py --apply
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>/downloads/complete /srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>/appdata /run
+

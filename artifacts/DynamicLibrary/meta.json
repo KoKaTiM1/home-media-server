@@ -1,0 +1,15 @@
+{
+  "category": "",
+  "changelog": "",
+  "description": "Browse and stream movies, TV shows, and anime from TMDB and TVDB without local media files. Supports direct URL streaming and watch progress tracking.",
+  "guid": "bc6b8d94-3800-4ab9-8f61-cf26ca1ab98c",
+  "name": "Dynamic Library",
+  "overview": "",
+  "owner": "",
+  "targetAbi": "10.11.11.0",
+  "timestamp": "0001-01-01T00:00:00.0000000Z",
+  "version": "1.4.0.5",
+  "status": "Active",
+  "autoUpdate": false,
+  "assemblies": []
+}

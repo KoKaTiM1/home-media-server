@@ -1,0 +1,9 @@
+[Unit]
+Description=Refresh catalogue collections after library indexing
+
+[Timer]
+OnBootSec=20min
+OnUnitActiveSec=30min
+
+[Install]
+WantedBy=timers.target

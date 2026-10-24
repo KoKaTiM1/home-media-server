@@ -1,0 +1,117 @@
+name: media-stack
+
+services:
+  jellyfin:
+    image: jellyfin/jellyfin:10.11.11
+    container_name: jellyfin
+    user: "1000:100"
+    environment:
+      TZ: Asia/Jerusalem
+      JELLYFIN_PublishedServerUrl: http://<SERVER_LAN_IP>:8096
+    volumes:
+      - /srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>/appdata/jellyfin/config:/config
+      - /srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>/appdata/jellyfin/cache:/cache
+      - /srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>/media:/media:ro
+      - /srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>/downloads/complete:/downloads:ro
+      - /srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>/catalogue:/catalogue
+    ports:
+      - "<SERVER_LAN_IP>:8096:8096/tcp"
+      - "<SERVER_LAN_IP>:7359:7359/udp"
+    mem_limit: 768m
+    cpus: 1.5
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  transmission:
+    image: lscr.io/linuxserver/transmission:latest
+    container_name: transmission
+    environment:
+      PUID: "1000"
+      PGID: "100"
+      TZ: Asia/Jerusalem
+      UMASK: "002"
+      USER: server
+      FILE__PASS: /run/secrets/transmission_password
+      PEERPORT: "51413"
+      WHITELIST: "127.0.0.1,<LAN_WILDCARD>,<DOCKER_WILDCARD>"
+    secrets:
+      - transmission_password
+    volumes:
+      - /srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>/appdata/transmission/config:/config
+      - /srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>/downloads:/downloads
+      - /srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>/downloads/watch:/watch
+    ports:
+      - "<SERVER_LAN_IP>:9091:9091/tcp"
+      - "<SERVER_LAN_IP>:51413:51413/tcp"
+      - "<SERVER_LAN_IP>:51413:51413/udp"
+    mem_limit: 256m
+    cpus: 1.0
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  torrserver:
+    image: ghcr.io/yourok/torrserver:latest
+    container_name: torrserver
+    user: "1000:100"
+    environment:
+      TS_PORT: "8090"
+      TS_CONF_PATH: /opt/ts/config
+      TS_LOG_PATH: /opt/ts/log/server.log
+      TS_TORR_DIR: /opt/ts/torrents
+      TS_HTTPAUTH: "1"
+      TS_DONTKILL: "1"
+    volumes:
+      - /srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>/appdata/torrserver:/opt/ts
+      - /srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>/streaming-cache:/streaming-cache
+    ports:
+      - "<SERVER_LAN_IP>:8090:8090/tcp"
+    mem_limit: 256m
+    cpus: 1.0
+    restart: unless-stopped
+
+  catalogue-bridge:
+    image: home-media-catalogue:1
+    container_name: catalogue-bridge
+    group_add:
+      - "100"
+    environment:
+      PUBLIC_URL: http://<SERVER_LAN_IP>:8092
+      JELLYFIN_URL: http://jellyfin:8096
+      TORRSERVER_URL: http://torrserver:8090
+      MEDIA_ROOT: /storage/media
+      DOWNLOADS_ROOT: /storage/downloads/complete
+    volumes:
+      - /srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>/appdata/catalogue:/data
+      - /srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>/catalogue:/catalogue
+      - ./catalogue/app.py:/app/app.py:ro
+      - ./catalogue/features.py:/app/features.py:ro
+      - /srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>:/storage
+    secrets:
+      - catalogue_signing
+      - jellyfin_api_key
+      - transmission_password
+      - opensubtitles
+    ports:
+      - "<SERVER_LAN_IP>:8092:8092/tcp"
+    mem_limit: 256m
+    cpus: 1.0
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+secrets:
+  catalogue_signing:
+    file: ./secrets/catalogue_signing
+  jellyfin_api_key:
+    file: ./secrets/jellyfin_api_key
+  opensubtitles:
+    file: ./secrets/opensubtitles.json
+  transmission_password:
+    file: ./secrets/transmission_password

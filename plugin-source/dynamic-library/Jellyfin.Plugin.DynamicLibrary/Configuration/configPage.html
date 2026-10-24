@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dynamic Library</title>
+</head>
+<body>
+  <div data-role="page" id="dynamicLibraryConfigPage" class="page type-interior pluginConfigurationPage">
+    <div data-role="content">
+      <div class="content-primary">
+        <form id="dynamicLibraryForm">
+          <div class="verticalSection">
+            <div class="sectionTitleContainer flex align-items-center">
+              <h2 class="sectionTitle">Dynamic Library</h2>
+            </div>
+            <p class="fieldDescription">
+              Ever wanted an infinite library?
+              Search TVDB and TMDB to discover content not in your library.
+              Optionally configure streaming via Embedarr or direct URL templates.
+            </p>
+          </div>
+
+          <div class="verticalSection">
+            <div class="checkboxContainer checkboxContainer-withDescription">
+              <label>
+                <input is="emby-checkbox" type="checkbox" id="chkEnabled" />
+                <span>Enable Dynamic Library</span>
+              </label>
+              <div class="fieldDescription">Enable or disable the plugin globally.</div>
+            </div>
+          </div>
+
+          <div class="verticalSection">
+            <h3 class="sectionTitle">Catalog Provider</h3>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="selCatalogProvider">Provider:</label>
+              <select is="emby-select" id="selCatalogProvider" class="emby-select">
+                <option value="StremioAddon">Stremio Addon</option>
+                <option value="Direct">Direct API Access (TVDB/TMDB)</option>
+              </select>
+              <div class="fieldDescription">
+                <strong>Stremio Addon:</strong> Use a Stremio-compatible addon like Cinemeta or AIOMetadata.<br>
+                <strong>Direct:</strong> Use TVDB and TMDB APIs directly for catalog and metadata.
+              </div>
+            </div>
+          </div>
+
+          <div class="verticalSection" id="stremioCatalogSettings" style="display: none;">
+            <h3 class="sectionTitle">Stremio Catalog Settings</h3>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="txtStremioCatalogUrl">Addon URL:</label>
+              <input is="emby-input" type="text" id="txtStremioCatalogUrl" class="emby-input" placeholder="https://v3-cinemeta.strem.io" />
+              <div class="fieldDescription">
+                Base URL for the Stremio addon (without /manifest.json).<br>
+                Examples:
+                <ul style="margin: 0.5em 0 0 1.5em; padding: 0;">
+                  <li><strong>Cinemeta (free):</strong> https://v3-cinemeta.strem.io</li>
+                  <li><strong>AIOMetadata:</strong> Your configured addon URL</li>
+                </ul>
+                This is separate from the AIOStreams URL used for streaming.
+              </div>
+            </div>
+
+            <div style="background: #1a1a1a; border: 1px solid #333; border-radius: 4px; padding: 1em; margin: 1em 0;">
+              <h4 style="margin: 0 0 0.5em 0; color: #00a4dc;">How it works</h4>
+              <p style="margin: 0; color: #999; font-size: 0.9em;">
+                Stremio addons provide catalog and metadata for movies and TV shows.<br>
+                This replaces TVDB/TMDB for search and item details. You can still use<br>
+                a different provider (AIOStreams, Embedarr, Direct) for actual streaming.
+              </p>
+            </div>
+          </div>
+
+          <div class="verticalSection">
+            <h3 class="sectionTitle">API Keys</h3>
+
+            <div id="apiKeyInfo" style="background: #1a1a1a; border-left: 4px solid #00a4dc; padding: 1em; margin: 1em 0; display: none;">
+              <p style="margin: 0; font-size: 0.95em;">
+                <strong>Stremio Users:</strong> API keys are <em>optional</em> but highly recommended.
+                Providing a TVDB key enables <strong>Official Order Enforcement</strong>, which fixes messy season structures
+                (like Dragon Ball Super being split into 5 seasons) and ensures accurate anime subtitles.
+              </p>
+            </div>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="txtTvdbApiKey">TVDB API Key:</label>
+              <input is="emby-input" type="password" id="txtTvdbApiKey" class="emby-input" />
+              <div class="fieldDescription">
+                API key for TVDB (used for TV shows and anime).
+                Get one at <a href="https://thetvdb.com/api-information" target="_blank">thetvdb.com</a>.
+              </div>
+            </div>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="txtTmdbApiKey">TMDB API Key:</label>
+              <input is="emby-input" type="password" id="txtTmdbApiKey" class="emby-input" />
+              <div class="fieldDescription">
+                API key for TMDB (used for movies).
+                Get one at <a href="https://www.themoviedb.org/settings/api" target="_blank">themoviedb.org</a>.
+              </div>
+            </div>
+          </div>
+
+          <div class="verticalSection">
+            <h3 class="sectionTitle">Content Sources</h3>
+            <p class="fieldDescription" style="margin-bottom: 1em;">
+              Select which API to use for each content type. These settings apply when <strong>Catalog Provider</strong> is set to <em>Direct</em>, 
+              or for metadata enrichment when using <em>Stremio Addon</em>.
+            </p>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="selMovieApiSource">Movies:</label>
+              <select is="emby-select" id="selMovieApiSource" class="emby-select">
+                <option value="None">Disabled</option>
+                <option value="Tmdb">TMDB</option>
+                <option value="Tvdb">TVDB</option>
+              </select>
+              <div class="fieldDescription">API source for movie searches. TMDB is recommended for movies.</div>
+            </div>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="selTvShowApiSource">TV Shows / Anime:</label>
+              <select is="emby-select" id="selTvShowApiSource" class="emby-select">
+                <option value="None">Disabled</option>
+                <option value="Tvdb">TVDB</option>
+                <option value="Tmdb">TMDB</option>
+              </select>
+              <div class="fieldDescription">API source for TV show and anime searches. TVDB is recommended.</div>
+            </div>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="txtMaxMovieResults">Max Movie Results:</label>
+              <input is="emby-input" type="number" id="txtMaxMovieResults" class="emby-input" min="1" max="100" />
+              <div class="fieldDescription">Maximum number of movie results to return (1-100).</div>
+            </div>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="txtMaxTvShowResults">Max TV Show Results:</label>
+              <input is="emby-input" type="number" id="txtMaxTvShowResults" class="emby-input" min="1" max="100" />
+              <div class="fieldDescription">Maximum number of TV show/anime results to return (1-100).</div>
+            </div>
+          </div>
+
+          <div class="verticalSection">
+            <h3 class="sectionTitle">Provider ID Preferences</h3>
+            <p class="fieldDescription" style="margin-bottom: 1em;">
+              Select which provider ID to use for streaming (Embedarr or Direct URL templates).
+              IMDB is recommended as it has the widest support. If the preferred ID is not available,
+              the plugin will fall back to other available IDs.
+            </p>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="selMoviePreferredId">Movies:</label>
+              <select is="emby-select" id="selMoviePreferredId" class="emby-select">
+                <option value="Imdb">IMDB (Recommended)</option>
+                <option value="Tmdb">TMDB</option>
+                <option value="Tvdb">TVDB</option>
+              </select>
+              <div class="fieldDescription">
+                ID used for streaming. Available IDs depend on the Content Source selected above.
+              </div>
+            </div>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="selTvShowPreferredId">TV Shows:</label>
+              <select is="emby-select" id="selTvShowPreferredId" class="emby-select">
+                <option value="Imdb">IMDB (Recommended)</option>
+                <option value="Tvdb">TVDB</option>
+                <option value="Tmdb">TMDB</option>
+              </select>
+              <div class="fieldDescription">
+                ID used for streaming. Available IDs depend on the Content Source selected above.
+              </div>
+            </div>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="selAnimePreferredId">Anime:</label>
+              <select is="emby-select" id="selAnimePreferredId" class="emby-select">
+                <option value="Imdb">IMDB (Recommended)</option>
+                <option value="Tvdb">TVDB</option>
+                <option value="AniList">AniList</option>
+                <option value="Tmdb">TMDB</option>
+              </select>
+              <div class="fieldDescription">
+                ID used for streaming. AniList IDs are extracted from TVDB when available.
+              </div>
+            </div>
+          </div>
+
+          <div class="verticalSection">
+            <h3 class="sectionTitle">Stream Provider</h3>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="selStreamProvider">Provider:</label>
+              <select is="emby-select" id="selStreamProvider" class="emby-select">
+                <option value="None">None (Browse Only)</option>
+                <option value="Embedarr">Embedarr</option>
+                <option value="Direct">Direct URL Templates</option>
+                <option value="AIOStreams">AIOStreams</option>
+              </select>
+              <div class="fieldDescription">
+                None: Browse content without streaming capability.<br>
+                Embedarr: Use Embedarr to generate STRM files and stream.<br>
+                Direct: Use custom URL templates for direct streaming.<br>
+                AIOStreams: Use AIOStreams Stremio addon for streaming (supports debrid, torrent, NZB).
+              </div>
+            </div>
+          </div>
+
+          <div class="verticalSection" id="aiostreamsSettings" style="display: none;">
+            <h3 class="sectionTitle">AIOStreams Settings</h3>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="txtAIOStreamsUrl">AIOStreams Addon URL:</label>
+              <input is="emby-input" type="text" id="txtAIOStreamsUrl" class="emby-input" placeholder="https://aiostreams.elfhosted.com/E2_xxxxx" />
+              <div class="fieldDescription">
+                Your full AIOStreams addon URL including the encrypted configuration.<br>
+                Get yours from:
+                <ul style="margin: 0.5em 0 0 1.5em; padding: 0;">
+                  <li><strong>Self-hosted:</strong> Your AIOStreams instance configuration page</li>
+                  <li><strong>ElfHosted:</strong> <a href="https://elfhosted.com/app/aiostreams/" target="_blank">elfhosted.com/app/aiostreams</a></li>
+                </ul>
+              </div>
+            </div>
+
+            <div style="background: #1a1a1a; border: 1px solid #333; border-radius: 4px; padding: 1em; margin: 1em 0;">
+              <h4 style="margin: 0 0 0.5em 0; color: #00a4dc;">How it works</h4>
+              <p style="margin: 0; color: #999; font-size: 0.9em;">
+                AIOStreams is a Stremio addon aggregator that handles stream discovery and delivery.<br>
+                Configure your sources (debrid services, torrent indexers, NZB via NZBDav) in AIOStreams,<br>
+                then paste your addon URL here. The plugin will query AIOStreams for available streams<br>
+                when you play content.
+              </p>
+            </div>
+
+            <div class="checkboxContainer checkboxContainer-withDescription">
+              <label>
+                <input is="emby-checkbox" type="checkbox" id="chkEnableHlsProbing" />
+                <span>Enable HLS Duration Probing</span>
+              </label>
+              <div class="fieldDescription">
+                Probe HLS streams to extract accurate duration. Helps with scrubbing on Android TV and other players.
+                Disable if experiencing playback issues (some streams use one-time tokens that are invalidated by probing).
+              </div>
+            </div>
+          </div>
+
+          <div class="verticalSection" id="embedarrSettings" style="display: none;">
+            <h3 class="sectionTitle">Embedarr Settings</h3>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="txtEmbedarrUrl">Embedarr URL:</label>
+              <input is="emby-input" type="text" id="txtEmbedarrUrl" class="emby-input" placeholder="http://localhost:8080" />
+              <div class="fieldDescription">URL to your Embedarr instance for STRM file generation.</div>
+            </div>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="txtEmbedarrApiKey">Embedarr API Key:</label>
+              <input is="emby-input" type="password" id="txtEmbedarrApiKey" class="emby-input" />
+              <div class="fieldDescription">API key for Embedarr (if required).</div>
+            </div>
+
+            <div class="checkboxContainer checkboxContainer-withDescription">
+              <label>
+                <input is="emby-checkbox" type="checkbox" id="chkCreateMediaOnView" />
+                <span>Pre-create media when viewing details</span>
+              </label>
+              <div class="fieldDescription">
+                When enabled, Embedarr will add media to the library when you view item details.
+                When disabled (default), media is only streamed on-demand when you click play.
+              </div>
+            </div>
+          </div>
+
+          <div class="verticalSection" id="directSettings" style="display: none;">
+            <h3 class="sectionTitle">Direct URL Templates</h3>
+            <p class="fieldDescription" style="margin-bottom: 1em;">
+              Configure URL templates for direct streaming. Available placeholders:<br>
+              <code>{id}</code> - Preferred ID (based on Provider ID Preferences below)<br>
+              <code>{imdb}</code> - IMDB ID (e.g., tt1234567)<br>
+              <code>{tmdb}</code> - TMDB ID (numeric, movies only)<br>
+              <code>{tvdb}</code> - TVDB ID (numeric, TV/anime only)<br>
+              <code>{anilist}</code> - AniList ID (numeric, anime only)<br>
+              <code>{season}</code> - Season number<br>
+              <code>{episode}</code> - Episode number<br>
+              <code>{absolute}</code> - Absolute episode number (anime only)<br>
+              <code>{audio}</code> - Audio type: "sub" or "dub" (anime only, requires Sub/Dub Selection enabled)<br>
+              <code>{title}</code> - URL-encoded title
+            </p>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="txtDirectMovieUrl">Movie URL Template:</label>
+              <input is="emby-input" type="text" id="txtDirectMovieUrl" class="emby-input" placeholder="https://example.com/movie/{imdb}.m3u8" />
+              <div class="fieldDescription">Template for movie streams. Placeholders: {id}, {imdb}, {tmdb}, {title}</div>
+            </div>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="txtDirectTvUrl">TV Show URL Template:</label>
+              <input is="emby-input" type="text" id="txtDirectTvUrl" class="emby-input" placeholder="https://example.com/tv/{imdb}/{season}/{episode}.m3u8" />
+              <div class="fieldDescription">Template for TV episodes. Placeholders: {id}, {imdb}, {tvdb}, {season}, {episode}, {title}</div>
+            </div>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="txtDirectAnimeUrl">Anime URL Template:</label>
+              <input is="emby-input" type="text" id="txtDirectAnimeUrl" class="emby-input" placeholder="https://example.com/anime/{anilist}/{absolute}/{audio}.m3u8" />
+              <div class="fieldDescription">Template for anime episodes. Placeholders: {id}, {imdb}, {tvdb}, {anilist}, {season}, {episode}, {absolute}, {audio}, {title}</div>
+            </div>
+
+            <div class="checkboxContainer checkboxContainer-withDescription">
+              <label>
+                <input is="emby-checkbox" type="checkbox" id="chkShowUnreleasedStreams" />
+                <span>Show unreleased streams</span>
+              </label>
+              <div class="fieldDescription">
+                When enabled, generates stream URLs even for movies or episodes that haven't been released yet.
+                When disabled (default), unreleased content cannot be played.
+              </div>
+            </div>
+
+            <div class="checkboxContainer checkboxContainer-withDescription">
+              <label>
+                <input is="emby-checkbox" type="checkbox" id="chkEnableAnimeAudioVersions" />
+                <span>Enable Audio Track Selection</span>
+              </label>
+              <div class="fieldDescription">
+                When enabled, anime episodes will show audio track options from the list below.
+                Requires <code>{audio}</code> placeholder in the anime URL template above.
+              </div>
+            </div>
+
+            <div class="inputContainer" id="animeAudioTracksContainer" style="display: none;">
+              <label class="inputLabel inputLabelUnfocused" for="txtAnimeAudioTracks">Anime Audio Tracks:</label>
+              <input is="emby-input" type="text" id="txtAnimeAudioTracks" class="emby-input" placeholder="sub,dub" />
+              <div class="fieldDescription">
+                Comma-separated list of audio options. Each value replaces <code>{audio}</code> in the URL template.
+                Example: "sub,dub" creates two options that generate URLs ending in /sub.m3u8 and /dub.m3u8
+              </div>
+            </div>
+          </div>
+
+          <div class="verticalSection">
+            <h3 class="sectionTitle">Language Settings</h3>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="selLanguageMode">Language Mode:</label>
+              <select is="emby-select" id="selLanguageMode" class="emby-select">
+                <option value="Default">Default (Original Language)</option>
+                <option value="Override">Override (Force Specific Language)</option>
+              </select>
+              <div class="fieldDescription">
+                Default: Use original titles/descriptions from TVDB/TMDB.<br>
+                Override: Request content in your preferred language (translations may not be available for all content).
+              </div>
+            </div>
+
+            <div class="inputContainer" id="languageOverrideContainer" style="display: none;">
+              <label class="inputLabel inputLabelUnfocused" for="selPreferredLanguage">Preferred Language:</label>
+              <select is="emby-select" id="selPreferredLanguage" class="emby-select">
+                <option value="eng">English</option>
+                <option value="jpn">Japanese</option>
+                <option value="spa">Spanish</option>
+                <option value="fra">French</option>
+                <option value="deu">German</option>
+                <option value="ita">Italian</option>
+                <option value="por">Portuguese</option>
+                <option value="rus">Russian</option>
+                <option value="zho">Chinese</option>
+                <option value="kor">Korean</option>
+                <option value="ara">Arabic</option>
+                <option value="hin">Hindi</option>
+                <option value="tha">Thai</option>
+                <option value="vie">Vietnamese</option>
+                <option value="nld">Dutch</option>
+                <option value="pol">Polish</option>
+                <option value="tur">Turkish</option>
+                <option value="swe">Swedish</option>
+                <option value="nor">Norwegian</option>
+                <option value="dan">Danish</option>
+                <option value="fin">Finnish</option>
+                <option value="ukr">Ukrainian</option>
+              </select>
+              <div class="fieldDescription">
+                Language for titles and metadata. Note: TMDB has better translation support than TVDB.
+                Anime titles from TVDB may still appear in Japanese if no English translation exists.
+              </div>
+            </div>
+          </div>
+
+          <div class="verticalSection">
+            <h3 class="sectionTitle">Subtitle Settings</h3>
+
+            <div class="checkboxContainer checkboxContainer-withDescription">
+              <label>
+                <input is="emby-checkbox" type="checkbox" id="chkEnableSubtitles" />
+                <span>Enable Automatic Subtitles</span>
+              </label>
+              <div class="fieldDescription">
+                Automatically fetch subtitles from OpenSubtitles.com for dynamic items during playback.
+              </div>
+            </div>
+
+            <div id="subtitleSettings" style="display: none;">
+              <div class="inputContainer">
+                <label class="inputLabel inputLabelUnfocused" for="txtOpenSubtitlesApiKey">OpenSubtitles API Key:</label>
+                <input is="emby-input" type="password" id="txtOpenSubtitlesApiKey" class="emby-input" />
+                <div class="fieldDescription">
+                  API key from <a href="https://www.opensubtitles.com/consumers" target="_blank">opensubtitles.com</a>.
+                  Required for subtitle fetching.
+                </div>
+              </div>
+
+              <div class="inputContainer">
+                <label class="inputLabel inputLabelUnfocused" for="txtSubtitleLanguages">Preferred Languages:</label>
+                <input is="emby-input" type="text" id="txtSubtitleLanguages" class="emby-input" placeholder="en,es,fr" />
+                <div class="fieldDescription">
+                  Comma-separated ISO 639-1 language codes (e.g., en, es, fr, de, ja).
+                  Subtitles will be fetched for each language if available.
+                </div>
+              </div>
+
+              <div class="inputContainer">
+                <label class="inputLabel inputLabelUnfocused" for="txtMaxSubtitlesPerLanguage">Max Subtitles Per Language:</label>
+                <input is="emby-input" type="number" id="txtMaxSubtitlesPerLanguage" class="emby-input" min="1" value="1" />
+                <div class="fieldDescription">
+                  Maximum number of subtitle files to download for each language. Default: 1 (best match only).
+                </div>
+              </div>
+
+              <div class="inputContainer">
+                <label class="inputLabel inputLabelUnfocused" for="txtSubtitleCachePath">Subtitle Cache Path:</label>
+                <input is="emby-input" type="text" id="txtSubtitleCachePath" class="emby-input" placeholder="/tmp/jellyfin-dynamiclibrary-subtitles" />
+                <div class="fieldDescription">
+                  Directory where downloaded subtitle files are cached.
+                </div>
+              </div>
+
+              <div class="checkboxContainer checkboxContainer-withDescription">
+                <label>
+                  <input is="emby-checkbox" type="checkbox" id="chkUseJellyfinOSCredentials" />
+                  <span>Use Jellyfin OpenSubtitles Plugin Credentials</span>
+                </label>
+                <div class="fieldDescription">
+                  If enabled, will attempt to read credentials from the Jellyfin OpenSubtitles plugin for authentication.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="verticalSection">
+            <h3 class="sectionTitle">Persistence Settings</h3>
+            <p class="fieldDescription" style="margin-bottom: 1em;">
+              When enabled, clicking on a dynamic item will create .strm files in the specified folder.
+              These become real Jellyfin library items with playback tracking, favorites, and ratings.
+            </p>
+
+            <div class="checkboxContainer checkboxContainer-withDescription">
+              <label>
+                <input is="emby-checkbox" type="checkbox" id="chkEnablePersistence" />
+                <span>Enable Persistence</span>
+              </label>
+              <div class="fieldDescription">
+                When enabled, clicking on a dynamic item will save it to your library as a .strm file.
+              </div>
+            </div>
+
+            <div id="persistenceSettings" style="display: none;">
+              <div class="inputContainer">
+                <label class="inputLabel inputLabelUnfocused" for="txtPersistentLibraryPath">Library Path:</label>
+                <input is="emby-input" type="text" id="txtPersistentLibraryPath" class="emby-input" placeholder="/dynamic-library" />
+                <div class="fieldDescription">
+                  Root folder for persistent items. This folder must exist and be writable by Jellyfin.
+                </div>
+              </div>
+
+              <div style="background: #1a1a1a; border: 1px solid #333; border-radius: 4px; padding: 1em; margin: 1em 0;">
+                <h4 style="margin: 0 0 0.5em 0; color: #00a4dc;">Required Jellyfin Libraries</h4>
+                <p style="margin: 0 0 0.5em 0; color: #999; font-size: 0.9em;">
+                  Add these folders as Jellyfin libraries (Dashboard → Libraries → Add):
+                </p>
+                <ul id="libraryPathsList" style="margin: 0; padding-left: 1.5em; color: #ccc; font-family: monospace; font-size: 0.9em;">
+                  <li><strong>Movies:</strong> <span id="moviesPath">/dynamic-library/movies</span></li>
+                  <li><strong>TV Shows:</strong> <span id="showsPath">/dynamic-library/tv</span></li>
+                  <li><strong>Anime:</strong> <span id="animePath">/dynamic-library/anime</span></li>
+                </ul>
+                <p style="margin: 0.5em 0 0 0; color: #888; font-size: 0.85em;">
+                  Tip: You can also add a single Mixed Content library pointing to the root path.
+                </p>
+              </div>
+
+              <div class="checkboxContainer checkboxContainer-withDescription">
+                <label>
+                  <input is="emby-checkbox" type="checkbox" id="chkTriggerLibraryScan" />
+                  <span>Trigger Library Scan</span>
+                </label>
+                <div class="fieldDescription">
+                  Automatically trigger a library scan after creating new items.
+                </div>
+              </div>
+
+              <div class="checkboxContainer checkboxContainer-withDescription">
+                <label>
+                  <input is="emby-checkbox" type="checkbox" id="chkCreateUnreleasedMedia" />
+                  <span>Create unreleased media</span>
+                </label>
+                <div class="fieldDescription">
+                  When enabled, creates persistent media even for movies and shows that haven't been released yet.
+                  When disabled (default), only creates media for content that has been released.
+                </div>
+              </div>
+
+              <div class="checkboxContainer checkboxContainer-withDescription">
+                <label>
+                  <input is="emby-checkbox" type="checkbox" id="chkCheckForUpdatesOnView" />
+                  <span>Check for updates on view</span>
+                </label>
+                <div class="fieldDescription">
+                  When viewing persisted media, check for updates: new aired episodes for TV/anime,
+                  or create movie .strm if it has now been released.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="verticalSection">
+            <h3 class="sectionTitle">Cache Settings</h3>
+
+            <div class="inputContainer">
+              <label class="inputLabel inputLabelUnfocused" for="txtCacheTtlMinutes">Cache TTL (minutes):</label>
+              <input is="emby-input" type="number" id="txtCacheTtlMinutes" class="emby-input" min="1" max="1440" />
+              <div class="fieldDescription">How long to cache search results (1-1440 minutes).</div>
+            </div>
+          </div>
+
+          <div>
+            <button id="btnSave" is="emby-button" type="submit" class="raised button-submit block emby-button">
+              <span>Save</span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <script type="text/javascript">
+      (function () {
+        'use strict';
+
+        const pluginId = 'bc6b8d94-3800-4ab9-8f61-cf26ca1ab98c';
+        const page = document.querySelector('#dynamicLibraryConfigPage');
+        const form = document.querySelector('#dynamicLibraryForm');
+
+        // Cache DOM elements - inputs
+        const chkEnabled = document.querySelector('#chkEnabled');
+        const txtTvdbApiKey = document.querySelector('#txtTvdbApiKey');
+        const txtTmdbApiKey = document.querySelector('#txtTmdbApiKey');
+        const txtStremioCatalogUrl = document.querySelector('#txtStremioCatalogUrl');
+        const txtEmbedarrUrl = document.querySelector('#txtEmbedarrUrl');
+        const txtEmbedarrApiKey = document.querySelector('#txtEmbedarrApiKey');
+        const chkCreateMediaOnView = document.querySelector('#chkCreateMediaOnView');
+        const txtMaxMovieResults = document.querySelector('#txtMaxMovieResults');
+        const txtMaxTvShowResults = document.querySelector('#txtMaxTvShowResults');
+        const txtCacheTtlMinutes = document.querySelector('#txtCacheTtlMinutes');
+
+        // Cache DOM elements - Direct URL templates
+        const txtDirectMovieUrl = document.querySelector('#txtDirectMovieUrl');
+        const txtDirectTvUrl = document.querySelector('#txtDirectTvUrl');
+        const txtDirectAnimeUrl = document.querySelector('#txtDirectAnimeUrl');
+        const chkShowUnreleasedStreams = document.querySelector('#chkShowUnreleasedStreams');
+        const chkEnableAnimeAudioVersions = document.querySelector('#chkEnableAnimeAudioVersions');
+        const txtAnimeAudioTracks = document.querySelector('#txtAnimeAudioTracks');
+        const animeAudioTracksContainer = document.querySelector('#animeAudioTracksContainer');
+
+        // Cache DOM elements - AIOStreams settings
+        const txtAIOStreamsUrl = document.querySelector('#txtAIOStreamsUrl');
+        const chkEnableHlsProbing = document.querySelector('#chkEnableHlsProbing');
+        const aiostreamsSettings = document.querySelector('#aiostreamsSettings');
+
+        // Cache DOM elements - subtitle settings
+        const chkEnableSubtitles = document.querySelector('#chkEnableSubtitles');
+        const txtOpenSubtitlesApiKey = document.querySelector('#txtOpenSubtitlesApiKey');
+        const txtSubtitleLanguages = document.querySelector('#txtSubtitleLanguages');
+        const txtMaxSubtitlesPerLanguage = document.querySelector('#txtMaxSubtitlesPerLanguage');
+        const txtSubtitleCachePath = document.querySelector('#txtSubtitleCachePath');
+        const chkUseJellyfinOSCredentials = document.querySelector('#chkUseJellyfinOSCredentials');
+        const subtitleSettingsContainer = document.querySelector('#subtitleSettings');
+
+        // Cache DOM elements - persistence settings
+        const chkEnablePersistence = document.querySelector('#chkEnablePersistence');
+        const txtPersistentLibraryPath = document.querySelector('#txtPersistentLibraryPath');
+        const chkTriggerLibraryScan = document.querySelector('#chkTriggerLibraryScan');
+        const chkCreateUnreleasedMedia = document.querySelector('#chkCreateUnreleasedMedia');
+        const chkCheckForUpdatesOnView = document.querySelector('#chkCheckForUpdatesOnView');
+        const persistenceSettingsContainer = document.querySelector('#persistenceSettings');
+        const moviesPathSpan = document.querySelector('#moviesPath');
+        const showsPathSpan = document.querySelector('#showsPath');
+        const animePathSpan = document.querySelector('#animePath');
+
+        // Cache DOM elements - selects
+        const selCatalogProvider = document.querySelector('#selCatalogProvider');
+        const selStreamProvider = document.querySelector('#selStreamProvider');
+        const selMovieApiSource = document.querySelector('#selMovieApiSource');
+        const selTvShowApiSource = document.querySelector('#selTvShowApiSource');
+        const selLanguageMode = document.querySelector('#selLanguageMode');
+        const selPreferredLanguage = document.querySelector('#selPreferredLanguage');
+        const selMoviePreferredId = document.querySelector('#selMoviePreferredId');
+        const selTvShowPreferredId = document.querySelector('#selTvShowPreferredId');
+        const selAnimePreferredId = document.querySelector('#selAnimePreferredId');
+
+        // Cache DOM elements - conditional containers
+        const stremioCatalogSettings = document.querySelector('#stremioCatalogSettings');
+        const apiKeyInfo = document.querySelector('#apiKeyInfo');
+        const embedarrSettings = document.querySelector('#embedarrSettings');
+        const directSettings = document.querySelector('#directSettings');
+        const languageOverrideContainer = document.querySelector('#languageOverrideContainer');
+
+        function updateCatalogProviderVisibility() {
+          const provider = selCatalogProvider.value;
+          stremioCatalogSettings.style.display = provider === 'StremioAddon' ? 'block' : 'none';
+          apiKeyInfo.style.display = provider === 'StremioAddon' ? 'block' : 'none';
+        }
+
+        function updateLanguageVisibility() {
+          const mode = selLanguageMode.value;
+          languageOverrideContainer.style.display = mode === 'Override' ? 'block' : 'none';
+        }
+
+        function updateStreamProviderVisibility() {
+          const provider = selStreamProvider.value;
+          embedarrSettings.style.display = provider === 'Embedarr' ? 'block' : 'none';
+          directSettings.style.display = provider === 'Direct' ? 'block' : 'none';
+          aiostreamsSettings.style.display = provider === 'AIOStreams' ? 'block' : 'none';
+        }
+
+        function updateAnimeAudioTracksVisibility() {
+          animeAudioTracksContainer.style.display = chkEnableAnimeAudioVersions.checked ? 'block' : 'none';
+        }
+
+        function updateSubtitleSettingsVisibility() {
+          subtitleSettingsContainer.style.display = chkEnableSubtitles.checked ? 'block' : 'none';
+        }
+
+        function updatePersistenceSettingsVisibility() {
+          persistenceSettingsContainer.style.display = chkEnablePersistence.checked ? 'block' : 'none';
+          if (chkEnablePersistence.checked) {
+            updateLibraryPaths();
+          }
+        }
+
+        function updateLibraryPaths() {
+          var basePath = txtPersistentLibraryPath.value.trim() || '/dynamic-library';
+          // Remove trailing slash if present
+          basePath = basePath.replace(/\/+$/, '');
+          moviesPathSpan.textContent = basePath + '/movies';
+          showsPathSpan.textContent = basePath + '/tv';
+          animePathSpan.textContent = basePath + '/anime';
+        }
+
+        // Helper to set select value - handles custom element timing
+        function setSelectValue(selectEl, value) {
+          // Try setting immediately
+          selectEl.value = value;
+
+          // Also schedule a delayed set in case custom element isn't ready
+          setTimeout(function() {
+            if (selectEl.value !== value) {
+              selectEl.value = value;
+              console.log('Dynamic Library: Delayed set for', selectEl.id, 'to', value);
+            }
+          }, 100);
+        }
+
+        let isLoading = false;
+        async function loadConfig() {
+          if (isLoading) return;
+          isLoading = true;
+
+          Dashboard.showLoadingMsg();
+          try {
+            const config = await window.ApiClient.getPluginConfiguration(pluginId);
+            console.log('Dynamic Library: Loaded config', config);
+
+            // Checkboxes
+            chkEnabled.checked = config.Enabled ?? true;
+            chkCreateMediaOnView.checked = config.CreateMediaOnView ?? false;
+
+            // Text inputs
+            txtTvdbApiKey.value = config.TvdbApiKey || '';
+            txtTmdbApiKey.value = config.TmdbApiKey || '';
+            txtEmbedarrUrl.value = config.EmbedarrUrl || '';
+            txtEmbedarrApiKey.value = config.EmbedarrApiKey || '';
+
+            // Number inputs
+            txtMaxMovieResults.value = config.MaxMovieResults ?? 20;
+            txtMaxTvShowResults.value = config.MaxTvShowResults ?? 20;
+            txtCacheTtlMinutes.value = config.CacheTtlMinutes ?? 60;
+
+            // Direct URL templates
+            txtDirectMovieUrl.value = config.DirectMovieUrlTemplate || '';
+            txtDirectTvUrl.value = config.DirectTvUrlTemplate || '';
+            txtDirectAnimeUrl.value = config.DirectAnimeUrlTemplate || '';
+            chkShowUnreleasedStreams.checked = config.ShowUnreleasedStreams ?? false;
+            chkEnableAnimeAudioVersions.checked = config.EnableAnimeAudioVersions ?? false;
+            txtAnimeAudioTracks.value = config.AnimeAudioTracks || 'sub,dub';
+
+            // AIOStreams settings
+            txtAIOStreamsUrl.value = config.AIOStreamsUrl || '';
+            chkEnableHlsProbing.checked = config.EnableHlsProbing ?? false;
+
+            // Subtitle settings
+            chkEnableSubtitles.checked = config.EnableSubtitles ?? false;
+            txtOpenSubtitlesApiKey.value = config.OpenSubtitlesApiKey || '';
+            txtSubtitleLanguages.value = config.SubtitleLanguages || 'en';
+            txtMaxSubtitlesPerLanguage.value = config.MaxSubtitlesPerLanguage ?? 1;
+            txtSubtitleCachePath.value = config.SubtitleCachePath || '/tmp/jellyfin-dynamiclibrary-subtitles';
+            chkUseJellyfinOSCredentials.checked = config.UseJellyfinOpenSubtitlesCredentials ?? true;
+
+            // Persistence settings
+            chkEnablePersistence.checked = config.EnablePersistence ?? false;
+            txtPersistentLibraryPath.value = config.PersistentLibraryPath || '/dynamic-library';
+            chkTriggerLibraryScan.checked = config.TriggerLibraryScan ?? true;
+            chkCreateUnreleasedMedia.checked = config.CreateUnreleasedMedia ?? false;
+            chkCheckForUpdatesOnView.checked = config.CheckForUpdatesOnView ?? true;
+
+            // Stremio Catalog settings
+            txtStremioCatalogUrl.value = config.StremioCatalogUrl || '';
+
+            // Select dropdowns - use helper to handle custom element timing
+            // Enum values come as strings from C# JSON serialization
+            setSelectValue(selCatalogProvider, config.CatalogProvider || 'StremioAddon');
+            setSelectValue(selStreamProvider, config.StreamProvider || 'None');
+            setSelectValue(selMovieApiSource, config.MovieApiSource || 'Tmdb');
+            setSelectValue(selTvShowApiSource, config.TvShowApiSource || 'Tvdb');
+            setSelectValue(selLanguageMode, config.LanguageMode || 'Default');
+            setSelectValue(selPreferredLanguage, config.PreferredLanguage || 'eng');
+            setSelectValue(selMoviePreferredId, config.MoviePreferredId || 'Imdb');
+            setSelectValue(selTvShowPreferredId, config.TvShowPreferredId || 'Imdb');
+            setSelectValue(selAnimePreferredId, config.AnimePreferredId || 'Imdb');
+
+            updateCatalogProviderVisibility();
+            updateStreamProviderVisibility();
+            updateLanguageVisibility();
+            updateAnimeAudioTracksVisibility();
+            updateSubtitleSettingsVisibility();
+            updatePersistenceSettingsVisibility();
+            updateLibraryPaths();
+          } catch (err) {
+            console.error('Dynamic Library: Failed to load configuration', err);
+          } finally {
+            Dashboard.hideLoadingMsg();
+            isLoading = false;
+          }
+        }
+
+        async function saveConfig(e) {
+          e.preventDefault();
+          Dashboard.showLoadingMsg();
+          try {
+            const config = await window.ApiClient.getPluginConfiguration(pluginId);
+
+            // Checkboxes
+            config.Enabled = chkEnabled.checked;
+            config.CreateMediaOnView = chkCreateMediaOnView.checked;
+
+            // Text inputs
+            config.TvdbApiKey = txtTvdbApiKey.value.trim();
+            config.TmdbApiKey = txtTmdbApiKey.value.trim();
+            config.EmbedarrUrl = txtEmbedarrUrl.value.trim();
+            config.EmbedarrApiKey = txtEmbedarrApiKey.value.trim();
+
+            // Number inputs
+            config.MaxMovieResults = parseInt(txtMaxMovieResults.value, 10) || 20;
+            config.MaxTvShowResults = parseInt(txtMaxTvShowResults.value, 10) || 20;
+            config.CacheTtlMinutes = parseInt(txtCacheTtlMinutes.value, 10) || 60;
+
+            // Direct URL templates
+            config.DirectMovieUrlTemplate = txtDirectMovieUrl.value.trim();
+            config.DirectTvUrlTemplate = txtDirectTvUrl.value.trim();
+            config.DirectAnimeUrlTemplate = txtDirectAnimeUrl.value.trim();
+            config.ShowUnreleasedStreams = chkShowUnreleasedStreams.checked;
+            config.EnableAnimeAudioVersions = chkEnableAnimeAudioVersions.checked;
+            config.AnimeAudioTracks = txtAnimeAudioTracks.value.trim() || 'sub,dub';
+
+            // AIOStreams settings
+            config.AIOStreamsUrl = txtAIOStreamsUrl.value.trim();
+            config.EnableHlsProbing = chkEnableHlsProbing.checked;
+
+            // Subtitle settings
+            config.EnableSubtitles = chkEnableSubtitles.checked;
+            config.OpenSubtitlesApiKey = txtOpenSubtitlesApiKey.value.trim();
+            config.SubtitleLanguages = txtSubtitleLanguages.value.trim() || 'en';
+            config.MaxSubtitlesPerLanguage = parseInt(txtMaxSubtitlesPerLanguage.value, 10) || 1;
+            config.SubtitleCachePath = txtSubtitleCachePath.value.trim() || '/tmp/jellyfin-dynamiclibrary-subtitles';
+            config.UseJellyfinOpenSubtitlesCredentials = chkUseJellyfinOSCredentials.checked;
+
+            // Persistence settings
+            config.EnablePersistence = chkEnablePersistence.checked;
+            config.PersistentLibraryPath = txtPersistentLibraryPath.value.trim() || '/dynamic-library';
+            config.TriggerLibraryScan = chkTriggerLibraryScan.checked;
+            config.CreateUnreleasedMedia = chkCreateUnreleasedMedia.checked;
+            config.CheckForUpdatesOnView = chkCheckForUpdatesOnView.checked;
+
+            // Stremio Catalog settings - strip /manifest.json if user pasted full manifest URL
+            var stremioUrl = txtStremioCatalogUrl.value.trim();
+            if (stremioUrl.endsWith('/manifest.json')) {
+              stremioUrl = stremioUrl.slice(0, -'/manifest.json'.length);
+            }
+            config.StremioCatalogUrl = stremioUrl;
+
+            // Select dropdowns - enum values are serialized as strings
+            config.CatalogProvider = selCatalogProvider.value;
+            config.StreamProvider = selStreamProvider.value;
+            config.MovieApiSource = selMovieApiSource.value;
+            config.TvShowApiSource = selTvShowApiSource.value;
+            config.LanguageMode = selLanguageMode.value;
+            config.PreferredLanguage = selPreferredLanguage.value;
+            config.MoviePreferredId = selMoviePreferredId.value;
+            config.TvShowPreferredId = selTvShowPreferredId.value;
+            config.AnimePreferredId = selAnimePreferredId.value;
+
+            await window.ApiClient.updatePluginConfiguration(pluginId, config);
+            Dashboard.processPluginConfigurationUpdateResult();
+          } catch (err) {
+            console.error('Dynamic Library: Failed to save configuration', err);
+            Dashboard.alert('Failed to save configuration. Check console for details.');
+          } finally {
+            Dashboard.hideLoadingMsg();
+          }
+        }
+
+        // Set up event listeners once
+        form.addEventListener('submit', saveConfig);
+        selCatalogProvider.addEventListener('change', updateCatalogProviderVisibility);
+        selStreamProvider.addEventListener('change', updateStreamProviderVisibility);
+        selLanguageMode.addEventListener('change', updateLanguageVisibility);
+        chkEnableAnimeAudioVersions.addEventListener('change', updateAnimeAudioTracksVisibility);
+        chkEnableSubtitles.addEventListener('change', updateSubtitleSettingsVisibility);
+        chkEnablePersistence.addEventListener('change', updatePersistenceSettingsVisibility);
+        txtPersistentLibraryPath.addEventListener('input', updateLibraryPaths);
+
+        // Load config when page is shown (works with Jellyfin's SPA navigation)
+        page.addEventListener('viewshow', loadConfig);
+        page.addEventListener('pageshow', loadConfig);
+      })();
+    </script>
+  </div>
+</body>
+</html>

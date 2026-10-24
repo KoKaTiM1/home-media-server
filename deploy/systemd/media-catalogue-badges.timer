@@ -1,0 +1,9 @@
+[Unit]
+Description=Refresh a bounded batch of subtitle availability badges hourly
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=1h
+
+[Install]
+WantedBy=timers.target

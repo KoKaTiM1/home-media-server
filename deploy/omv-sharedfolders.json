@@ -1,0 +1,32 @@
+[
+  {
+    "uuid": "<OMV_MEDIA_SHARE_ID>",
+    "name": "Media",
+    "comment": "Jellyfin media library",
+    "mntentref": "<OMV_MOUNT_ID_1>",
+    "reldirpath": "media/",
+    "privileges": {
+      "privilege": []
+    }
+  },
+  {
+    "uuid": "<OMV_DOWNLOADS_SHARE_ID>",
+    "name": "Downloads",
+    "comment": "Torrent downloads and staging",
+    "mntentref": "<OMV_MOUNT_ID_1>",
+    "reldirpath": "downloads/",
+    "privileges": {
+      "privilege": []
+    }
+  },
+  {
+    "uuid": "<OMV_APPDATA_SHARE_ID>",
+    "name": "AppData",
+    "comment": "Persistent container application data",
+    "mntentref": "<OMV_MOUNT_ID_1>",
+    "reldirpath": "appdata/",
+    "privileges": {
+      "privilege": []
+    }
+  }
+]

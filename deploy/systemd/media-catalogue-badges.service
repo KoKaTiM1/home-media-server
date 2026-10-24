@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Hebrew and English subtitle availability for catalogue posters
+After=media-stack.service
+RequiresMountsFor=/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/media-stack
+ExecStart=/usr/bin/docker compose exec -T catalogue-bridge python /app/app.py badges
+TimeoutStartSec=10min
+

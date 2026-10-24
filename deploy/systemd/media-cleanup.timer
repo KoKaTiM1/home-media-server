@@ -1,0 +1,10 @@
+[Unit]
+Description=Check media retention hourly
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=1h
+Persistent=yes
+
+[Install]
+WantedBy=timers.target

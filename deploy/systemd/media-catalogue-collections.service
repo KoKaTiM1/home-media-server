@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh online Recent Releases and Popular collections
+After=media-stack.service
+RequiresMountsFor=/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/media-stack
+ExecStart=/usr/bin/docker compose exec -T catalogue-bridge python /app/app.py collections
+TimeoutStartSec=10min
+

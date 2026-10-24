@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh online catalogue four times daily
+
+[Timer]
+OnCalendar=*-*-* 00,06,12,18:00:00 Asia/Jerusalem
+RandomizedDelaySec=2min
+Persistent=yes
+
+[Install]
+WantedBy=timers.target

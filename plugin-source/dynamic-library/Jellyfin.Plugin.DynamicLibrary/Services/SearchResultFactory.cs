@@ -1,0 +1,2435 @@
+using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
+using Jellyfin.Data.Enums;
+using Jellyfin.Plugin.DynamicLibrary.Api;
+using Jellyfin.Plugin.DynamicLibrary.Configuration;
+using Jellyfin.Plugin.DynamicLibrary.Models;
+using Jellyfin.Plugin.DynamicLibrary.Providers;
+using MediaBrowser.Controller;
+using MediaBrowser.Controller.Library;
+using MediaBrowser.Model.Dto;
+using MediaBrowser.Model.Entities;
+using MediaBrowser.Model.MediaInfo;
+using Microsoft.Extensions.Logging;
+using ImageType = MediaBrowser.Model.Entities.ImageType;
+
+namespace Jellyfin.Plugin.DynamicLibrary.Services;
+
+public class SearchResultFactory
+{
+    private readonly ITmdbClient _tmdbClient;
+    private readonly ITvdbClient _tvdbClient;
+    private readonly AniListClient _aniListClient;
+    private readonly StremioCatalogProvider _stremioCatalogProvider;
+    private readonly DynamicItemCache _itemCache;
+    private readonly IServerApplicationHost _serverApplicationHost;
+    private readonly ILibraryManager _libraryManager;
+    private readonly ILogger<SearchResultFactory> _logger;
+
+    private const string DynamicLibraryProviderId = "DynamicLibrary";
+    private const string TvdbArtworkBaseUrl = "https://artworks.thetvdb.com";
+
+    public SearchResultFactory(
+        ITmdbClient tmdbClient,
+        ITvdbClient tvdbClient,
+        AniListClient aniListClient,
+        StremioCatalogProvider stremioCatalogProvider,
+        DynamicItemCache itemCache,
+        IServerApplicationHost serverApplicationHost,
+        ILibraryManager libraryManager,
+        ILogger<SearchResultFactory> logger)
+    {
+        _tmdbClient = tmdbClient;
+        _tvdbClient = tvdbClient;
+        _aniListClient = aniListClient;
+        _stremioCatalogProvider = stremioCatalogProvider;
+        _itemCache = itemCache;
+        _serverApplicationHost = serverApplicationHost;
+        _libraryManager = libraryManager;
+        _logger = logger;
+    }
+
+    // ==================== CatalogItem Conversion (for Catalog Provider abstraction) ====================
+
+    /// <summary>
+    /// Convert a CatalogItem from any provider to a Jellyfin BaseItemDto.
+    /// This is used by the new catalog provider abstraction.
+    /// </summary>
+    public Task<BaseItemDto> CreateDtoFromCatalogItemAsync(CatalogItem item, CancellationToken cancellationToken = default)
+    {
+        // Determine the DynamicUri based on available IDs
+        DynamicUri dynamicUri;
+        if (!string.IsNullOrEmpty(item.ImdbId))
+        {
+            dynamicUri = DynamicUri.FromImdb(item.ImdbId);
+        }
+        else if (!string.IsNullOrEmpty(item.TmdbId) && int.TryParse(item.TmdbId, out var tmdbId))
+        {
+            dynamicUri = DynamicUri.FromTmdb(tmdbId);
+        }
+        else if (!string.IsNullOrEmpty(item.TvdbId) && int.TryParse(item.TvdbId, out var tvdbId))
+        {
+            dynamicUri = DynamicUri.FromTvdb(tvdbId);
+        }
+        else
+        {
+            // Fallback: use a hash of the ID
+            dynamicUri = DynamicUri.FromImdb(item.Id);
+        }
+
+        var config = DynamicLibraryPlugin.Instance?.Configuration;
+
+        // Check if content is released
+        // Treat null ReleaseDate as released (reasonable for catalog search results)
+        var isReleased = !item.ReleaseDate.HasValue || item.ReleaseDate.Value <= DateTime.UtcNow;
+        var shouldBePlayable = config?.ShowUnreleasedStreams == true || isReleased;
+
+        var isMovie = item.Type == CatalogContentType.Movie;
+        var itemKind = isMovie ? BaseItemKind.Movie : BaseItemKind.Series;
+
+        _logger.LogDebug("[DynamicLibrary] CreateDtoFromCatalogItem '{Name}': Type={Type}, Source={Source}, IsReleased={Released}",
+            item.Name, itemKind, item.Source, isReleased);
+
+        var dto = new BaseItemDto
+        {
+            Id = !string.IsNullOrEmpty(item.ImdbId)
+                ? _libraryManager.GetNewItemId(
+                    isMovie ? $"/catalogue/movies/{item.ImdbId}/movie.strm" : $"/catalogue/shows/{item.ImdbId}",
+                    isMovie ? typeof(MediaBrowser.Controller.Entities.Movies.Movie) : typeof(MediaBrowser.Controller.Entities.TV.Series))
+                : dynamicUri.ToGuid(),
+            ServerId = _serverApplicationHost.SystemId,
+            Name = item.Name,
+            OriginalTitle = item.OriginalName,
+            Overview = item.Overview,
+            Type = itemKind,
+            MediaType = (isMovie && shouldBePlayable) ? Jellyfin.Data.Enums.MediaType.Video : default,
+            IsFolder = !isMovie,
+            ProductionYear = item.Year,
+            PremiereDate = item.ReleaseDate,
+            CommunityRating = item.Rating.HasValue ? (float)item.Rating.Value : null,
+            Genres = item.Genres.ToArray(),
+            ProviderIds = BuildProviderIds(item, dynamicUri),
+            UserData = new UserItemDataDto
+            {
+                Key = dynamicUri.ToString(),
+                PlaybackPositionTicks = 0,
+                PlayCount = 0,
+                IsFavorite = false,
+                Played = false
+            }
+        };
+
+        // Set LocationType.Virtual to hide play button for unreleased content
+        if (!shouldBePlayable)
+        {
+            dto.LocationType = LocationType.Virtual;
+        }
+
+        // Set image tags if poster URL is available
+        if (!string.IsNullOrEmpty(item.PosterUrl))
+        {
+            dto.ImageTags = new Dictionary<ImageType, string>
+            {
+                { ImageType.Primary, Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(item.PosterUrl))) }
+            };
+            dto.PrimaryImageAspectRatio = isMovie ? 0.667 : 0.667; // Standard poster ratio (2:3)
+        }
+
+        // Set backdrop image tags if backdrop URL is available
+        if (!string.IsNullOrEmpty(item.BackdropUrl))
+        {
+            dto.BackdropImageTags = new[] { "dynamic" };
+        }
+
+        // Set logo image tag if logo URL is available
+        if (!string.IsNullOrEmpty(item.LogoUrl))
+        {
+            dto.ImageTags ??= new Dictionary<ImageType, string>();
+            dto.ImageTags[ImageType.Logo] = "dynamic";
+            _itemCache.StoreLogoUrl(dto.Id, item.LogoUrl);
+        }
+
+        // Store in cache for later retrieval
+        _itemCache.StoreItem(dto, item.PosterUrl, item.BackdropUrl);
+
+        // Store the CatalogItem source for enrichment later
+        _itemCache.StoreCatalogSource(dto.Id, item.Source);
+
+        return Task.FromResult(dto);
+    }
+
+    /// <summary>
+    /// Build provider IDs dictionary from a CatalogItem.
+    /// </summary>
+    private Dictionary<string, string> BuildProviderIds(CatalogItem item, DynamicUri dynamicUri)
+    {
+        var ids = new Dictionary<string, string>
+        {
+            { DynamicLibraryProviderId, dynamicUri.ToProviderIdValue() }
+        };
+
+        if (!string.IsNullOrEmpty(item.ImdbId))
+        {
+            ids["Imdb"] = item.ImdbId;
+        }
+
+        if (!string.IsNullOrEmpty(item.TmdbId))
+        {
+            ids["Tmdb"] = item.TmdbId;
+        }
+
+        if (!string.IsNullOrEmpty(item.TvdbId))
+        {
+            ids["Tvdb"] = item.TvdbId;
+        }
+
+        return ids;
+    }
+
+    // ==================== Legacy TMDB/TVDB Conversion Methods ====================
+
+    /// <summary>
+    /// Convert a TMDB movie search result to a basic Jellyfin BaseItemDto.
+    /// Full details are fetched later when the user clicks on the item.
+    /// </summary>
+    public async Task<BaseItemDto> CreateMovieDtoAsync(TmdbMovieResult movie, CancellationToken cancellationToken = default)
+    {
+        var dynamicUri = DynamicUri.FromTmdb(movie.Id);
+        var imageBaseUrl = await _tmdbClient.GetImageBaseUrlAsync(cancellationToken);
+        var config = DynamicLibraryPlugin.Instance?.Configuration;
+
+        // Parse release date
+        DateTime? premiereDate = null;
+        if (!string.IsNullOrEmpty(movie.ReleaseDate) && DateTime.TryParse(movie.ReleaseDate, out var parsedDate))
+        {
+            premiereDate = parsedDate;
+        }
+
+        // Check if movie is released (for hiding play button on unreleased content)
+        var movieIsReleased = premiereDate.HasValue && premiereDate.Value <= DateTime.UtcNow;
+        var shouldBePlayable = config?.ShowUnreleasedStreams == true || movieIsReleased;
+
+        _logger.LogDebug("[DynamicLibrary] CreateMovieDto '{Name}': ReleaseDate={Date}, IsReleased={Released}, ShowUnreleasedStreams={ShowUnreleased}, ShouldBePlayable={ShouldPlay}",
+            movie.Title, premiereDate, movieIsReleased, config?.ShowUnreleasedStreams, shouldBePlayable);
+
+        var dto = new BaseItemDto
+        {
+            Id = dynamicUri.ToGuid(),
+            ServerId = _serverApplicationHost.SystemId,
+            Name = movie.Title,
+            OriginalTitle = movie.OriginalTitle,
+            Overview = movie.Overview,
+            Type = BaseItemKind.Movie,
+            MediaType = shouldBePlayable ? Jellyfin.Data.Enums.MediaType.Video : default,
+            IsFolder = false,
+            ProductionYear = movie.Year,
+            PremiereDate = premiereDate,
+            CommunityRating = (float)movie.VoteAverage,
+            ProviderIds = new Dictionary<string, string>
+            {
+                { "Tmdb", movie.Id.ToString() },
+                { DynamicLibraryProviderId, dynamicUri.ToProviderIdValue() }
+            },
+            UserData = new UserItemDataDto
+            {
+                Key = dynamicUri.ToString(),
+                PlaybackPositionTicks = 0,
+                PlayCount = 0,
+                IsFavorite = false,
+                Played = false
+            }
+        };
+
+        // Set LocationType.Virtual to hide play button on Android TV for unreleased content
+        // Android TV specifically checks LocationType to determine if content can be played
+        if (!shouldBePlayable)
+        {
+            dto.LocationType = LocationType.Virtual;
+        }
+
+        // Build image URL and set ImageTags so client knows to request images
+        string? imageUrl = null;
+        if (!string.IsNullOrEmpty(movie.PosterPath))
+        {
+            imageUrl = $"{imageBaseUrl}w500{movie.PosterPath}";
+            dto.ImageTags = new Dictionary<ImageType, string>
+            {
+                { ImageType.Primary, "dynamic" }
+            };
+            dto.PrimaryImageAspectRatio = 0.667; // Standard movie poster ratio (2:3)
+        }
+
+        // Store in cache for later retrieval (will be enriched when user clicks)
+        _itemCache.StoreItem(dto, imageUrl);
+
+        return dto;
+    }
+
+    /// <summary>
+    /// Enrich a movie DTO with full details (called when user views item details).
+    /// Routes to appropriate provider based on catalog source.
+    /// </summary>
+    public async Task<BaseItemDto> EnrichMovieDtoAsync(BaseItemDto dto, CancellationToken cancellationToken = default)
+    {
+        // Check if this is a Stremio-sourced item
+        var catalogSource = _itemCache.GetCatalogSource(dto.Id);
+
+        // Route to Stremio if:
+        // 1. Catalog source is explicitly Stremio, OR
+        // 2. Item has IMDB ID but no TMDB ID (likely Stremio-sourced)
+        var hasImdbOnly = dto.ProviderIds?.ContainsKey("Imdb") == true
+                       && dto.ProviderIds?.ContainsKey("Tmdb") != true;
+
+        if (catalogSource == CatalogSource.Stremio || hasImdbOnly)
+        {
+            _logger.LogInformation("[DynamicLibrary] Routing to Stremio enrichment for movie '{Name}' (source={Source}, hasImdbOnly={HasImdbOnly})",
+                dto.Name, catalogSource, hasImdbOnly);
+            return await EnrichMovieFromStremioAsync(dto, cancellationToken);
+        }
+
+        // Get TMDB ID from provider IDs (Direct/TMDB source)
+        if (dto.ProviderIds?.TryGetValue("Tmdb", out var tmdbIdStr) != true ||
+            !int.TryParse(tmdbIdStr, out var tmdbId))
+        {
+            return dto;
+        }
+
+        var details = await _tmdbClient.GetMovieDetailsAsync(tmdbId, cancellationToken);
+        if (details == null)
+        {
+            return dto;
+        }
+
+        var imageBaseUrl = await _tmdbClient.GetImageBaseUrlAsync(cancellationToken);
+
+        // Add IMDb ID if available
+        if (!string.IsNullOrEmpty(details.ImdbId))
+        {
+            dto.ProviderIds ??= new Dictionary<string, string>();
+            dto.ProviderIds["Imdb"] = details.ImdbId;
+        }
+
+        // Set/update PremiereDate from detailed response
+        if (!string.IsNullOrEmpty(details.ReleaseDate) && DateTime.TryParse(details.ReleaseDate, out var releaseDate))
+        {
+            dto.PremiereDate = releaseDate;
+        }
+
+        // Ensure MediaType is correct based on release status (in case it wasn't set during search)
+        var config = DynamicLibraryPlugin.Instance?.Configuration;
+        var movieIsReleased = dto.PremiereDate.HasValue && dto.PremiereDate.Value <= DateTime.UtcNow;
+        var shouldBePlayable = config?.ShowUnreleasedStreams == true || movieIsReleased;
+        dto.MediaType = shouldBePlayable ? Jellyfin.Data.Enums.MediaType.Video : default;
+
+        // Set LocationType.Virtual to hide play button on Android TV for unreleased content
+        if (!shouldBePlayable)
+        {
+            dto.LocationType = LocationType.Virtual;
+        }
+
+        _logger.LogDebug("[DynamicLibrary] EnrichMovieDto '{Name}': PremiereDate={Date}, IsReleased={Released}, ShouldBePlayable={ShouldPlay}",
+            dto.Name, dto.PremiereDate, movieIsReleased, shouldBePlayable);
+
+        // Runtime (convert minutes to ticks: 1 minute = 600,000,000 ticks)
+        if (details.Runtime.HasValue && details.Runtime > 0)
+        {
+            dto.RunTimeTicks = details.Runtime.Value * 600_000_000L;
+        }
+
+        // Tagline
+        if (!string.IsNullOrEmpty(details.Tagline))
+        {
+            dto.Taglines = new[] { details.Tagline };
+        }
+
+        // Genres
+        if (details.Genres.Count > 0)
+        {
+            dto.Genres = details.Genres.Select(g => g.Name).ToArray();
+            dto.GenreItems = details.Genres.Select(g => new NameGuidPair
+            {
+                Name = g.Name,
+                Id = Guid.Empty
+            }).ToArray();
+        }
+
+        // Studios (production companies)
+        if (details.ProductionCompanies.Count > 0)
+        {
+            dto.Studios = details.ProductionCompanies.Select(c => new NameGuidPair
+            {
+                Name = c.Name,
+                Id = Guid.Empty
+            }).ToArray();
+        }
+
+        // Cast and Crew
+        if (details.Credits != null)
+        {
+            var people = new List<BaseItemPerson>();
+
+            // Add cast (actors)
+            foreach (var cast in details.Credits.Cast.Take(20))
+            {
+                people.Add(new BaseItemPerson
+                {
+                    Name = cast.Name,
+                    Role = cast.Character,
+                    Type = PersonKind.Actor
+                });
+            }
+
+            // Add directors
+            foreach (var crew in details.Credits.Crew.Where(c => c.Job == "Director"))
+            {
+                people.Add(new BaseItemPerson
+                {
+                    Name = crew.Name,
+                    Type = PersonKind.Director
+                });
+            }
+
+            // Add writers
+            foreach (var crew in details.Credits.Crew.Where(c => c.Job == "Writer" || c.Job == "Screenplay"))
+            {
+                people.Add(new BaseItemPerson
+                {
+                    Name = crew.Name,
+                    Type = PersonKind.Writer
+                });
+            }
+
+            // Add producers (limit to 5)
+            foreach (var crew in details.Credits.Crew.Where(c => c.Job == "Producer").Take(5))
+            {
+                people.Add(new BaseItemPerson
+                {
+                    Name = crew.Name,
+                    Type = PersonKind.Producer
+                });
+            }
+
+            dto.People = people.ToArray();
+        }
+
+        // Status
+        if (!string.IsNullOrEmpty(details.Status))
+        {
+            dto.Status = details.Status;
+        }
+
+        // Content rating from release dates
+        if (details.ReleaseDates?.Results != null)
+        {
+            var usCerts = details.ReleaseDates.Results
+                .FirstOrDefault(r => r.Iso31661 == "US");
+            var cert = usCerts?.ReleaseDates
+                .Where(rd => !string.IsNullOrEmpty(rd.Certification))
+                .Select(rd => rd.Certification)
+                .FirstOrDefault();
+            if (string.IsNullOrEmpty(cert))
+            {
+                cert = details.ReleaseDates.Results
+                    .SelectMany(r => r.ReleaseDates)
+                    .Where(rd => !string.IsNullOrEmpty(rd.Certification))
+                    .Select(rd => rd.Certification)
+                    .FirstOrDefault();
+            }
+            if (!string.IsNullOrEmpty(cert))
+            {
+                dto.OfficialRating = cert;
+            }
+        }
+
+        // Keywords/Tags
+        if (details.Keywords?.Keywords != null && details.Keywords.Keywords.Count > 0)
+        {
+            dto.Tags = details.Keywords.Keywords.Select(k => k.Name).ToArray();
+        }
+
+        // Logo image
+        if (details.Images?.Logos != null && details.Images.Logos.Count > 0)
+        {
+            var bestLogo = details.Images.Logos
+                .Where(l => l.Iso6391 == "en" || l.Iso6391 == null)
+                .OrderByDescending(l => l.VoteAverage)
+                .FirstOrDefault() ?? details.Images.Logos.First();
+            var logoUrl = $"{imageBaseUrl}original{bestLogo.FilePath}";
+            _itemCache.StoreLogoUrl(dto.Id, logoUrl);
+            dto.ImageTags ??= new Dictionary<ImageType, string>();
+            dto.ImageTags[ImageType.Logo] = "dynamic";
+        }
+
+        // Update cache with enriched data
+        string? imageUrl = null;
+        if (!string.IsNullOrEmpty(details.PosterPath))
+        {
+            imageUrl = $"{imageBaseUrl}w500{details.PosterPath}";
+        }
+
+        string? backdropUrl = null;
+        if (!string.IsNullOrEmpty(details.BackdropPath))
+        {
+            backdropUrl = $"{imageBaseUrl}original{details.BackdropPath}";
+            dto.BackdropImageTags = new[] { "dynamic" };
+        }
+
+        _itemCache.StoreItem(dto, imageUrl, backdropUrl);
+
+        return dto;
+    }
+
+    /// <summary>
+    /// Enrich a series DTO with full details (called when user views item details).
+    /// Routes to appropriate provider based on catalog source.
+    /// </summary>
+    public async Task<BaseItemDto> EnrichSeriesDtoAsync(BaseItemDto dto, CancellationToken cancellationToken = default)
+    {
+        // Check if this is a Stremio-sourced item
+        var catalogSource = _itemCache.GetCatalogSource(dto.Id);
+
+        // Route to Stremio if:
+        // 1. Catalog source is explicitly Stremio, OR
+        // 2. Item has IMDB ID but no TVDB ID (likely Stremio-sourced)
+        var hasImdbOnly = dto.ProviderIds?.ContainsKey("Imdb") == true
+                       && dto.ProviderIds?.ContainsKey("Tvdb") != true;
+
+        if (catalogSource == CatalogSource.Stremio || hasImdbOnly)
+        {
+            _logger.LogInformation("[DynamicLibrary] Routing to Stremio enrichment for series '{Name}' (source={Source}, hasImdbOnly={HasImdbOnly})",
+                dto.Name, catalogSource, hasImdbOnly);
+            return await EnrichSeriesFromStremioAsync(dto, cancellationToken);
+        }
+
+        // Get TVDB ID from provider IDs (Direct/TVDB source)
+        if (dto.ProviderIds?.TryGetValue("Tvdb", out var tvdbIdStr) != true ||
+            !int.TryParse(tvdbIdStr, out var tvdbId))
+        {
+            return dto;
+        }
+
+        var details = await _tvdbClient.GetSeriesExtendedAsync(tvdbId, cancellationToken);
+        if (details == null)
+        {
+            return dto;
+        }
+
+        // Get language settings
+        var config = DynamicLibraryPlugin.Instance?.Configuration;
+        var languageCode = config?.GetTvdbLanguageCode();
+
+        _logger.LogInformation("[DynamicLibrary] EnrichSeriesDto: {Name}, LanguageCode={Lang}", details.Name, languageCode ?? "null");
+        _logger.LogInformation("[DynamicLibrary] EnrichSeriesDto: AvailableTranslations={Langs}",
+            details.NameTranslations != null ? string.Join(",", details.NameTranslations) : "none");
+
+        // Fetch translation if language override is enabled and translation is available
+        string? localizedName = null;
+        string? localizedOverview = null;
+
+        if (!string.IsNullOrEmpty(languageCode) && details.HasTranslation(languageCode))
+        {
+            var translation = await _tvdbClient.GetSeriesTranslationAsync(details.Id, languageCode, cancellationToken);
+            if (translation != null)
+            {
+                _logger.LogInformation("[DynamicLibrary] EnrichSeriesDto: Got translation - Name={Name}", translation.Name);
+                localizedName = translation.Name;
+                localizedOverview = translation.Overview;
+            }
+        }
+
+        // Update name with localized version if available
+        if (!string.IsNullOrEmpty(localizedName))
+        {
+            dto.Name = localizedName;
+            // Store original name if different
+            if (localizedName != details.Name)
+            {
+                dto.OriginalTitle = details.Name;
+            }
+        }
+
+        // Update overview with localized version if available
+        if (!string.IsNullOrEmpty(localizedOverview))
+        {
+            dto.Overview = localizedOverview;
+        }
+        else if (!string.IsNullOrEmpty(details.Overview))
+        {
+            dto.Overview = details.Overview;
+        }
+
+        // Add IMDb ID if available
+        if (!string.IsNullOrEmpty(details.ImdbId))
+        {
+            dto.ProviderIds ??= new Dictionary<string, string>();
+            dto.ProviderIds["Imdb"] = details.ImdbId;
+        }
+
+        // Average runtime (convert minutes to ticks: 1 minute = 600,000,000 ticks)
+        if (details.AverageRuntime.HasValue && details.AverageRuntime > 0)
+        {
+            dto.RunTimeTicks = details.AverageRuntime.Value * 600_000_000L;
+        }
+
+        // Status
+        if (details.Status != null)
+        {
+            dto.Status = details.Status.Name;
+        }
+
+        // Genres
+        if (details.Genres?.Count > 0)
+        {
+            dto.Genres = details.Genres.Select(g => g.Name).ToArray();
+            dto.GenreItems = details.Genres.Select(g => new NameGuidPair
+            {
+                Name = g.Name,
+                Id = Guid.Empty
+            }).ToArray();
+        }
+
+        // Studios (network)
+        if (details.OriginalNetwork != null)
+        {
+            dto.Studios = new[]
+            {
+                new NameGuidPair
+                {
+                    Name = details.OriginalNetwork.Name,
+                    Id = Guid.Empty
+                }
+            };
+        }
+
+        // Season count
+        if (details.Seasons?.Count > 0)
+        {
+            // Filter out specials (season 0) for the count
+            var regularSeasons = details.Seasons.Where(s => s.Number > 0).ToList();
+            dto.ChildCount = regularSeasons.Count;
+        }
+
+        // Check if this is anime (needed for episode MediaSources and AniList lookup)
+        var isAnime = DynamicLibraryService.IsAnime(dto);
+
+        // If this is anime, get AniList ID using cascading lookup strategy:
+        // 1. TVDB RemoteIds (most reliable)
+        // 2. MAL ID -> AniList lookup (highly reliable)
+        // 3. Title + Year search (fallback)
+        if (isAnime)
+        {
+            int? anilistId = null;
+
+            // Strategy 1: Check TVDB RemoteIds for AniList ID (most reliable - direct link)
+            if (!string.IsNullOrEmpty(details.AniListId) && int.TryParse(details.AniListId, out var tvdbAnilistId))
+            {
+                anilistId = tvdbAnilistId;
+                _logger.LogInformation("[DynamicLibrary] EnrichSeriesDto: Got AniList ID {AniListId} from TVDB RemoteIds for '{Name}'",
+                    anilistId, dto.Name);
+            }
+            // Strategy 2: Use MAL ID to lookup AniList ID (highly reliable - MAL/AniList have good linking)
+            else if (!string.IsNullOrEmpty(details.MalId) && int.TryParse(details.MalId, out var malId))
+            {
+                anilistId = await _aniListClient.SearchByMalIdAsync(malId, cancellationToken);
+                if (anilistId.HasValue)
+                {
+                    _logger.LogInformation("[DynamicLibrary] EnrichSeriesDto: Got AniList ID {AniListId} via MAL ID {MalId} for '{Name}'",
+                        anilistId, malId, dto.Name);
+                }
+                else
+                {
+                    _logger.LogDebug("[DynamicLibrary] EnrichSeriesDto: MAL ID {MalId} lookup failed for '{Name}'", malId, dto.Name);
+                }
+            }
+            // Strategy 3: Fall back to improved title search with year matching
+            else
+            {
+                anilistId = await _aniListClient.SearchByTitleAndYearAsync(dto.Name ?? "", dto.ProductionYear, cancellationToken);
+                if (anilistId.HasValue)
+                {
+                    _logger.LogInformation("[DynamicLibrary] EnrichSeriesDto: Got AniList ID {AniListId} via title+year search for '{Name}' ({Year})",
+                        anilistId, dto.Name, dto.ProductionYear);
+                }
+                else
+                {
+                    _logger.LogDebug("[DynamicLibrary] EnrichSeriesDto: Title+year search failed for '{Name}' ({Year})", dto.Name, dto.ProductionYear);
+                }
+            }
+
+            // Store AniList ID if found
+            if (anilistId.HasValue)
+            {
+                dto.ProviderIds ??= new Dictionary<string, string>();
+                dto.ProviderIds["AniList"] = anilistId.Value.ToString();
+            }
+
+            // Also store MAL ID if available from TVDB (useful for other integrations)
+            if (!string.IsNullOrEmpty(details.MalId))
+            {
+                dto.ProviderIds ??= new Dictionary<string, string>();
+                dto.ProviderIds["Mal"] = details.MalId;
+                _logger.LogDebug("[DynamicLibrary] EnrichSeriesDto: Added MAL ID {MalId} for '{Name}'", details.MalId, dto.Name);
+            }
+        }
+
+        // Preserve any existing backdrop from search result
+        var existingBackdropUrl = _itemCache.GetBackdropUrl(dto.Id);
+        if (!string.IsNullOrEmpty(existingBackdropUrl))
+        {
+            dto.BackdropImageTags = new[] { "dynamic" };
+        }
+
+        // Store series in cache BEFORE creating episodes (so episodes can look it up with all provider IDs)
+        _itemCache.StoreItem(dto, _itemCache.GetImageUrl(dto.Id), existingBackdropUrl);
+
+        // Get series IMDB ID to pass to episodes
+        var seriesImdbId = dto.ProviderIds?.TryGetValue("Imdb", out var imdb) == true ? imdb : null;
+
+        // Create seasons and episodes (with translations if language override enabled)
+        await CreateSeasonsAndEpisodesAsync(details, dto.Id, dto.Name ?? "Unknown Series", languageCode, isAnime, seriesImdbId, cancellationToken);
+
+        return dto;
+    }
+
+    /// <summary>
+    /// Enrich a movie DTO with full details from Stremio catalog provider.
+    /// </summary>
+    private async Task<BaseItemDto> EnrichMovieFromStremioAsync(BaseItemDto dto, CancellationToken cancellationToken)
+    {
+        // Get IMDB ID from provider IDs
+        if (dto.ProviderIds?.TryGetValue("Imdb", out var imdbId) != true || string.IsNullOrEmpty(imdbId))
+        {
+            _logger.LogDebug("[DynamicLibrary] EnrichMovieFromStremio: No IMDB ID found for '{Name}'", dto.Name);
+            return dto;
+        }
+
+        _logger.LogDebug("[DynamicLibrary] EnrichMovieFromStremio: Fetching details for '{Name}' (IMDB: {ImdbId})", dto.Name, imdbId);
+
+        var details = await _stremioCatalogProvider.GetMovieDetailsAsync(imdbId, cancellationToken);
+        if (details == null)
+        {
+            _logger.LogDebug("[DynamicLibrary] EnrichMovieFromStremio: No details found for '{Name}'", dto.Name);
+            return dto;
+        }
+
+        // Update DTO with details from Stremio
+        EnrichDtoFromCatalogItemDetails(dto, details);
+
+        // Set backdrop image tags if backdrop URL is available
+        var backdropUrl = details.BackdropUrl ?? _itemCache.GetBackdropUrl(dto.Id);
+        if (!string.IsNullOrEmpty(backdropUrl))
+        {
+            dto.BackdropImageTags = new[] { "dynamic" };
+        }
+
+        // Update cache with enriched data
+        _itemCache.StoreItem(dto, details.PosterUrl ?? _itemCache.GetImageUrl(dto.Id), backdropUrl);
+
+        _logger.LogDebug("[DynamicLibrary] EnrichMovieFromStremio: Enriched '{Name}' with runtime={Runtime}, genres={Genres}",
+            dto.Name, dto.RunTimeTicks, dto.Genres != null ? string.Join(",", dto.Genres) : "none");
+
+        return dto;
+    }
+
+    /// <summary>
+    /// Enrich a series DTO with full details from Stremio catalog provider.
+    /// </summary>
+    private async Task<BaseItemDto> EnrichSeriesFromStremioAsync(BaseItemDto dto, CancellationToken cancellationToken)
+    {
+        // Get IMDB ID from provider IDs
+        if (dto.ProviderIds?.TryGetValue("Imdb", out var imdbId) != true || string.IsNullOrEmpty(imdbId))
+        {
+            _logger.LogDebug("[DynamicLibrary] EnrichSeriesFromStremio: No IMDB ID found for '{Name}'", dto.Name);
+            return dto;
+        }
+
+        _logger.LogDebug("[DynamicLibrary] EnrichSeriesFromStremio: Fetching details for '{Name}' (IMDB: {ImdbId})", dto.Name, imdbId);
+
+        var details = await _stremioCatalogProvider.GetSeriesDetailsAsync(imdbId, cancellationToken);
+        if (details == null)
+        {
+            _logger.LogDebug("[DynamicLibrary] EnrichSeriesFromStremio: No details found for '{Name}'", dto.Name);
+            return dto;
+        }
+
+        // Update DTO with details from Stremio
+        EnrichDtoFromCatalogItemDetails(dto, details);
+
+        // Set backdrop image tags if backdrop URL is available
+        var backdropUrl = details.BackdropUrl ?? _itemCache.GetBackdropUrl(dto.Id);
+        if (!string.IsNullOrEmpty(backdropUrl))
+        {
+            dto.BackdropImageTags = new[] { "dynamic" };
+        }
+
+        // Store series in cache BEFORE creating episodes
+        _itemCache.StoreItem(dto, details.PosterUrl ?? _itemCache.GetImageUrl(dto.Id), backdropUrl);
+
+        // Check if this is anime
+        var isAnime = DynamicLibraryService.IsAnime(dto);
+
+        // Create seasons and episodes from Stremio details
+        if (details.Seasons?.Count > 0)
+        {
+            await CreateSeasonsAndEpisodesFromStremioAsync(details, dto.Id, dto.Name ?? "Unknown Series", isAnime, cancellationToken);
+        }
+
+        _logger.LogDebug("[DynamicLibrary] EnrichSeriesFromStremio: Enriched '{Name}' with {SeasonCount} seasons",
+            dto.Name, details.Seasons?.Count ?? 0);
+
+        return dto;
+    }
+
+    /// <summary>
+    /// Enrich a BaseItemDto with details from CatalogItemDetails.
+    /// Used for both movies and series from Stremio provider.
+    /// </summary>
+    private void EnrichDtoFromCatalogItemDetails(BaseItemDto dto, CatalogItemDetails details)
+    {
+        var config = DynamicLibraryPlugin.Instance?.Configuration;
+
+        // Update overview if not already set or if more detailed
+        if (!string.IsNullOrEmpty(details.Overview) && (string.IsNullOrEmpty(dto.Overview) || details.Overview.Length > dto.Overview.Length))
+        {
+            dto.Overview = details.Overview;
+        }
+
+        // Update PremiereDate and ProductionYear if available
+        if (details.ReleaseDate.HasValue)
+        {
+            dto.PremiereDate = details.ReleaseDate;
+        }
+        if (details.Year.HasValue)
+        {
+            dto.ProductionYear = details.Year;
+        }
+
+        // Runtime (convert minutes to ticks: 1 minute = 600,000,000 ticks)
+        if (details.RuntimeMinutes.HasValue && details.RuntimeMinutes > 0)
+        {
+            dto.RunTimeTicks = details.RuntimeMinutes.Value * 600_000_000L;
+        }
+
+        // Rating
+        if (details.Rating.HasValue)
+        {
+            dto.CommunityRating = (float)details.Rating.Value;
+        }
+
+        // Genres
+        if (details.Genres?.Count > 0)
+        {
+            dto.Genres = details.Genres.ToArray();
+            dto.GenreItems = details.Genres.Select(g => new NameGuidPair
+            {
+                Name = g,
+                Id = Guid.Empty
+            }).ToArray();
+        }
+
+        // Tagline
+        if (!string.IsNullOrEmpty(details.Tagline))
+        {
+            dto.Taglines = new[] { details.Tagline };
+        }
+
+        // Studios
+        if (details.Studios?.Count > 0)
+        {
+            dto.Studios = details.Studios.Select(s => new NameGuidPair
+            {
+                Name = s,
+                Id = Guid.Empty
+            }).ToArray();
+        }
+
+        // Countries / ProductionLocations
+        if (details.Countries?.Count > 0)
+        {
+            dto.ProductionLocations = details.Countries.ToArray();
+        }
+
+        // OfficialRating
+        if (!string.IsNullOrEmpty(details.OfficialRating))
+        {
+            dto.OfficialRating = details.OfficialRating;
+        }
+
+        // Tags
+        if (details.Tags?.Count > 0)
+        {
+            dto.Tags = details.Tags.ToArray();
+        }
+
+        // Logo
+        if (!string.IsNullOrEmpty(details.LogoUrl))
+        {
+            _itemCache.StoreLogoUrl(dto.Id, details.LogoUrl);
+            dto.ImageTags ??= new Dictionary<ImageType, string>();
+            dto.ImageTags[ImageType.Logo] = "dynamic";
+        }
+
+        // Cast
+        if (details.Cast?.Count > 0)
+        {
+            var people = details.Cast.Select(c => new BaseItemPerson
+            {
+                Name = c.Name,
+                Role = c.Character,
+                Type = PersonKind.Actor
+            }).ToList();
+
+            // Add directors if available
+            if (details.Directors?.Count > 0)
+            {
+                foreach (var director in details.Directors)
+                {
+                    people.Add(new BaseItemPerson
+                    {
+                        Name = director,
+                        Type = PersonKind.Director
+                    });
+                }
+            }
+
+            // Add writers if available
+            if (details.Writers?.Count > 0)
+            {
+                foreach (var writer in details.Writers)
+                {
+                    people.Add(new BaseItemPerson
+                    {
+                        Name = writer,
+                        Type = PersonKind.Writer
+                    });
+                }
+            }
+
+            dto.People = people.ToArray();
+        }
+
+        // Status (for series)
+        if (!string.IsNullOrEmpty(details.Status))
+        {
+            dto.Status = details.Status;
+        }
+
+        // Season count (for series)
+        if (details.Seasons?.Count > 0)
+        {
+            dto.ChildCount = details.Seasons.Count;
+        }
+
+        // Check if content is released
+        var isReleased = details.ReleaseDate.HasValue && details.ReleaseDate.Value <= DateTime.UtcNow;
+        var shouldBePlayable = config?.ShowUnreleasedStreams == true || isReleased;
+
+        // Update MediaType for movies
+        if (dto.Type == BaseItemKind.Movie)
+        {
+            dto.MediaType = shouldBePlayable ? Jellyfin.Data.Enums.MediaType.Video : default;
+            if (!shouldBePlayable)
+            {
+                dto.LocationType = LocationType.Virtual;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Create seasons and episodes from Stremio catalog provider details.
+    /// Enforces Official (TMDB/TVDB) ordering if available, while preserving Stremio mapping for playback.
+    /// </summary>
+    private async Task CreateSeasonsAndEpisodesFromStremioAsync(
+        CatalogItemDetails details,
+        Guid seriesId,
+        string seriesName,
+        bool isAnime,
+        CancellationToken cancellationToken)
+    {
+        if (details.Seasons == null || details.Seasons.Count == 0)
+        {
+            return;
+        }
+
+        var config = DynamicLibraryPlugin.Instance?.Configuration;
+        var seriesImdbId = details.ImdbId;
+        var seriesImageUrl = _itemCache.GetImageUrl(seriesId);
+
+        // PRIORITY 1: TMDB Structure (Overseerr-like behavior)
+        // TMDB handles Anime seasons (DBS=1, AoT=4) and metadata very well.
+        if (_tmdbClient.IsConfigured && !string.IsNullOrEmpty(seriesImdbId))
+        {
+            try
+            {
+                // Find TMDB ID from IMDB ID
+                var tmdbSeries = await _tmdbClient.GetSeriesByExternalIdAsync(seriesImdbId, cancellationToken);
+                if (tmdbSeries != null)
+                {
+                    _logger.LogInformation("[DynamicLibrary] Stremio Series '{Name}': TMDB Lookup via IMDB {ImdbId} -> Found (ID: {TmdbId})",
+                        seriesName, seriesImdbId, tmdbSeries.Id);
+
+                    await CreateSeasonsAndEpisodesFromStremioWithTmdbOrderAsync(
+                        details, tmdbSeries, seriesId, seriesName, seriesImdbId, seriesImageUrl, isAnime, config, cancellationToken);
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[DynamicLibrary] Failed to fetch official TMDB data for '{Name}', falling back", seriesName);
+            }
+        }
+
+        // PRIORITY 2: TVDB Structure (Legacy Fallback)
+        TvdbSeriesExtended? tvdbSeries = null;
+        if (_tvdbClient.IsConfigured && !string.IsNullOrEmpty(seriesImdbId))
+        {
+            try 
+            {
+                tvdbSeries = await _tvdbClient.GetSeriesByRemoteIdAsync(seriesImdbId, cancellationToken);
+                _logger.LogInformation("[DynamicLibrary] Stremio Series '{Name}': TVDB Lookup via IMDB {ImdbId} -> {Result}",
+                    seriesName, seriesImdbId, tvdbSeries != null ? "Found" : "Not Found");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[DynamicLibrary] Failed to fetch official TVDB data for '{Name}', falling back to Stremio structure", seriesName);
+            }
+        }
+
+        if (tvdbSeries?.Episodes != null && tvdbSeries.Episodes.Count > 0)
+        {
+            await CreateSeasonsAndEpisodesFromStremioWithOfficialOrderAsync(
+                details, tvdbSeries, seriesId, seriesName, seriesImdbId, seriesImageUrl, isAnime, config);
+            return;
+        }
+
+        // PRIORITY 3: Stremio Raw Structure
+        _logger.LogInformation("[DynamicLibrary] Using Stremio structure for '{Name}' (Source Order)", seriesName);
+
+        // Create season DTOs
+        var seasonDtos = new List<BaseItemDto>();
+        var seasonIdMap = new Dictionary<int, Guid>();
+
+        // Filter out Season 0 (Specials)
+        foreach (var season in details.Seasons.Where(s => s.Number > 0).OrderBy(s => s.Number))
+        {
+            var seasonId = !string.IsNullOrEmpty(seriesImdbId)
+                ? _libraryManager.GetNewItemId($"/catalogue/shows/{seriesImdbId}/Season {season.Number:D2}", typeof(MediaBrowser.Controller.Entities.TV.Season))
+                : GenerateGuid($"stremio:season:{seriesId:N}:{season.Number}");
+
+            var seasonDto = new BaseItemDto
+            {
+                Id = seasonId,
+                ServerId = _serverApplicationHost.SystemId,
+                Name = season.Name ?? $"Season {season.Number}",
+                Type = BaseItemKind.Season,
+                IsFolder = true,
+                IndexNumber = season.Number,
+                ParentId = seriesId,
+                SeriesId = seriesId,
+                SeriesName = seriesName,
+                ProviderIds = new Dictionary<string, string>
+                {
+                    { DynamicLibraryProviderId, $"stremio:season:{seriesId:N}:{season.Number}" }
+                },
+                UserData = new UserItemDataDto
+                {
+                    Key = $"stremio:season:{seriesId:N}:{season.Number}",
+                    PlaybackPositionTicks = 0,
+                    PlayCount = 0,
+                    IsFavorite = false,
+                    Played = false,
+                    UnplayedItemCount = 0
+                }
+            };
+
+            // Set series poster as season poster
+            if (!string.IsNullOrEmpty(seriesImageUrl))
+            {
+                seasonDto.ImageTags = new Dictionary<ImageType, string>
+                {
+                    { ImageType.Primary, "dynamic" }
+                };
+                seasonDto.PrimaryImageAspectRatio = 0.667;
+                _itemCache.StoreItem(seasonDto, seriesImageUrl);
+            }
+            else
+            {
+                _itemCache.StoreItem(seasonDto);
+            }
+
+            seasonDtos.Add(seasonDto);
+            seasonIdMap[season.Number] = seasonId;
+        }
+
+        // Update episode counts for each season
+        if (details.Episodes?.Count > 0)
+        {
+            var episodesBySeason = details.Episodes.GroupBy(e => e.SeasonNumber);
+            foreach (var group in episodesBySeason)
+            {
+                var seasonDto = seasonDtos.FirstOrDefault(s => s.IndexNumber == group.Key);
+                if (seasonDto != null)
+                {
+                    seasonDto.ChildCount = group.Count();
+                }
+            }
+        }
+
+        _itemCache.StoreSeasonsForSeries(seriesId, seasonDtos);
+
+        // Create episode DTOs
+        if (details.Episodes?.Count > 0)
+        {
+            var episodeDtos = new List<BaseItemDto>();
+
+            foreach (var episode in details.Episodes
+                .Where(e => e.SeasonNumber > 0) // Skip Season 0 episodes
+                .OrderBy(e => e.SeasonNumber)
+                .ThenBy(e => e.EpisodeNumber))
+            {
+                if (!seasonIdMap.TryGetValue(episode.SeasonNumber, out var seasonId))
+                {
+                    continue;
+                }
+
+                var episodeId = !string.IsNullOrEmpty(seriesImdbId)
+                    ? _libraryManager.GetNewItemId($"/catalogue/shows/{seriesImdbId}/Season {episode.SeasonNumber:D2}/S{episode.SeasonNumber:D2}E{episode.EpisodeNumber:D2}.strm", typeof(MediaBrowser.Controller.Entities.TV.Episode))
+                    : GenerateGuid($"stremio:episode:{seriesId:N}:{episode.SeasonNumber}:{episode.EpisodeNumber}");
+
+                // Calculate absolute episode number
+                var episodesInPriorSeasons = details.Episodes
+                    .Count(e => e.SeasonNumber < episode.SeasonNumber);
+                var absoluteNumber = episodesInPriorSeasons + episode.EpisodeNumber;
+
+                // Check if episode is released
+                var isReleased = episode.AirDate.HasValue && episode.AirDate.Value <= DateTime.UtcNow;
+                var shouldBePlayable = config?.ShowUnreleasedStreams == true || isReleased;
+
+                var episodeDto = new BaseItemDto
+                {
+                    Id = episodeId,
+                    ServerId = _serverApplicationHost.SystemId,
+                    Name = episode.Name ?? $"Episode {episode.EpisodeNumber}",
+                    Overview = episode.Overview,
+                    Type = BaseItemKind.Episode,
+                    MediaType = shouldBePlayable ? Jellyfin.Data.Enums.MediaType.Video : default,
+                    IsFolder = false,
+                    IndexNumber = episode.EpisodeNumber,
+                    ParentIndexNumber = episode.SeasonNumber,
+                    ParentId = seasonId,
+                    SeasonId = seasonId,
+                    SeriesId = seriesId,
+                    SeriesName = seriesName,
+                    PremiereDate = episode.AirDate,
+                    ProductionYear = episode.AirDate?.Year,
+                    ProviderIds = new Dictionary<string, string>
+                    {
+                        { DynamicLibraryProviderId, $"stremio:episode:{seriesId:N}:{episode.SeasonNumber}:{episode.EpisodeNumber}" },
+                        { "AbsoluteNumber", absoluteNumber.ToString() },
+                        // Store Stremio coordinates explicitly for consistency
+                        { "StremioSeason", episode.SeasonNumber.ToString() },
+                        { "StremioEpisode", episode.EpisodeNumber.ToString() }
+                    },
+                    UserData = new UserItemDataDto
+                    {
+                        Key = $"stremio:episode:{seriesId:N}:{episode.SeasonNumber}:{episode.EpisodeNumber}",
+                        PlaybackPositionTicks = 0,
+                        PlayCount = 0,
+                        IsFavorite = false,
+                        Played = false
+                    }
+                };
+
+                if (!shouldBePlayable)
+                {
+                    episodeDto.LocationType = LocationType.Virtual;
+                }
+
+                if (!string.IsNullOrEmpty(seriesImdbId))
+                {
+                    episodeDto.ProviderIds["SeriesImdb"] = seriesImdbId;
+                }
+
+                // Episode runtime (from catalog data or series fallback)
+                if (episode.RuntimeMinutes.HasValue && episode.RuntimeMinutes > 0)
+                {
+                    episodeDto.RunTimeTicks = episode.RuntimeMinutes.Value * 600_000_000L;
+                }
+                else
+                {
+                    var seriesDto = _itemCache.GetItem(seriesId);
+                    if (seriesDto?.RunTimeTicks > 0)
+                    {
+                        episodeDto.RunTimeTicks = seriesDto.RunTimeTicks.Value;
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(episode.ImageUrl))
+                {
+                    episodeDto.ImageTags = new Dictionary<ImageType, string>
+                    {
+                        { ImageType.Primary, "dynamic" }
+                    };
+                    episodeDto.PrimaryImageAspectRatio = 1.78;
+                    _itemCache.StoreItem(episodeDto, episode.ImageUrl);
+                }
+                else
+                {
+                    _itemCache.StoreItem(episodeDto);
+                }
+
+                // Add MediaSources logic (Anime audio versions)
+                AddAnimeMediaSourcesToDto(episodeDto, seriesId, config, isAnime, shouldBePlayable);
+
+                episodeDtos.Add(episodeDto);
+            }
+
+            _itemCache.StoreEpisodesForSeries(seriesId, episodeDtos);
+        }
+    }
+
+    /// <summary>
+    /// Helper to map Stremio episodes to Official TMDB order.
+    /// </summary>
+    private async Task CreateSeasonsAndEpisodesFromStremioWithTmdbOrderAsync(
+        CatalogItemDetails stremioDetails,
+        TmdbSeriesDetails tmdbSeries,
+        Guid seriesId,
+        string seriesName,
+        string? seriesImdbId,
+        string? seriesImageUrl,
+        bool isAnime,
+        PluginConfiguration? config,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("[DynamicLibrary] Mapping Stremio episodes to Official TMDB Order for '{Name}'", seriesName);
+
+        // 1. Build a map of Stremio episodes by Absolute Number (calculated)
+        var stremioEpisodesByAbsolute = new Dictionary<int, CatalogEpisodeInfo>();
+        var stremioEpisodes = stremioDetails.Episodes?
+            .OrderBy(e => e.SeasonNumber)
+            .ThenBy(e => e.EpisodeNumber)
+            .ToList() ?? new List<CatalogEpisodeInfo>();
+
+        int absoluteCounter = 0;
+        foreach (var ep in stremioEpisodes)
+        {
+            if (ep.SeasonNumber > 0)
+            {
+                absoluteCounter++;
+                stremioEpisodesByAbsolute[absoluteCounter] = ep;
+            }
+        }
+
+        // 2. Create TMDB Season DTOs
+        var seasonDtos = new List<BaseItemDto>();
+        var seasonIdMap = new Dictionary<int, Guid>();
+        var imageBaseUrl = await _tmdbClient.GetImageBaseUrlAsync(cancellationToken);
+
+        var tmdbSeasons = tmdbSeries.Seasons
+            .Where(s => s.SeasonNumber > 0)
+            .OrderBy(s => s.SeasonNumber)
+            .ToList();
+
+        foreach (var season in tmdbSeasons)
+        {
+            var seasonId = GenerateGuid($"tmdb:season:{tmdbSeries.Id}:{season.SeasonNumber}");
+            var seasonDto = new BaseItemDto
+            {
+                Id = seasonId,
+                ServerId = _serverApplicationHost.SystemId,
+                Name = season.Name ?? $"Season {season.SeasonNumber}",
+                Type = BaseItemKind.Season,
+                IsFolder = true,
+                IndexNumber = season.SeasonNumber,
+                ParentId = seriesId,
+                SeriesId = seriesId,
+                SeriesName = seriesName,
+                ProviderIds = new Dictionary<string, string>
+                {
+                    { "Tmdb", season.Id.ToString() },
+                    { DynamicLibraryProviderId, $"tmdb:season:{season.Id}" }
+                },
+                UserData = new UserItemDataDto
+                {
+                    Key = $"tmdb:season:{season.Id}",
+                    PlaybackPositionTicks = 0,
+                    PlayCount = 0,
+                    IsFavorite = false,
+                    Played = false,
+                    UnplayedItemCount = 0
+                }
+            };
+
+            // Image handling (Series poster priority for consistency, or season poster)
+            var imageUrl = !string.IsNullOrEmpty(seriesImageUrl) ? seriesImageUrl : 
+                          (!string.IsNullOrEmpty(season.PosterPath) ? $"{imageBaseUrl}w500{season.PosterPath}" : null);
+
+            if (!string.IsNullOrEmpty(imageUrl))
+            {
+                seasonDto.ImageTags = new Dictionary<ImageType, string> { { ImageType.Primary, "dynamic" } };
+                seasonDto.PrimaryImageAspectRatio = 0.667;
+                _itemCache.StoreItem(seasonDto, imageUrl);
+            }
+            else
+            {
+                _itemCache.StoreItem(seasonDto);
+            }
+
+            seasonDtos.Add(seasonDto);
+            seasonIdMap[season.SeasonNumber] = seasonId;
+        }
+        _itemCache.StoreSeasonsForSeries(seriesId, seasonDtos);
+
+        // 3. Create Episode DTOs mapping TMDB -> Stremio
+        var episodeDtos = new List<BaseItemDto>();
+        int tmdbAbsoluteCounter = 0;
+
+        foreach (var season in tmdbSeasons)
+        {
+            if (season.Episodes == null) continue;
+
+            foreach (var tmdbEp in season.Episodes.OrderBy(e => e.EpisodeNumber))
+            {
+                tmdbAbsoluteCounter++;
+                
+                if (!seasonIdMap.TryGetValue(tmdbEp.SeasonNumber, out var seasonId)) continue;
+
+                // Match with Stremio source by absolute number
+                stremioEpisodesByAbsolute.TryGetValue(tmdbAbsoluteCounter, out var stremioSource);
+
+                // If no source and not showing unreleased, skip
+                if (stremioSource == null && config?.ShowUnreleasedStreams != true) continue;
+
+                var episodeDto = CreateTmdbEpisodeDto(tmdbEp, seriesId, seriesName, seasonId, imageBaseUrl, tmdbSeries.Id);
+
+                if (stremioSource != null)
+                {
+                    episodeDto.ProviderIds ??= new Dictionary<string, string>();
+                    episodeDto.ProviderIds["StremioSeason"] = stremioSource.SeasonNumber.ToString();
+                    episodeDto.ProviderIds["StremioEpisode"] = stremioSource.EpisodeNumber.ToString();
+                    episodeDto.ProviderIds["AbsoluteNumber"] = tmdbAbsoluteCounter.ToString();
+                }
+                else
+                {
+                    episodeDto.LocationType = LocationType.Virtual;
+                }
+
+                if (!string.IsNullOrEmpty(seriesImdbId))
+                {
+                    episodeDto.ProviderIds ??= new Dictionary<string, string>();
+                    episodeDto.ProviderIds["SeriesImdb"] = seriesImdbId;
+                }
+
+                var isReleased = episodeDto.PremiereDate.HasValue && episodeDto.PremiereDate.Value <= DateTime.UtcNow;
+                var shouldBePlayable = config?.ShowUnreleasedStreams == true || isReleased;
+
+                episodeDto.MediaType = shouldBePlayable ? Jellyfin.Data.Enums.MediaType.Video : default;
+                if (!shouldBePlayable)
+                {
+                    episodeDto.LocationType = LocationType.Virtual;
+                }
+
+                if (stremioSource != null)
+                {
+                    AddAnimeMediaSourcesToDto(episodeDto, seriesId, config, isAnime, shouldBePlayable);
+                }
+
+                episodeDtos.Add(episodeDto);
+            }
+        }
+
+        _itemCache.StoreEpisodesForSeries(seriesId, episodeDtos);
+        _logger.LogInformation("[DynamicLibrary] Created {Count} TMDB episodes mapped to Stremio sources for '{Name}'", 
+            episodeDtos.Count, seriesName);
+    }
+
+    private BaseItemDto CreateTmdbEpisodeDto(TmdbEpisode episode, Guid seriesId, string seriesName, Guid seasonId, string imageBaseUrl, int tmdbSeriesId)
+    {
+        var episodeId = GenerateGuid($"tmdb:episode:{episode.Id}");
+        
+        DateTime? premiereDate = null;
+        if (!string.IsNullOrEmpty(episode.AirDate) && DateTime.TryParse(episode.AirDate, out var parsedDate))
+        {
+            premiereDate = parsedDate;
+        }
+
+        var dto = new BaseItemDto
+        {
+            Id = episodeId,
+            ServerId = _serverApplicationHost.SystemId,
+            Name = episode.Name,
+            Overview = episode.Overview,
+            Type = BaseItemKind.Episode,
+            IsFolder = false,
+            IndexNumber = episode.EpisodeNumber,
+            ParentIndexNumber = episode.SeasonNumber,
+            ParentId = seasonId,
+            SeasonId = seasonId,
+            SeriesId = seriesId,
+            SeriesName = seriesName,
+            PremiereDate = premiereDate,
+            ProductionYear = premiereDate?.Year,
+            ProviderIds = new Dictionary<string, string>
+            {
+                { "Tmdb", episode.Id.ToString() },
+                { "SeriesTmdb", tmdbSeriesId.ToString() },
+                { DynamicLibraryProviderId, $"tmdb:episode:{episode.Id}" }
+            },
+            UserData = new UserItemDataDto
+            {
+                Key = $"tmdb:episode:{episode.Id}",
+                PlaybackPositionTicks = 0,
+                PlayCount = 0,
+                IsFavorite = false,
+                Played = false
+            }
+        };
+
+        // Runtime (convert minutes to ticks)
+        // Use episode runtime if available, otherwise fall back to series average runtime
+        if (episode.Runtime.HasValue && episode.Runtime > 0)
+        {
+            dto.RunTimeTicks = episode.Runtime.Value * 600_000_000L;
+        }
+        else
+        {
+            // Fall back to series average runtime from cache
+            var seriesDto = _itemCache.GetItem(seriesId);
+            if (seriesDto?.RunTimeTicks > 0)
+            {
+                dto.RunTimeTicks = seriesDto.RunTimeTicks.Value;
+            }
+        }
+
+        string? imageUrl = !string.IsNullOrEmpty(episode.StillPath) ? $"{imageBaseUrl}w500{episode.StillPath}" : null;
+        if (imageUrl != null)
+        {
+            dto.ImageTags = new Dictionary<ImageType, string> { { ImageType.Primary, "dynamic" } };
+            dto.PrimaryImageAspectRatio = 1.78;
+            _itemCache.StoreItem(dto, imageUrl);
+        }
+        else
+        {
+            _itemCache.StoreItem(dto);
+        }
+
+        return dto;
+    }
+
+    /// <summary>
+    /// Helper to map Stremio episodes to Official TVDB order.
+    /// </summary>
+    private async Task CreateSeasonsAndEpisodesFromStremioWithOfficialOrderAsync(
+        CatalogItemDetails stremioDetails,
+        TvdbSeriesExtended tvdbSeries,
+        Guid seriesId,
+        string seriesName,
+        string? seriesImdbId,
+        string? seriesImageUrl,
+        bool isAnime,
+        PluginConfiguration? config)
+    {
+        _logger.LogInformation("[DynamicLibrary] Mapping Stremio episodes to Official TVDB Order for '{Name}'", seriesName);
+
+        // 1. Build a map of Stremio episodes by Absolute Number (calculated)
+        var stremioEpisodesByAbsolute = new Dictionary<int, CatalogEpisodeInfo>();
+        var stremioEpisodes = stremioDetails.Episodes?
+            .OrderBy(e => e.SeasonNumber)
+            .ThenBy(e => e.EpisodeNumber)
+            .ToList() ?? new List<CatalogEpisodeInfo>();
+
+        int absoluteCounter = 0;
+        foreach (var ep in stremioEpisodes)
+        {
+            if (ep.SeasonNumber > 0)
+            {
+                absoluteCounter++;
+                stremioEpisodesByAbsolute[absoluteCounter] = ep;
+            }
+        }
+
+        // 2. Prepare Official Episodes (Filtered)
+        var tvdbEpisodes = tvdbSeries.Episodes?
+            .Where(e => e.SeasonNumber > 0) // Exclude Season 0
+            .OrderBy(e => e.SeasonNumber)
+            .ThenBy(e => e.Number)
+            .ToList() ?? new List<TvdbEpisode>();
+
+        // 3. Fetch Translations (Fix for Language Issue)
+        var languageCode = config?.GetTvdbLanguageCode();
+        var episodeTranslations = new Dictionary<int, TvdbTranslationData>();
+        
+        if (!string.IsNullOrEmpty(languageCode) && tvdbEpisodes.Count > 0)
+        {
+            _logger.LogDebug("[DynamicLibrary] Fetching translations for {Count} episodes in language {Lang}",
+                tvdbEpisodes.Count, languageCode);
+
+            var translationTasks = tvdbEpisodes.Select(async ep =>
+            {
+                var translation = await _tvdbClient.GetEpisodeTranslationAsync(ep.Id, languageCode, CancellationToken.None);
+                return (ep.Id, translation);
+            });
+
+            var results = await Task.WhenAll(translationTasks);
+            foreach (var (episodeId, translation) in results)
+            {
+                if (translation != null)
+                {
+                    episodeTranslations[episodeId] = translation;
+                }
+            }
+        }
+
+        // 4. Create Seasons based on ACTUAL episodes (Fix for Structure Issue)
+        // Only create seasons that have official episodes we are about to add.
+        var seasonsToCreate = tvdbEpisodes.Select(e => e.SeasonNumber).Distinct().OrderBy(n => n).ToList();
+        var seasonDtos = new List<BaseItemDto>();
+        var seasonIdMap = new Dictionary<int, Guid>();
+
+        // Lookup map for season metadata (images/names) from the raw season list
+        // TVDB can return duplicates or multiple entries for the same season number (e.g. different languages or types)
+        var tvdbSeasonMetadata = new Dictionary<int, TvdbSeason>();
+        if (tvdbSeries.Seasons != null)
+        {
+            foreach (var season in tvdbSeries.Seasons)
+            {
+                // Prefer official seasons or keep first encountered
+                if (!tvdbSeasonMetadata.ContainsKey(season.Number))
+                {
+                    tvdbSeasonMetadata[season.Number] = season;
+                }
+                else if (season.Type?.Type?.Equals("official", StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    // Overwrite if we find an explicit "official" entry
+                    tvdbSeasonMetadata[season.Number] = season;
+                }
+            }
+        }
+
+        foreach (var seasonNum in seasonsToCreate)
+        {
+            // Use metadata from TVDB if available, otherwise default
+            var metadata = tvdbSeasonMetadata.GetValueOrDefault(seasonNum);
+            
+            // Create the season DTO manually to ensure we control the ID and structure
+            var seasonId = GenerateGuid($"tvdb:season:{tvdbSeries.Id}:{seasonNum}");
+            var seasonName = metadata?.Name ?? $"Season {seasonNum}";
+            
+            // Fix: If season name is just "Season X" in a different language, prefer "Season X" or localized variant?
+            // For now rely on TVDB metadata or default.
+
+            var seasonDto = new BaseItemDto
+            {
+                Id = seasonId,
+                ServerId = _serverApplicationHost.SystemId,
+                Name = seasonName,
+                Type = BaseItemKind.Season,
+                IsFolder = true,
+                IndexNumber = seasonNum,
+                ParentId = seriesId,
+                SeriesId = seriesId,
+                SeriesName = seriesName,
+                ProviderIds = new Dictionary<string, string>
+                {
+                    { "Tvdb", metadata?.Id.ToString() ?? "" },
+                    { DynamicLibraryProviderId, $"season:{metadata?.Id ?? seasonNum}" }
+                },
+                UserData = new UserItemDataDto
+                {
+                    Key = $"tvdb:season:{metadata?.Id ?? seasonNum}",
+                    PlaybackPositionTicks = 0,
+                    PlayCount = 0,
+                    IsFavorite = false,
+                    Played = false,
+                    UnplayedItemCount = 0
+                }
+            };
+
+            // Override image with series poster for consistency (per previous fix)
+            if (!string.IsNullOrEmpty(seriesImageUrl))
+            {
+                seasonDto.ImageTags = new Dictionary<ImageType, string> { { ImageType.Primary, "dynamic" } };
+                seasonDto.PrimaryImageAspectRatio = 0.667;
+                _itemCache.StoreItem(seasonDto, seriesImageUrl);
+            }
+            else if (metadata != null && !string.IsNullOrEmpty(metadata.Image))
+            {
+                 // Fallback to season image if series image missing
+                 var imageUrl = GetFullTvdbImageUrl(metadata.Image);
+                 seasonDto.ImageTags = new Dictionary<ImageType, string> { { ImageType.Primary, "dynamic" } };
+                 seasonDto.PrimaryImageAspectRatio = 0.667;
+                 _itemCache.StoreItem(seasonDto, imageUrl);
+            }
+            else 
+            {
+                _itemCache.StoreItem(seasonDto);
+            }
+
+            seasonDtos.Add(seasonDto);
+            seasonIdMap[seasonNum] = seasonId;
+        }
+        _itemCache.StoreSeasonsForSeries(seriesId, seasonDtos);
+
+        // 5. Create Episode DTOs using TVDB (Official) Metadata + Translations + Stremio Mapping
+        var episodeDtos = new List<BaseItemDto>();
+
+        foreach (var tvdbEp in tvdbEpisodes)
+        {
+            if (!seasonIdMap.TryGetValue(tvdbEp.SeasonNumber, out var seasonId))
+            {
+                continue;
+            }
+
+            // Get translation
+            episodeTranslations.TryGetValue(tvdbEp.Id, out var translation);
+
+            // Find matching Stremio source
+            CatalogEpisodeInfo? stremioSource = null;
+            if (tvdbEp.AbsoluteNumber.HasValue)
+            {
+                stremioEpisodesByAbsolute.TryGetValue(tvdbEp.AbsoluteNumber.Value, out stremioSource);
+            }
+            if (stremioSource == null)
+            {
+                stremioSource = stremioEpisodes.FirstOrDefault(e => e.SeasonNumber == tvdbEp.SeasonNumber && e.EpisodeNumber == tvdbEp.Number);
+            }
+
+            if (stremioSource == null && config?.ShowUnreleasedStreams != true)
+            {
+                continue;
+            }
+
+            // Create DTO (Pass translation)
+            var episodeDto = CreateEpisodeDto(tvdbEp, seriesId, seriesName, seasonId, translation, tvdbEp.AbsoluteNumber, isAnime, seriesImdbId);
+
+            if (stremioSource != null)
+            {
+                episodeDto.ProviderIds ??= new Dictionary<string, string>();
+                episodeDto.ProviderIds["StremioSeason"] = stremioSource.SeasonNumber.ToString();
+                episodeDto.ProviderIds["StremioEpisode"] = stremioSource.EpisodeNumber.ToString();
+            }
+            else
+            {
+                episodeDto.LocationType = LocationType.Virtual;
+            }
+
+            var isReleased = episodeDto.PremiereDate.HasValue && episodeDto.PremiereDate.Value <= DateTime.UtcNow;
+            var shouldBePlayable = config?.ShowUnreleasedStreams == true || isReleased;
+            
+            if (stremioSource != null)
+            {
+                AddAnimeMediaSourcesToDto(episodeDto, seriesId, config, isAnime, shouldBePlayable);
+            }
+
+            episodeDtos.Add(episodeDto);
+        }
+
+        _itemCache.StoreEpisodesForSeries(seriesId, episodeDtos);
+        _logger.LogInformation("[DynamicLibrary] Created {Count} official episodes mapped to Stremio sources for '{Name}' (Seasons: {Seasons})", 
+            episodeDtos.Count, seriesName, string.Join(",", seasonsToCreate));
+    }
+
+    private void AddAnimeMediaSourcesToDto(BaseItemDto episodeDto, Guid seriesId, PluginConfiguration? config, bool isAnime, bool shouldBePlayable)
+    {
+        if (isAnime && config?.EnableAnimeAudioVersions == true && config.StreamProvider == StreamProvider.Direct && shouldBePlayable)
+        {
+            var audioTracks = config.AnimeAudioTracks?
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                ?? new[] { "sub", "dub" };
+
+            if (audioTracks.Length > 0)
+            {
+                var season = episodeDto.ParentIndexNumber ?? 1;
+                var episodeNum = episodeDto.IndexNumber ?? 1;
+                // Important: For URL generation, if we have Stremio mapping, we should probably use that?
+                // Actually, Direct URLs usually rely on ID + S/E. 
+                // If the Direct URL template expects "Official" S/E (like for real debrid), we use DTO values.
+                // If it expects source S/E, we might be in trouble. 
+                // But typically Direct mode uses TVDB/Official conventions.
+                
+                // However, for consistency, let's use the DTO values (Official)
+                // because the "Direct" provider usually integrates with services that index by TVDB.
+
+                var series = _itemCache.GetItem(seriesId);
+                episodeDto.MediaSources = audioTracks.Select(track =>
+                {
+                    var streamUrl = BuildAnimeStreamUrl(config.DirectAnimeUrlTemplate, episodeDto, series, season, episodeNum, track);
+                    var sourceId = GenerateMediaSourceGuid(episodeDto.Id, track);
+                    _itemCache.StoreMediaSourceMapping(sourceId, episodeDto.Id);
+
+                    return new MediaSourceInfo
+                    {
+                        Id = sourceId,
+                        Name = track.ToUpperInvariant(),
+                        Path = streamUrl,
+                        Protocol = MediaProtocol.Http,
+                        Type = MediaSourceType.Default,
+                        Container = "hls",
+                        IsRemote = true,
+                        SupportsDirectPlay = true,
+                        SupportsDirectStream = false,
+                        SupportsTranscoding = false,
+                        SupportsProbing = false,
+                        RunTimeTicks = episodeDto.RunTimeTicks,
+                        MediaStreams = new List<MediaStream>()
+                    };
+                }).ToArray();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Convert a TVDB search result to a Jellyfin BaseItemDto.
+    /// </summary>
+    public BaseItemDto CreateSeriesDto(TvdbSearchResult series)
+    {
+        var dynamicUri = DynamicUri.FromTvdb(series.TvdbIdInt);
+        var config = DynamicLibraryPlugin.Instance?.Configuration;
+        var languageCode = config?.GetTvdbLanguageCode(); // Returns language code if Override mode, null otherwise
+
+        _logger.LogInformation("[DynamicLibrary] CreateSeriesDto: Name={Name}, LanguageMode={Mode}, PreferredLang={PrefLang}, EffectiveLangCode={Lang}",
+            series.Name, config?.LanguageMode, config?.PreferredLanguage, languageCode ?? "null");
+        _logger.LogInformation("[DynamicLibrary] CreateSeriesDto: HasTranslations={HasTrans}, TranslationKeys={Keys}",
+            series.Translations?.Count ?? 0, series.Translations != null ? string.Join(",", series.Translations.Keys) : "none");
+
+        // Get localized name and overview using the configured language
+        var displayName = series.GetLocalizedName(languageCode);
+        var displayOverview = series.GetLocalizedOverview(languageCode);
+
+        _logger.LogInformation("[DynamicLibrary] CreateSeriesDto result: DisplayName={DisplayName}, OriginalName={OriginalName}",
+            displayName, series.Name);
+
+        var dto = new BaseItemDto
+        {
+            Id = dynamicUri.ToGuid(),
+            ServerId = _serverApplicationHost.SystemId,
+            Name = displayName,
+            OriginalTitle = displayName != series.Name ? series.Name : null,
+            Overview = displayOverview,
+            Type = BaseItemKind.Series,
+            IsFolder = true,
+            ProviderIds = new Dictionary<string, string>
+            {
+                { "Tvdb", series.TvdbId },
+                { DynamicLibraryProviderId, dynamicUri.ToProviderIdValue() }
+            },
+            UserData = new UserItemDataDto
+            {
+                Key = dynamicUri.ToString(),
+                PlaybackPositionTicks = 0,
+                PlayCount = 0,
+                IsFavorite = false,
+                Played = false,
+                UnplayedItemCount = 0
+            }
+        };
+
+        // Parse year
+        if (int.TryParse(series.Year, out var year))
+        {
+            dto.ProductionYear = year;
+        }
+        else if (!string.IsNullOrEmpty(series.FirstAirTime) && series.FirstAirTime.Length >= 4)
+        {
+            if (int.TryParse(series.FirstAirTime[..4], out var firstAirYear))
+            {
+                dto.ProductionYear = firstAirYear;
+            }
+        }
+
+        // Set status if available
+        if (!string.IsNullOrEmpty(series.Status))
+        {
+            dto.Status = series.Status;
+        }
+
+        // Set ImageTags so client knows Primary image exists
+        if (!string.IsNullOrEmpty(series.ImageUrl))
+        {
+            dto.ImageTags = new Dictionary<ImageType, string>
+            {
+                { ImageType.Primary, "dynamic" }
+            };
+            dto.PrimaryImageAspectRatio = 0.667; // Standard poster ratio
+        }
+
+        // Store image URL in cache for ImageFilter to proxy
+        _itemCache.StoreItem(dto, series.ImageUrl);
+
+        return dto;
+    }
+
+    /// <summary>
+    /// Check if a DTO is a dynamic (virtual) item.
+    /// </summary>
+    public static bool IsDynamicItem(BaseItemDto dto)
+    {
+        return dto.ProviderIds?.ContainsKey(DynamicLibraryProviderId) == true;
+    }
+
+    /// <summary>
+    /// Get the DynamicUri from a DTO if it's a dynamic item.
+    /// </summary>
+    public static DynamicUri? GetDynamicUri(BaseItemDto dto)
+    {
+        if (dto.ProviderIds?.TryGetValue(DynamicLibraryProviderId, out var value) == true)
+        {
+            return DynamicUri.FromProviderIdValue(value);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Generate a stable GUID from a string key.
+    /// Uses a unique prefix to avoid collisions with real Jellyfin items.
+    /// </summary>
+    private static Guid GenerateGuid(string key)
+    {
+        // Add unique prefix to avoid GUID collisions with real Jellyfin items
+        const string UniquePrefix = "jellyfin-dynamiclibrary-plugin:";
+        using var md5 = MD5.Create();
+        var hash = md5.ComputeHash(Encoding.UTF8.GetBytes(UniquePrefix + key));
+        return new Guid(hash);
+    }
+
+    /// <summary>
+    /// Create a Season DTO from TVDB season data.
+    /// </summary>
+    public BaseItemDto CreateSeasonDto(TvdbSeason season, Guid seriesId, string seriesName)
+    {
+        var seasonId = GenerateGuid($"tvdb:season:{season.Id}");
+
+        var dto = new BaseItemDto
+        {
+            Id = seasonId,
+            ServerId = _serverApplicationHost.SystemId,
+            Name = season.Name ?? $"Season {season.Number}",
+            Type = BaseItemKind.Season,
+            IsFolder = true,
+            IndexNumber = season.Number,
+            ParentId = seriesId,
+            SeriesId = seriesId,
+            SeriesName = seriesName,
+            ProviderIds = new Dictionary<string, string>
+            {
+                { "Tvdb", season.Id.ToString() },
+                { DynamicLibraryProviderId, $"season:{season.Id}" }
+            },
+            UserData = new UserItemDataDto
+            {
+                Key = $"tvdb:season:{season.Id}",
+                PlaybackPositionTicks = 0,
+                PlayCount = 0,
+                IsFavorite = false,
+                Played = false,
+                UnplayedItemCount = 0
+            }
+        };
+
+        // Use series poster for season poster
+        var seriesImageUrl = _itemCache.GetImageUrl(seriesId);
+        if (!string.IsNullOrEmpty(seriesImageUrl))
+        {
+            dto.ImageTags = new Dictionary<ImageType, string>
+            {
+                { ImageType.Primary, "dynamic" }
+            };
+            dto.PrimaryImageAspectRatio = 0.667;
+            _itemCache.StoreItem(dto, seriesImageUrl);
+        }
+        else
+        {
+            _itemCache.StoreItem(dto);
+        }
+
+        return dto;
+    }
+
+    /// <summary>
+    /// Create an Episode DTO from TVDB episode data.
+    /// </summary>
+    public BaseItemDto CreateEpisodeDto(TvdbEpisode episode, Guid seriesId, string seriesName, Guid seasonId, TvdbTranslationData? translation = null, int? absoluteNumber = null, bool isAnime = false, string? seriesImdbId = null)
+    {
+        var episodeId = GenerateGuid($"tvdb:episode:{episode.Id}");
+        var episodeConfig = DynamicLibraryPlugin.Instance?.Configuration;
+
+        // Use translated name/overview if available, otherwise fall back to original
+        var displayName = !string.IsNullOrEmpty(translation?.Name)
+            ? translation.Name
+            : episode.Name ?? $"Episode {episode.Number}";
+
+        var displayOverview = !string.IsNullOrEmpty(translation?.Overview)
+            ? translation.Overview
+            : episode.Overview;
+
+        // Parse air date first to determine if episode should be playable
+        DateTime? premiereDate = null;
+        int? productionYear = null;
+        if (!string.IsNullOrEmpty(episode.Aired) && DateTime.TryParse(episode.Aired, out var airDate))
+        {
+            premiereDate = airDate;
+            productionYear = airDate.Year;
+        }
+
+        // Check if episode is released (for hiding play button on unreleased content)
+        var episodeIsReleased = premiereDate.HasValue && premiereDate.Value <= DateTime.UtcNow;
+        var shouldBePlayable = episodeConfig?.ShowUnreleasedStreams == true || episodeIsReleased;
+
+        var dto = new BaseItemDto
+        {
+            Id = episodeId,
+            ServerId = _serverApplicationHost.SystemId,
+            Name = displayName,
+            Overview = displayOverview,
+            Type = BaseItemKind.Episode,
+            MediaType = shouldBePlayable ? Jellyfin.Data.Enums.MediaType.Video : default,
+            IsFolder = false,
+            IndexNumber = episode.Number,
+            ParentIndexNumber = episode.SeasonNumber,
+            ParentId = seasonId,
+            SeasonId = seasonId,
+            SeriesId = seriesId,
+            SeriesName = seriesName,
+            PremiereDate = premiereDate,
+            ProductionYear = productionYear,
+            ProviderIds = BuildEpisodeProviderIds(episode.Id, absoluteNumber, seriesImdbId),
+            UserData = new UserItemDataDto
+            {
+                Key = $"tvdb:episode:{episode.Id}",
+                PlaybackPositionTicks = 0,
+                PlayCount = 0,
+                IsFavorite = false,
+                Played = false
+            }
+        };
+
+        // Set LocationType.Virtual to hide play button on Android TV for unreleased content
+        if (!shouldBePlayable)
+        {
+            dto.LocationType = LocationType.Virtual;
+        }
+
+        // Runtime (convert minutes to ticks)
+        // Use episode runtime if available, otherwise fall back to series average runtime
+        if (episode.Runtime.HasValue && episode.Runtime > 0)
+        {
+            dto.RunTimeTicks = episode.Runtime.Value * 600_000_000L;
+        }
+        else
+        {
+            // Fall back to series average runtime from cache
+            var seriesDto = _itemCache.GetItem(seriesId);
+            if (seriesDto?.RunTimeTicks > 0)
+            {
+                dto.RunTimeTicks = seriesDto.RunTimeTicks.Value;
+            }
+        }
+
+        // Set image if available
+        string? episodeImageUrl = null;
+        if (!string.IsNullOrEmpty(episode.Image))
+        {
+            dto.ImageTags = new Dictionary<ImageType, string>
+            {
+                { ImageType.Primary, "dynamic" }
+            };
+            dto.PrimaryImageAspectRatio = 1.78; // 16:9 for episode thumbnails
+            episodeImageUrl = GetFullTvdbImageUrl(episode.Image);
+        }
+
+        // Add MediaSources for anime with sub/dub version selector (only if episode is playable)
+        _logger.LogDebug("[DynamicLibrary] CreateEpisodeDto '{Name}': isAnime={IsAnime}, EnableAudioVersions={EnableAudio}, StreamProvider={Provider}, IsReleased={Released}, ShouldBePlayable={Playable}",
+            dto.Name, isAnime, episodeConfig?.EnableAnimeAudioVersions, episodeConfig?.StreamProvider, episodeIsReleased, shouldBePlayable);
+
+        if (isAnime && episodeConfig?.EnableAnimeAudioVersions == true && episodeConfig.StreamProvider == StreamProvider.Direct && shouldBePlayable)
+        {
+            var audioTracks = episodeConfig.AnimeAudioTracks?
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                ?? new[] { "sub", "dub" };
+
+            if (audioTracks.Length > 0)
+            {
+                // Get series from cache to access provider IDs for URL building
+                var series = _itemCache.GetItem(seriesId);
+                var season = dto.ParentIndexNumber ?? 1;
+                var episodeNum = dto.IndexNumber ?? 1;
+
+                dto.MediaSources = audioTracks.Select(track =>
+                {
+                    // Build the actual stream URL for this audio track
+                    var streamUrl = BuildAnimeStreamUrl(episodeConfig.DirectAnimeUrlTemplate, dto, series, season, episodeNum, track);
+
+                    // Generate a valid GUID for the MediaSource ID (client expects GUID format)
+                    var sourceId = GenerateMediaSourceGuid(dto.Id, track);
+
+                    // Store mapping so we can resolve MediaSource ID -> Episode ID later
+                    _itemCache.StoreMediaSourceMapping(sourceId, dto.Id);
+
+                    _logger.LogDebug("[DynamicLibrary] Built stream URL for '{Name}' ({Track}): {Url}, SourceId={SourceId}",
+                        dto.Name, track, streamUrl, sourceId);
+
+                    return new MediaSourceInfo
+                    {
+                        Id = sourceId,
+                        Name = track.ToUpperInvariant(),  // "SUB", "DUB" shown in version selector
+                        Path = streamUrl,  // Actual stream URL - client plays this directly
+                        Protocol = MediaProtocol.Http,
+                        Type = MediaSourceType.Default,
+                        Container = "hls",
+                        IsRemote = true,
+                        SupportsDirectPlay = true,  // Client can play this URL directly
+                        SupportsDirectStream = false,
+                        SupportsTranscoding = false,
+                        SupportsProbing = false,
+                        RunTimeTicks = dto.RunTimeTicks,
+                        MediaStreams = new List<MediaStream>()
+                    };
+                }).ToArray();
+
+                _logger.LogDebug("[DynamicLibrary] Added {Count} MediaSources to episode '{Name}': {Tracks}",
+                    audioTracks.Length, dto.Name, string.Join(", ", audioTracks));
+            }
+        }
+        else
+        {
+            _logger.LogDebug("[DynamicLibrary] NOT adding MediaSources to episode '{Name}' - conditions not met", dto.Name);
+        }
+
+        // Store in cache AFTER MediaSources are added
+        _itemCache.StoreItem(dto, episodeImageUrl);
+
+        return dto;
+    }
+
+    /// <summary>
+    /// Build the provider IDs dictionary for an episode, including the series IMDB ID for streaming lookups.
+    /// </summary>
+    private Dictionary<string, string> BuildEpisodeProviderIds(int tvdbEpisodeId, int? absoluteNumber, string? seriesImdbId)
+    {
+        var providerIds = new Dictionary<string, string>
+        {
+            { "Tvdb", tvdbEpisodeId.ToString() },
+            { DynamicLibraryProviderId, $"episode:{tvdbEpisodeId}" },
+            { "AbsoluteNumber", absoluteNumber?.ToString() ?? "" }
+        };
+
+        // Store series IMDB ID in episode for streaming lookups (AIOStreams, Embedarr, etc.)
+        // This ensures the series IMDB is available even if the series isn't in cache
+        if (!string.IsNullOrEmpty(seriesImdbId))
+        {
+            providerIds["SeriesImdb"] = seriesImdbId;
+        }
+
+        return providerIds;
+    }
+
+    /// <summary>
+    /// Generate a deterministic GUID for a MediaSource based on episode ID and audio track.
+    /// This ensures the client gets a valid GUID format for the MediaSource ID.
+    /// </summary>
+    private static string GenerateMediaSourceGuid(Guid episodeId, string audioTrack)
+    {
+        var input = $"{episodeId:N}:{audioTrack.ToLowerInvariant()}";
+        using var md5 = MD5.Create();
+        var hash = md5.ComputeHash(Encoding.UTF8.GetBytes(input));
+        return new Guid(hash).ToString("N");
+    }
+
+    /// <summary>
+    /// Build the stream URL for an anime episode using the DirectAnimeUrlTemplate.
+    /// </summary>
+    private string BuildAnimeStreamUrl(string template, BaseItemDto episode, BaseItemDto? series, int season, int episodeNum, string audioTrack)
+    {
+        if (string.IsNullOrEmpty(template))
+        {
+            _logger.LogInformation("[DynamicLibrary] DirectAnimeUrlTemplate is empty");
+            return string.Empty;
+        }
+
+        var episodeProviderIds = episode.ProviderIds ?? new Dictionary<string, string>();
+        var seriesProviderIds = series?.ProviderIds ?? episodeProviderIds;
+
+        // Get absolute episode number if available
+        var absoluteEpisode = episodeProviderIds.GetValueOrDefault("AbsoluteNumber", "");
+
+        // Build URL by replacing placeholders
+        var url = template
+            .Replace("{imdb}", seriesProviderIds.GetValueOrDefault("Imdb", ""), StringComparison.OrdinalIgnoreCase)
+            .Replace("{tvdb}", seriesProviderIds.GetValueOrDefault("Tvdb", ""), StringComparison.OrdinalIgnoreCase)
+            .Replace("{anilist}", seriesProviderIds.GetValueOrDefault("AniList", ""), StringComparison.OrdinalIgnoreCase)
+            .Replace("{tmdb}", seriesProviderIds.GetValueOrDefault("Tmdb", ""), StringComparison.OrdinalIgnoreCase)
+            .Replace("{season}", season.ToString(), StringComparison.OrdinalIgnoreCase)
+            .Replace("{episode}", episodeNum.ToString(), StringComparison.OrdinalIgnoreCase)
+            .Replace("{absolute}", absoluteEpisode, StringComparison.OrdinalIgnoreCase)
+            .Replace("{audio}", audioTrack.ToLowerInvariant(), StringComparison.OrdinalIgnoreCase)
+            .Replace("{title}", Uri.EscapeDataString(episode.Name ?? ""), StringComparison.OrdinalIgnoreCase);
+
+        // Handle {id} placeholder - use preferred ID based on config
+        var config = DynamicLibraryPlugin.Instance?.Configuration;
+        var preferredId = config?.AnimePreferredId ?? PreferredProviderId.Imdb;
+        var idValue = preferredId switch
+        {
+            PreferredProviderId.Imdb => seriesProviderIds.GetValueOrDefault("Imdb", ""),
+            PreferredProviderId.Tvdb => seriesProviderIds.GetValueOrDefault("Tvdb", ""),
+            PreferredProviderId.AniList => seriesProviderIds.GetValueOrDefault("AniList", ""),
+            _ => seriesProviderIds.GetValueOrDefault("Imdb", "")
+        };
+        url = url.Replace("{id}", idValue, StringComparison.OrdinalIgnoreCase);
+
+        return url;
+    }
+
+    /// <summary>
+    /// Convert a potentially relative TVDB image path to a full URL.
+    /// </summary>
+    private static string GetFullTvdbImageUrl(string imagePath)
+    {
+        if (string.IsNullOrEmpty(imagePath))
+        {
+            return imagePath;
+        }
+
+        // If it's already a full URL, return as-is
+        if (imagePath.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+            imagePath.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            return imagePath;
+        }
+
+        // Prepend the TVDB artwork base URL
+        return $"{TvdbArtworkBaseUrl}{imagePath}";
+    }
+
+    /// <summary>
+    /// Create all season and episode DTOs for a series from TVDB extended data.
+    /// Fetches episode translations if language override is enabled.
+    /// </summary>
+    public async Task CreateSeasonsAndEpisodesAsync(
+        TvdbSeriesExtended details,
+        Guid seriesId,
+        string seriesName,
+        string? languageCode,
+        bool isAnime = false,
+        string? seriesImdbId = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (details.Seasons == null || details.Seasons.Count == 0)
+        {
+            return;
+        }
+
+        // Filter to only "official" (aired order) seasons - TVDB returns multiple season types
+        // Type "official" is the standard aired order
+        // Also exclude Season 0 (Specials) as they are not supported
+        var officialSeasons = details.Seasons
+            .Where(s => s.Type?.Type?.Equals("official", StringComparison.OrdinalIgnoreCase) == true)
+            .Where(s => s.Number > 0) // Exclude specials (Season 0)
+            .ToList();
+
+        // If no official seasons found, fall back to all seasons but dedupe by season number
+        if (officialSeasons.Count == 0)
+        {
+            officialSeasons = details.Seasons
+                .Where(s => s.Number > 0) // Exclude specials (Season 0)
+                .GroupBy(s => s.Number)
+                .Select(g => g.First())
+                .ToList();
+        }
+
+        // Create season DTOs
+        var seasonDtos = new List<BaseItemDto>();
+        var seasonIdMap = new Dictionary<int, Guid>(); // seasonNumber -> seasonId
+
+        foreach (var season in officialSeasons.OrderBy(s => s.Number))
+        {
+            var seasonDto = CreateSeasonDto(season, seriesId, seriesName);
+            seasonDtos.Add(seasonDto);
+            seasonIdMap[season.Number] = seasonDto.Id;
+        }
+
+        // Update episode counts for each season (excluding Season 0)
+        if (details.Episodes != null)
+        {
+            var episodesBySeason = details.Episodes
+                .Where(e => e.SeasonNumber > 0) // Exclude specials
+                .GroupBy(e => e.SeasonNumber);
+            foreach (var group in episodesBySeason)
+            {
+                var seasonDto = seasonDtos.FirstOrDefault(s => s.IndexNumber == group.Key);
+                if (seasonDto != null)
+                {
+                    seasonDto.ChildCount = group.Count();
+                }
+            }
+        }
+
+        _itemCache.StoreSeasonsForSeries(seriesId, seasonDtos);
+
+        // Create episode DTOs (excluding Season 0 specials)
+        if (details.Episodes != null && details.Episodes.Count > 0)
+        {
+            var episodes = details.Episodes
+                .Where(e => e.SeasonNumber > 0) // Exclude specials (Season 0)
+                .OrderBy(e => e.SeasonNumber)
+                .ThenBy(e => e.Number)
+                .ToList();
+
+            // Build episode count per season for absolute number fallback calculation
+            var episodeCountBySeason = episodes
+                .GroupBy(e => e.SeasonNumber)
+                .ToDictionary(g => g.Key, g => g.Count());
+
+            // Fetch episode translations in parallel if language override is enabled
+            var episodeTranslations = new Dictionary<int, TvdbTranslationData>();
+            if (!string.IsNullOrEmpty(languageCode))
+            {
+                _logger.LogDebug("[DynamicLibrary] Fetching translations for {Count} episodes in language {Lang}",
+                    episodes.Count, languageCode);
+
+                var translationTasks = episodes.Select(async ep =>
+                {
+                    var translation = await _tvdbClient.GetEpisodeTranslationAsync(ep.Id, languageCode, cancellationToken);
+                    return (ep.Id, translation);
+                });
+
+                var results = await Task.WhenAll(translationTasks);
+                foreach (var (episodeId, translation) in results)
+                {
+                    if (translation != null)
+                    {
+                        episodeTranslations[episodeId] = translation;
+                    }
+                }
+
+                _logger.LogDebug("[DynamicLibrary] Got translations for {Count}/{Total} episodes",
+                    episodeTranslations.Count, episodes.Count);
+            }
+
+            var episodeDtos = new List<BaseItemDto>();
+
+            foreach (var episode in episodes)
+            {
+                // Get the season ID for this episode
+                if (!seasonIdMap.TryGetValue(episode.SeasonNumber, out var seasonId))
+                {
+                    // Create a placeholder season if needed
+                    seasonId = GenerateGuid($"tvdb:season:{details.Id}:{episode.SeasonNumber}");
+                }
+
+                // Get translation if available
+                episodeTranslations.TryGetValue(episode.Id, out var translation);
+
+                // Calculate absolute episode number: use TVDB value if available, otherwise calculate from season/episode
+                int absoluteNumber = episode.AbsoluteNumber
+                    ?? (GetCumulativeEpisodeCount(episodeCountBySeason, episode.SeasonNumber) + episode.Number);
+
+                var episodeDto = CreateEpisodeDto(episode, seriesId, seriesName, seasonId, translation, absoluteNumber, isAnime, seriesImdbId);
+                episodeDtos.Add(episodeDto);
+            }
+
+            _itemCache.StoreEpisodesForSeries(seriesId, episodeDtos);
+        }
+
+        _logger.LogDebug("[DynamicLibrary] Created {SeasonCount} seasons and {EpisodeCount} episodes for {SeriesName}",
+            seasonDtos.Count, details.Episodes?.Count ?? 0, seriesName);
+    }
+
+    /// <summary>
+    /// Get runtime for a library item from cache or API.
+    /// </summary>
+    public async Task<long?> GetRuntimeAsync(MediaBrowser.Controller.Entities.BaseItem item, CancellationToken cancellationToken)
+    {
+        // Try library item first (in case Jellyfin has metadata)
+        if (item.RunTimeTicks > 0)
+        {
+            return item.RunTimeTicks;
+        }
+
+        // Try our own item cache (episode/movie DTOs with runtime set during creation)
+        var cachedItem = _itemCache.GetItem(item.Id);
+        if (cachedItem?.RunTimeTicks > 0)
+        {
+            _logger.LogDebug("[DynamicLibrary] Got runtime from item cache for {Name}: {Ticks} ticks", item.Name, cachedItem.RunTimeTicks);
+            return cachedItem.RunTimeTicks;
+        }
+
+        // Try TMDB per-episode runtime (for TV episodes)
+        if (item is MediaBrowser.Controller.Entities.TV.Episode tmdbEpisode &&
+            _tmdbClient.IsConfigured &&
+            tmdbEpisode.ParentIndexNumber.HasValue && tmdbEpisode.IndexNumber.HasValue)
+        {
+            int? seriesTmdbIdInt = null;
+
+            // Path 1: SeriesTmdb provider ID on episode (new episodes have this)
+            if (item.ProviderIds?.TryGetValue("SeriesTmdb", out var seriesTmdbId) == true &&
+                int.TryParse(seriesTmdbId, out var parsed))
+            {
+                seriesTmdbIdInt = parsed;
+            }
+
+            // Path 2: Look up parent series from Jellyfin's database or item cache
+            MediaBrowser.Controller.Entities.BaseItem? parentSeries = null;
+            if (!seriesTmdbIdInt.HasValue)
+            {
+                parentSeries = _libraryManager.GetItemById(tmdbEpisode.SeriesId);
+                if (parentSeries?.ProviderIds?.TryGetValue("Tmdb", out var parentTmdbId) == true &&
+                    int.TryParse(parentTmdbId, out var parentParsed))
+                {
+                    seriesTmdbIdInt = parentParsed;
+                    _logger.LogDebug("[DynamicLibrary] Got TMDB series ID {TmdbId} from parent series for episode {Name}",
+                        parentParsed, item.Name);
+                }
+            }
+
+            // Path 3: Use IMDB ID to find TMDB series via API
+            if (!seriesTmdbIdInt.HasValue)
+            {
+                string? seriesImdbId = null;
+
+                // Check episode's SeriesImdb provider ID
+                item.ProviderIds?.TryGetValue("SeriesImdb", out seriesImdbId);
+
+                // Check parent series (already looked up above) or item cache
+                if (string.IsNullOrEmpty(seriesImdbId))
+                {
+                    parentSeries?.ProviderIds?.TryGetValue("Imdb", out seriesImdbId);
+                }
+
+                if (string.IsNullOrEmpty(seriesImdbId))
+                {
+                    var seriesDto = _itemCache.GetItem(tmdbEpisode.SeriesId);
+                    seriesDto?.ProviderIds?.TryGetValue("Imdb", out seriesImdbId);
+                }
+
+                if (!string.IsNullOrEmpty(seriesImdbId))
+                {
+                    var tmdbSeries = await _tmdbClient.GetSeriesByExternalIdAsync(seriesImdbId, cancellationToken);
+                    if (tmdbSeries != null)
+                    {
+                        seriesTmdbIdInt = tmdbSeries.Id;
+                        _logger.LogDebug("[DynamicLibrary] Resolved TMDB series ID {TmdbId} from IMDB {ImdbId} for episode {Name}",
+                            tmdbSeries.Id, seriesImdbId, item.Name);
+                    }
+                }
+            }
+
+            // Fetch per-episode runtime from TMDB season data
+            if (seriesTmdbIdInt.HasValue)
+            {
+                var episodes = await _tmdbClient.GetSeasonEpisodesAsync(seriesTmdbIdInt.Value, tmdbEpisode.ParentIndexNumber.Value, cancellationToken);
+                var matchedEp = episodes?.FirstOrDefault(e => e.EpisodeNumber == tmdbEpisode.IndexNumber.Value);
+                if (matchedEp?.Runtime > 0)
+                {
+                    var ticks = matchedEp.Runtime.Value * 600_000_000L;
+                    _logger.LogInformation("[DynamicLibrary] Got per-episode runtime from TMDB for {Name}: {Minutes} min",
+                        item.Name, matchedEp.Runtime);
+                    return ticks;
+                }
+            }
+        }
+
+        // Try TMDB (movies only)
+        if (item is not MediaBrowser.Controller.Entities.TV.Episode &&
+            item.ProviderIds?.TryGetValue("Tmdb", out var tmdbId) == true &&
+            int.TryParse(tmdbId, out var tmdbIdInt))
+        {
+            // Try cache first
+            var cached = _itemCache.GetItem(DynamicUri.FromTmdb(tmdbIdInt).ToGuid());
+            if (cached?.RunTimeTicks > 0)
+            {
+                _logger.LogDebug("[DynamicLibrary] Got runtime from cache for TMDB {Id}: {Ticks}", tmdbIdInt, cached.RunTimeTicks);
+                return cached.RunTimeTicks;
+            }
+
+            // Query movie API
+            var details = await _tmdbClient.GetMovieDetailsAsync(tmdbIdInt, cancellationToken);
+            if (details?.Runtime > 0)
+            {
+                var ticks = details.Runtime.Value * 600_000_000L;
+                _logger.LogDebug("[DynamicLibrary] Got runtime from TMDB API for {Id}: {Minutes} min = {Ticks} ticks", tmdbIdInt, details.Runtime, ticks);
+                return ticks;
+            }
+        }
+
+        // Try TVDB (TV shows/episodes)
+        // For episodes, we need the SERIES TVDB ID (not episode ID) for the API call
+        string? tvdbSeriesId = null;
+        if (item is MediaBrowser.Controller.Entities.TV.Episode episode)
+        {
+            // Get series TVDB ID from the parent series
+            var series = _itemCache.GetItem(episode.SeriesId); // Try cache first
+            if (series == null)
+            {
+                // Fallback to searching the database/library manager - we'll need to inject ILibraryManager if we want to do this here
+                // For now let's use the item's provider IDs if it has SeriesTvdb (some of our DTOs store it)
+                tvdbSeriesId = item.ProviderIds?.GetValueOrDefault("SeriesTvdb");
+            }
+            else
+            {
+                tvdbSeriesId = series.ProviderIds?.GetValueOrDefault("Tvdb");
+            }
+        }
+        else
+        {
+            // For series items, use the item's own TVDB ID
+            tvdbSeriesId = item.ProviderIds?.GetValueOrDefault("Tvdb");
+        }
+
+        if (!string.IsNullOrEmpty(tvdbSeriesId) && int.TryParse(tvdbSeriesId, out var tvdbIdInt))
+        {
+            // Try cache first
+            var cached = _itemCache.GetItem(DynamicUri.FromTvdb(tvdbIdInt).ToGuid());
+            if (cached?.RunTimeTicks > 0)
+            {
+                _logger.LogDebug("[DynamicLibrary] Got runtime from cache for TVDB {Id}: {Ticks}", tvdbIdInt, cached.RunTimeTicks);
+                return cached.RunTimeTicks;
+            }
+
+            // Query TVDB API for series details (has AverageRuntime)
+            var details = await _tvdbClient.GetSeriesExtendedAsync(tvdbIdInt, cancellationToken);
+            if (details?.AverageRuntime > 0)
+            {
+                var ticks = details.AverageRuntime.Value * 600_000_000L;
+                _logger.LogDebug("[DynamicLibrary] Got runtime from TVDB API for {Id}: {Minutes} min = {Ticks} ticks", tvdbIdInt, details.AverageRuntime, ticks);
+                return ticks;
+            }
+        }
+
+        // Fallback: Use sensible defaults based on content type
+        if (item is MediaBrowser.Controller.Entities.TV.Episode episode3)
+        {
+            // Check if anime based on path
+            var isAnime = item.Path?.Contains("/anime/", StringComparison.OrdinalIgnoreCase) == true;
+            var defaultMinutes = isAnime ? 24 : 45;
+            var defaultTicks = defaultMinutes * 600_000_000L;
+            _logger.LogWarning("[DynamicLibrary] GetRuntimeAsync: Using default {Minutes}-minute runtime for episode {Name}",
+                defaultMinutes, item.Name);
+            return defaultTicks;
+        }
+
+        if (item is MediaBrowser.Controller.Entities.Movies.Movie)
+        {
+            // Movie default: 120 minutes (2 hours)
+            var defaultTicks = 120 * 600_000_000L;
+            _logger.LogWarning("[DynamicLibrary] GetRuntimeAsync: Using default 120-minute runtime for movie {Name}", item.Name);
+            return defaultTicks;
+        }
+
+        // Generic fallback: 60 minutes
+        _logger.LogWarning("[DynamicLibrary] GetRuntimeAsync: Using default 60-minute runtime for {Name}", item.Name);
+        return 60 * 600_000_000L;
+    }
+
+    /// <summary>
+    /// Calculate the cumulative episode count from all seasons before the given season.
+    /// Used for calculating absolute episode numbers when TVDB doesn't provide them.
+    /// </summary>
+    private static int GetCumulativeEpisodeCount(Dictionary<int, int> episodeCountBySeason, int currentSeason)
+    {
+        return episodeCountBySeason
+            .Where(kvp => kvp.Key < currentSeason)
+            .Sum(kvp => kvp.Value);
+    }
+}

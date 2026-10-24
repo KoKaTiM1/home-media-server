@@ -1,0 +1,14 @@
+[Unit]
+Description=Refresh online movie and show catalogue metadata
+Requires=docker.service media-stack.service
+After=media-stack.service network-online.target
+RequiresMountsFor=/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/media-stack
+ExecStart=/usr/bin/docker compose run --rm --name media-catalogue-sync-run --no-deps catalogue-bridge discovery-sync
+ExecStop=/bin/sh -c '/usr/bin/docker container inspect media-catalogue-sync-run >/dev/null 2>&1 && /usr/bin/docker stop --timeout 10 media-catalogue-sync-run || true'
+TimeoutStartSec=4h
+Nice=15
+

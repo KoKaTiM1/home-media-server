@@ -1,0 +1,12 @@
+[Unit]
+Description=Move completed requested downloads and clean watched saved media
+Requires=media-stack.service
+After=media-stack.service
+RequiresMountsFor=/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/media-stack
+ExecStart=/usr/bin/docker exec catalogue-bridge python /app/app.py downloads
+TimeoutStartSec=3min
+Nice=15

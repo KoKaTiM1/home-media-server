@@ -1,0 +1,25 @@
+# Live data and credentials are never part of this repository.
+secrets/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_ed25519*
+id_rsa*
+*.sqlite*
+*.db
+*.db-*
+*.log
+*.pyc
+__pycache__/
+obj/
+bin/
+node_modules/
+appdata/
+downloads/
+media/
+streaming-cache/
+*.mkv
+*.mp4
+*.torrent
