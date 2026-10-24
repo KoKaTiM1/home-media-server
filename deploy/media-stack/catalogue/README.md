@@ -306,3 +306,7 @@ check_durable_validation.py verifies the live queue, ready-only bridge/native
 browse and search, and saved-file HTTP206 delivery. Earlier broad-catalogue
 checks used unchecked metadata as fixtures and their fixed result counts no
 longer describe the ready-only live library.
+
+One in five probes is reserved for due failed entries, preventing retries from
+being starved by a large new-title backlog. Remaining probes prioritize searched
+and previously opened titles, then recent discovery pages and popular titles.

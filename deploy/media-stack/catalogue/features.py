@@ -602,7 +602,13 @@ class Features:
             while checked<limit and time.monotonic()-started<480:
                 if busy():break
                 with self.db() as conn:
-                    row=conn.execute("SELECT key FROM validation WHERE state!='verified' AND next_check<=? ORDER BY priority DESC,next_check,rowid LIMIT 1",(time.time(),)).fetchone()
+                    row=None
+                    # Reserve one in five probes for due failures so a large
+                    # discovery backlog cannot starve the saved retry list.
+                    if checked%5==0:
+                        row=conn.execute("SELECT key FROM validation WHERE state='unavailable' AND next_check<=? ORDER BY next_check,priority DESC LIMIT 1",(time.time(),)).fetchone()
+                    if not row:
+                        row=conn.execute("SELECT key FROM validation WHERE state!='verified' AND next_check<=? ORDER BY priority DESC,next_check,rowid LIMIT 1",(time.time(),)).fetchone()
                 if not row:break
                 key=row[0]
                 try:

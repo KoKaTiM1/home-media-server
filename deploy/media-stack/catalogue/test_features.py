@@ -26,6 +26,16 @@ class FeatureTests(unittest.TestCase):
         with a.F.db() as conn:
             conn.executemany("INSERT INTO validation(key,state,checked,proof) VALUES (?,'verified',?,?)",((kind+':'+imdb,time.time(),json.dumps({'version':2})) for kind,imdb in rows))
 
+    def test_due_failure_gets_a_retry_ahead_of_large_pending_backlog(self):
+        self.make_search_index()
+        failed='movie:tt1234567';new='movie:tt2345678'
+        a.F.validation_result(failed,False)
+        a.F.enqueue(new,100)
+        with a.F.db() as conn:conn.execute('UPDATE validation SET next_check=0 WHERE key=?',(failed,))
+        with patch.object(a.F,'jf',return_value=[]),patch.object(a,'prepared',return_value={}) as prepare,patch('features.time.sleep'):
+            a.F.warm_availability(1)
+            prepare.assert_called_once_with(failed,background=True)
+
     def test_provider_rate_limit_pauses_the_queue(self):
         import urllib.error
         self.make_search_index()
