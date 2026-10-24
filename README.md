@@ -47,7 +47,7 @@ The authoritative current catalogue behavior is described in
 stack README is retained as a historical setup document; some early manual-only
 instructions and library names there predate the integrated catalogue.
 
-Jellyfin is pinned to 10.11.11; the modified Dynamic Library is 1.4.0.7.
+Jellyfin is pinned to 10.11.11; the modified Dynamic Library is 1.4.0.8.
 Upstream Dynamic Library source retains its MIT license. Wizdom is included as
 the original provider package; its licensing remains with its authors.
 

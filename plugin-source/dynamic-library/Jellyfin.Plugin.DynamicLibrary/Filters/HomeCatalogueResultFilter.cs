@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using System.Text;
+using MediaBrowser.Model.Querying;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -55,15 +58,51 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
     {
         public string? Hebrew { get; set; }
         public string? English { get; set; }
+        public string? Poster { get; set; }
         public List<MediaUrl>? Trailers { get; set; }
+    }
+
+    private bool IsHomeTitle(BaseItemDto title) => title.Type is BaseItemKind.Movie or BaseItemKind.Series
+        && (library.GetItemById(title.Id)?.Path?.StartsWith("/catalogue/", StringComparison.Ordinal) == true
+            || SearchResultFactory.IsDynamicItem(title));
+
+    private void PreservePoster(BaseItemDto title, string? poster = null)
+    {
+        if (!IsHomeTitle(title)) return;
+        // Bulk native refreshes omit ProviderIds unless explicitly requested.
+        // Recover the identity from the actual catalogue item in that case.
+        var imdb = title.ProviderIds?.GetValueOrDefault("Imdb")
+            ?? library.GetItemById(title.Id)?.ProviderIds.GetValueOrDefault("Imdb");
+        if (string.IsNullOrWhiteSpace(imdb)) return;
+        var kind = title.Type == BaseItemKind.Movie ? "movie" : "series";
+        poster ??= itemCache.GetImageUrl(title.Id) ?? $"http://<SERVER_LAN_IP>:8092/poster/{kind}/{imdb}.jpg";
+        var backdrop = itemCache.GetBackdropUrl(title.Id);
+        title.ImageTags ??= new();
+        title.ImageTags[ImageType.Primary] = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(poster)));
+        title.PrimaryImageAspectRatio ??= 0.667;
+        if (!string.IsNullOrEmpty(backdrop) && (title.BackdropImageTags is null || title.BackdropImageTags.Length == 0))
+            title.BackdropImageTags = new[] { Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(backdrop))) };
+        // A native DTO replaces the grid card on Back. Keep its image metadata
+        // and proxy URL, rather than replacing a valid poster with a blank DTO.
+        itemCache.StoreImageUrl(title.Id, poster);
     }
 
     public async Task OnResultExecutionAsync(ResultExecutingContext context, ResultExecutionDelegate next)
     {
+        if (context.Result is ObjectResult listResult && listResult.Value is QueryResult<BaseItemDto> list)
+        {
+            // Native Items uses a deferred DTO projection. Materialize once;
+            // mutating one enumeration otherwise disappears on serialization.
+            var entries = list.Items.ToArray();
+            foreach (var entry in entries)
+                if (entry.ImageTags?.GetValueOrDefault(ImageType.Primary)?.Length != 64) PreservePoster(entry);
+            list.Items = entries;
+        }
         if (context.Result is ObjectResult titleResult && titleResult.Value is BaseItemDto title
             && title.Type is BaseItemKind.Movie or BaseItemKind.Series
             && title.ProviderIds?.TryGetValue("Imdb", out var titleImdb) == true)
         {
+            PreservePoster(title);
             try
             {
                 var labelsClient = clients.CreateClient();
@@ -71,6 +110,8 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
                 var kind = title.Type == BaseItemKind.Movie ? "movie" : "series";
                 var labels = await labelsClient.GetFromJsonAsync<TitleLabels>(
                     "http://catalogue-bridge:8092/label/" + Uri.EscapeDataString(titleImdb) + "?kind=" + kind, context.HttpContext.RequestAborted);
+                if (labels?.Poster is string poster && poster.StartsWith("http://<SERVER_LAN_IP>:8092/poster/", StringComparison.Ordinal))
+                    PreservePoster(title, poster);
                 if (labels?.Hebrew is string hebrew && hebrew.Length > 0)
                 {
                     var english = labels.English ?? title.OriginalTitle ?? title.Name;
@@ -98,8 +139,9 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
                 }
                 var remote = await catalogues.SearchAsync(term.ToString(), types,
                     context.HttpContext.RequestAborted);
-                var present = hints.SearchHints.Select(h => (h.Name.ToLowerInvariant(), h.ProductionYear)).ToHashSet();
-                var presentIds = hints.SearchHints.Select(h => h.Id).ToHashSet();
+                var currentHints = hints.SearchHints.ToArray();
+                var present = currentHints.Select(h => (h.Name.ToLowerInvariant(), h.ProductionYear)).ToHashSet();
+                var presentIds = currentHints.Select(h => h.Id).ToHashSet();
                 var extras = remote.Where(item => !presentIds.Contains(item.Id) && !present.Contains(((item.Name ?? "").ToLowerInvariant(), item.ProductionYear)))
                     .Select(item => new SearchHint
                     {
@@ -113,8 +155,11 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
                         MediaType = item.MediaType
                     }).ToArray();
                 var limit = int.TryParse(context.HttpContext.Request.Query["limit"], out var n) ? Math.Clamp(n, 1, 100) : 25;
+                foreach (var hint in currentHints)
+                    if (itemCache.GetImageUrl(hint.Id) is string image && image.StartsWith("http://<SERVER_LAN_IP>:8092/poster/", StringComparison.Ordinal))
+                        hint.PrimaryImageTag = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(image)));
                 hintResult.Value = new SearchHintResult(
-                    hints.SearchHints.Concat(extras).Take(limit).ToArray(),
+                    currentHints.Concat(extras).Take(limit).ToArray(),
                     hints.TotalRecordCount + extras.Length);
             }
             catch (Exception error)

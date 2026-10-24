@@ -88,6 +88,7 @@ class FeatureTests(unittest.TestCase):
         preview={'id':'tt0145487','type':'movie','poster':'https://example.org/poster.jpg'}
         result=a.F.decorate_posters([preview])
         self.assertEqual(parse_qs(urlsplit(result[0]['poster']).query)['badge'],['HE'])
+        self.assertEqual(result[0]['poster'],a.F.poster_url('movie','tt0145487'))
         self.assertEqual(a.poster_status('movie','tt0316654'),'?')
 
     def test_real_release_month_sort_filter_and_unknown_dates(self):

@@ -77,8 +77,13 @@ public class DynamicItemCache
     }
 
     /// <summary>
-    /// Get the image URL for a dynamic item.
+    /// Update artwork without replacing cached media sources or series DTOs.
     /// </summary>
+    public void StoreImageUrl(Guid itemId, string imageUrl)
+    {
+        _cache.Set($"{ImagePrefix}{itemId}", imageUrl, _cacheDuration);
+    }
+
     public string? GetImageUrl(Guid itemId)
     {
         var key = $"{ImagePrefix}{itemId}";

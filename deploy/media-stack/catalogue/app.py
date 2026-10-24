@@ -17,6 +17,7 @@ import socket
 import sqlite3
 import subprocess
 import threading
+import tempfile
 import time
 import urllib.error
 import urllib.parse as U
@@ -235,6 +236,20 @@ def refresh_subtitle_badges(limit=25):
     log(f'Subtitle availability badges checked: {checked}; no subtitle files downloaded')
 
 
+def save_jpeg_atomic(image,path,quality):
+    # Metadata imports and thumbnail requests can render the same title in
+    # parallel, including across processes. Never share a temporary filename.
+    temporary=None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent,prefix='poster-tmp-',suffix='.jpg',delete=False) as stream:
+            temporary=Path(stream.name)
+            os.fchmod(stream.fileno(),0o664)
+            image.save(stream,format='JPEG',quality=quality)
+        temporary.replace(path)
+    finally:
+        if temporary is not None:temporary.unlink(missing_ok=True)
+
+
 def make_poster(folder,meta,kind,imdb):
     from PIL import Image,ImageDraw,ImageFont
     original=folder/'poster-original.jpg'
@@ -248,7 +263,7 @@ def make_poster(folder,meta,kind,imdb):
             content=fetch(url,raw=True,timeout=3)
             image=Image.open(io.BytesIO(content)).convert('RGB')
             image.thumbnail((360,540))
-            image.save(original,quality=82)
+            save_jpeg_atomic(image,original,82)
             missing.unlink(missing_ok=True)
             updated_original=True
         except Exception:
@@ -263,7 +278,7 @@ def make_poster(folder,meta,kind,imdb):
                 label=meta.get('name') or imdb
                 for line,text in enumerate(textwrap.wrap(label,width=25)[:8]):
                     draw.text((18,150+line*29),text,font=font,fill='white')
-                image.save(original,quality=82)
+                save_jpeg_atomic(image,original,82)
     if not original.exists(): return
     badge=poster_status(kind,imdb)
     if (folder/'badge.txt').exists() and (folder/'badge.txt').read_text()==badge and (folder/'badge-style.txt').exists() and (folder/'badge-style.txt').read_text()==POSTER_STYLE and not updated_original: return
@@ -272,9 +287,7 @@ def make_poster(folder,meta,kind,imdb):
     font=ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',23)
     draw.rounded_rectangle((8,8,83,48),radius=6,fill={'HE':'#126b47','EN':'#b3261e','?':'#555555'}[badge])
     draw.text((22,12),badge,font=font,fill='white')
-    temp=folder/'poster-new.jpg'
-    image.save(temp,quality=85)
-    temp.replace(folder/'poster.jpg')
+    save_jpeg_atomic(image,folder/'poster.jpg',85)
     (folder/'badge.txt').write_text(badge)
     (folder/'badge-style.txt').write_text(POSTER_STYLE)
 
@@ -849,7 +862,7 @@ class Handler(BaseHTTPRequestHandler):
                 with F.db() as conn:details=conn.execute('SELECT meta FROM items WHERE key=?',(kind+':'+imdb,)).fetchone()
                 urls=trailer_urls(json.loads(details[0])) if details and kind in ('movie','series') else []
                 return self.reply({'hebrew':row[0] if row else None,'english':row[1] if row else None,
-                    'trailers':[{'Url':url} for url in urls]})
+                    'trailers':[{'Url':url} for url in urls], 'poster':F.poster_url(kind,imdb) if kind in ('movie','series') else None})
             if parts[0]=='browse' and len(parts)==2:
                 query=U.parse_qs(parsed.query)
                 started=time.monotonic()
@@ -884,11 +897,11 @@ class Handler(BaseHTTPRequestHandler):
                             timer=threading.Timer(10,lambda: jf('/Library/Refresh',{},method='POST'))
                             timer.daemon=True
                             timer.start()
-                        value['meta']['poster']=f'{BASE}/poster/{kind}/{imdb}.jpg?style={POSTER_STYLE}'
+                        value['meta']['poster']=F.poster_url(kind,imdb)
                 elif parts[0]=='catalog' and len(parts)>=3:
                     for item in value.get('metas',[]):
                         if re.fullmatch(r'tt\d{5,12}',item.get('id','')):
-                            item['poster']=f'{BASE}/poster/{parts[1]}/{item["id"]}.jpg?style={POSTER_STYLE}'
+                            item['poster']=F.poster_url(parts[1],item['id'])
                 return self.reply(value)
             if parts[0]=='stream' and len(parts)==3:
                 kind=parts[1]; ident=parts[2].removesuffix('.json').split(':')

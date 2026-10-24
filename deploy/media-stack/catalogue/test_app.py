@@ -23,6 +23,20 @@ class CatalogueTests(unittest.TestCase):
                 self.assertEqual((folder/'badge.txt').read_text(),'HE')
 
 
+    @unittest.skipUnless(importlib.util.find_spec('PIL'), 'Pillow is installed in the bridge image')
+    def test_concurrent_poster_rendering_never_loses_the_poster(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as directory:
+            folder=Path(directory)
+            Image.new('RGB',(360,540),'#233445').save(folder/'poster-original.jpg')
+            with patch.object(a,'poster_status',return_value='HE'):
+                with ThreadPoolExecutor(max_workers=4) as pool:
+                    list(pool.map(lambda _:a.make_poster(folder,{},'movie','tt1234567'),range(16)))
+            with Image.open(folder/'poster.jpg') as image:self.assertEqual(image.size,(360,540))
+            self.assertFalse(list(folder.glob('poster-tmp-*')))
+            self.assertTrue((folder/'poster.jpg').stat().st_mode & 0o004)
+
     def test_torrent_add_timeout_keeps_waiting_for_metadata(self):
         candidate={'infoHash':'a'*40,'fileIdx':0,'title':'720p'}
         ready={'file_stats':[{'id':1,'path':'Show.S01E01.mkv','length':1234}]}

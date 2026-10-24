@@ -53,6 +53,10 @@ class Features:
             result['name']=row[0]+(' / '+english if english and english!=row[0] else '')
         return result
 
+    def poster_url(self,kind,imdb,badge=None):
+        if badge is None:badge=self.g['poster_status'](kind,imdb)
+        return f"{self.g['BASE']}/poster/{kind}/{imdb}.jpg?style={self.g.get('POSTER_STYLE','3')}&badge={badge}"
+
     def decorate_posters(self,metas):
         # Keep provider artwork in storage; expose only the local badged artwork.
         with self.db() as conn:
@@ -68,7 +72,7 @@ class Features:
             kind=meta.get('type');imdb=meta.get('id','')
             if kind in ('movie','series') and re.fullmatch(r'tt\d{5,12}',imdb):
                 badge=badges[(kind,imdb)]
-                meta['poster']=f"{self.g['BASE']}/poster/{kind}/{imdb}.jpg?style={self.g.get('POSTER_STYLE','3')}&badge={badge}"
+                meta['poster']=self.poster_url(kind,imdb,badge)
         return metas
 
     def source_state(self,key):

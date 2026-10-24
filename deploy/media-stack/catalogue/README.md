@@ -1,7 +1,7 @@
 # Home media catalogue
 
 Jellyfin 10.11.11 is pinned in /opt/media-stack/compose.yaml. The local Dynamic
-Library extension is version 1.4.0.7; WizdomSubs Downloader is version 0.2.0.0.
+Library extension is version 1.4.0.8; WizdomSubs Downloader is version 0.2.0.0.
 Do not automatically update these plugins/Jellyfin without integration testing.
 
 ## Watching and browsing
@@ -240,3 +240,21 @@ For online catalogue browsing only, the client's Date added/Newest sort is an
 alias for real premiere date too; the bulk index creation timestamp cannot
 distinguish new releases. Local media libraries keep Jellyfin's native Date
 added behavior. Score/name choices retain their within-year sorting.
+
+## Poster consistency on Back (1.4.0.8)
+
+Opening a title can finish a source-list check; a confirmed missing compatible
+source or newly known future release may then hide it from subsequent browsing.
+This does not remove a media file. Missing artwork does not prove a missing
+torrent. Details retrieve listings/metadata/subtitle availability, while movie
+data preparation/streaming happens through PlaybackInfo/Play.
+
+Browse, metadata, native item refresh and search now share the same poster URL
+and hash tag, preserving the poster when a native DTO replaces the grid card.
+Native query DTOs are materialized before image metadata is applied, so deferred
+serialization cannot silently discard the fix. Artwork URL updates do not
+replace cached media/series DTOs. JPEG writes use unique temporary files and
+atomic replacement with readable permissions, including concurrent rendering.
+
+check_poster_navigation.py verifies image bytes/tags across browse, detail,
+repeat detail, native refresh and search, plus series seasons/episodes.
