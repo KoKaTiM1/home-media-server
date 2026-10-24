@@ -90,6 +90,32 @@ class FeatureTests(unittest.TestCase):
         self.assertEqual(parse_qs(urlsplit(result[0]['poster']).query)['badge'],['HE'])
         self.assertEqual(a.poster_status('movie','tt0316654'),'?')
 
+    def test_real_release_month_sort_filter_and_unknown_dates(self):
+        path=self.make_search_index()
+        with sqlite3.connect(path) as conn:conn.execute('ALTER TABLE titles ADD COLUMN released TEXT')
+        conn.close()
+        a.F.record_dates('movie',[
+            {'id':'tt0316654','released':'2004-07-30T00:00:00Z'},
+            {'id':'tt0000003','released':'2004-07-02T00:00:00Z'},
+            {'id':'tt0145487','released':'2002-05-03T00:00:00Z'},
+            {'id':'tt0000004','released':'2000'},
+        ])
+        a.F.ensure_browse_indexes(path)
+        result=a.F.browse('movie',0,100,month='2004-07')
+        self.assertEqual([m['id'] for m in result['metas']],['tt0316654','tt0000003'])
+        self.assertEqual([m['released'][:10] for m in result['metas']],['2004-07-30','2004-07-02'])
+        self.assertEqual(a.F.search('movie','2004-07')[0]['id'],'tt0316654')
+        self.assertEqual(a.F.browse('movie',0,100,sort_by='DateCreated',month='2004-07')['metas'][0]['id'],'tt0316654')
+        self.assertEqual(a.F.parse_months('2004-12..2005-02'),('2004-12-01','2005-03-01'))
+        with sqlite3.connect(path) as conn:
+            self.assertIsNone(conn.execute('SELECT released FROM titles WHERE imdb=?',('tt0000004',)).fetchone()[0])
+            conn.execute('UPDATE titles SET released=NULL')
+        conn.close()
+        a.F.apply_dates(path)
+        self.assertEqual(a.F.browse('movie',0,100,month='2004-07')['total'],2)
+        for invalid in ['2004-00','2004-13','2004-08..2004-07']:
+            with self.assertRaises(ValueError):a.F.parse_months(invalid)
+
     def test_save_selects_only_requested_torrent_file(self):
         calls=[]
         def rpc(method,args):

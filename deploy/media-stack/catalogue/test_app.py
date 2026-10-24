@@ -23,6 +23,23 @@ class CatalogueTests(unittest.TestCase):
                 self.assertEqual((folder/'badge.txt').read_text(),'HE')
 
 
+    def test_torrent_add_timeout_keeps_waiting_for_metadata(self):
+        candidate={'infoHash':'a'*40,'fileIdx':0,'title':'720p'}
+        ready={'file_stats':[{'id':1,'path':'Show.S01E01.mkv','length':1234}]}
+        def rpc(payload,timeout=20):
+            if payload['action']=='add':raise TimeoutError('Metadata still loading')
+            return ready if rpc.added else {}
+        def calls(payload,timeout=20):
+            if payload['action']=='add':rpc.added=True
+            return rpc(payload,timeout)
+        rpc.added=False
+        with patch.object(a.F,'local_download',return_value=None),patch.object(a,'cached',return_value=None), \
+             patch.object(a,'stream_candidates',return_value=[candidate]),patch.object(a,'torr',side_effect=calls), \
+             patch.object(a,'remember',side_effect=lambda key,value,ttl:value):
+            selected=a.resolve('series:tt1234567:1:1',deadline=a.time.monotonic()+45)
+        self.assertEqual(selected['index'],1)
+        self.assertEqual(selected['filename'],'Show.S01E01.mkv')
+
     def test_dead_source_is_hidden_after_preparation_failure(self):
         with tempfile.TemporaryDirectory() as directory,patch.object(a,'DATA',Path(directory)), \
              patch.object(a,'resolve',side_effect=RuntimeError('No working source')):

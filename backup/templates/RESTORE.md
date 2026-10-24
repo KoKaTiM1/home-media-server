@@ -62,7 +62,7 @@ manifests; do not simulate watched flags to test cleanup on real files.
 
 5. With Jellyfin stopped, restore `artifacts/DynamicLibrary/` into
    `appdata/jellyfin/config/plugins/DynamicLibrary/`. The supplied DLL is
-   modified version 1.4.0.6, tested with Jellyfin 10.11.11. Restore/extract the
+   modified version 1.4.0.7, tested with Jellyfin 10.11.11. Restore/extract the
    Wizdom package into its own plugin directory. Preserve readable ownership.
 6. If rebuilding the DLL from source instead, from this repository root:
 
@@ -121,7 +121,7 @@ This downloads metadata, not movie files; allow time/storage for the initial bui
 - Confirm systemd units/timers and mount dependencies, then test a controlled
   reboot separately if appropriate; a healthy service alone is not reboot proof.
 
-Last source validation: 24 catalogue unit tests, zero-warning .NET build,
+Last source validation: 26 catalogue unit tests, zero-warning .NET build,
 year/range/paging/search/native HE-poster live checks passed. Existing 36 HE and
 2 EN posters were rendered and pixel-verified as green/red. Cached Hebrew VTT
 relay and invalid-signature checks passed. A later Breaking Bad pilot full
@@ -130,7 +130,7 @@ particular source is currently working.
 
 ## Android TV failure contracts and ordinary Play
 
-Dynamic Library 1.4.0.6 addresses four reproduced server-side problems: empty
+Dynamic Library 1.4.0.7 addresses four reproduced server-side problems: empty
 successful PlaybackInfo caused Android TV 0.19.10 to dereference a null source;
 ordinary Play could bypass preparation and expose a local .strm placeholder;
 Intros returned an array where QueryResult was required; renamed collections
@@ -145,3 +145,15 @@ also verifies an actual saved open-film HTTP206 range and fallback artwork.
 A physical Chromecast retry is still needed to confirm the app behavior.
 Covering sort indexes, count caching and six-hour artwork negative caching
 reduce catalogue delays and repeated missing-image requests.
+
+Release dates/months:1.4.0.7 defaults to actual newest premiere date within each
+year; search2026-07 or2026-07..2026-09 for known-date month filtering. Dates
+persist in the runtime release_dates table independently of the daily IMDb
+rebuild. Recent-year date enrichment follows the four daily syncs; unknown dates
+are never invented and are absent from month searches. Restore this metadata
+cache from the encrypted application backup or let provider enrichment refill it.
+
+Newest/Date added is a release-date sort alias for the virtual online catalogue;
+it does not use the shared bulk-import timestamp. Local library Date added
+semantics are unchanged. Live month checks cover this alias as well as Premiere
+date and default year order.

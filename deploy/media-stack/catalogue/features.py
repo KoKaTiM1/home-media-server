@@ -27,6 +27,7 @@ class Features:
     def db(self):
         conn=self.g['db']()
         conn.execute('CREATE TABLE IF NOT EXISTS discovery (kind TEXT, imdb TEXT, meta TEXT, PRIMARY KEY(kind,imdb))')
+        conn.execute('CREATE TABLE IF NOT EXISTS release_dates (kind TEXT, imdb TEXT, released TEXT, PRIMARY KEY(kind,imdb))')
         conn.execute('CREATE TABLE IF NOT EXISTS aliases (imdb TEXT PRIMARY KEY, hebrew TEXT, english TEXT)')
         conn.execute('CREATE TABLE IF NOT EXISTS downloads (key TEXT PRIMARY KEY, value TEXT)')
         return conn
@@ -93,6 +94,7 @@ class Features:
                 item=dict(entry);item['id']=imdb
                 conn.execute('INSERT OR REPLACE INTO discovery VALUES (?,?,?)',(kind,imdb,json.dumps(item)))
                 entries.append(item)
+        self.record_dates(kind,entries)
         return self.remember(cachekey,{'metas':entries,'raw_count':len(raw)},21600)
 
     @staticmethod
@@ -109,9 +111,81 @@ class Features:
             years.update(range(start,end+1))
         return sorted(years,reverse=True)
 
-    def browse(self,kind,offset=0,limit=100,year=None,sort_by='votes',sort_order='Descending'):
+    @staticmethod
+    def parse_months(value):
+        match=re.fullmatch(r'\s*(\d{4})-(\d{2})(?:\s*\.\.\s*(\d{4})-(\d{2}))?\s*',str(value))
+        if not match:raise ValueError('Use YYYY-MM or YYYY-MM..YYYY-MM')
+        start=dt.date(int(match[1]),int(match[2]),1)
+        end=dt.date(int(match[3] or match[1]),int(match[4] or match[2]),1)
+        if not 1920<=start.year<=end.year<=dt.date.today().year or end<start:
+            raise ValueError('Invalid release month range')
+        after=dt.date(end.year+1,1,1) if end.month==12 else dt.date(end.year,end.month+1,1)
+        return start.isoformat(),after.isoformat()
+
+    def record_dates(self,kind,metas,apply=True):
+        dates=[]
+        for meta in metas:
+            imdb=meta.get('id') or meta.get('imdb_id','')
+            value=str(meta.get('released') or '')
+            if kind not in ('movie','series') or not re.fullmatch(r'tt\d{5,12}',imdb):continue
+            if not re.match(r'^\d{4}-\d{2}-\d{2}(?:T|$)',value):continue
+            try:released=dt.date.fromisoformat(value[:10])
+            except ValueError:continue
+            if not 1920<=released.year<=dt.date.today().year+5:continue
+            dates.append((kind,imdb,released.isoformat()))
+        if not dates:return
+        with self.db() as conn:
+            before=conn.total_changes
+            conn.executemany('INSERT INTO release_dates VALUES (?,?,?) ON CONFLICT(kind,imdb) DO UPDATE SET released=excluded.released WHERE release_dates.released!=excluded.released',dates)
+            changed=conn.total_changes>before
+        if apply and changed:self.apply_dates(dates=dates)
+
+    def apply_dates(self,target=None,dates=None):
+        target=target or self.g['DATA']/'imdb/catalogue.sqlite'
+        if not target.is_file():return
+        if dates is None:
+            with self.db() as conn:dates=conn.execute('SELECT kind,imdb,released FROM release_dates').fetchall()
+        with closing(sqlite3.connect(target,timeout=30)) as conn:
+            if 'released' not in {r[1] for r in conn.execute('PRAGMA table_info(titles)')}:return
+            conn.executemany("UPDATE titles SET released=? WHERE kind=? AND imdb=? AND COALESCE(released,'')!=?",
+                [(released,kind,imdb,released) for kind,imdb,released in dates])
+            conn.commit()
+
+    def backfill_dates(self):
+        with self.db() as conn:
+            rows=conn.execute("SELECT kind,imdb,json_extract(meta,'$.released') FROM items UNION SELECT kind,imdb,json_extract(meta,'$.released') FROM discovery").fetchall()
+            rows += [(key.split(':')[1],key.split(':')[2],released) for key,released in conn.execute("SELECT key,json_extract(value,'$.released') FROM cache WHERE key LIKE 'meta:movie:%' OR key LIKE 'meta:series:%'")]
+        for kind in ('movie','series'):
+            self.record_dates(kind,[{'id':imdb,'released':released} for typ,imdb,released in rows if typ==kind],apply=False)
+        self.apply_dates()
+        with self.db() as conn:count=conn.execute('SELECT COUNT(*) FROM release_dates').fetchone()[0]
+        self.log(f'Real release dates restored from existing metadata: {count}')
+
+    def sync_release_dates(self,years=None,max_pages=100,force=False):
+        for kind in ('movie','series'):
+            for year in years or (dt.date.today().year,dt.date.today().year-1):
+                cachekey=f'release-pages:{kind}:{year}'
+                if not force and self.cached(cachekey):continue
+                seen=set();skip=0;dated=0;complete=False
+                for _ in range(max_pages):
+                    try:
+                        metas=self.fetch(f"{self.g['CINEMETA']}/catalog/{kind}/year/genre={year}&skip={skip}.json",timeout=8).get('metas',[])
+                        ids={m.get('id') for m in metas}
+                        if not metas or not ids-seen:complete=True;break
+                        self.record_dates(kind,metas,apply=False)
+                        seen.update(ids);skip+=len(metas)
+                        dated+=sum(bool(m.get('released')) for m in metas)
+                        time.sleep(.15)
+                    except Exception:
+                        self.log(f'Release month enrichment deferred: {kind} {year}');break
+                self.apply_dates()
+                if complete:self.remember(cachekey,True,5*3600)
+                self.log(f'Release month enrichment: {kind} {year}, {dated} provider dates')
+
+    def browse(self,kind,offset=0,limit=100,year=None,sort_by='PremiereDate',sort_order='Descending',month=None):
         offset=max(0,int(offset));limit=max(1,min(1000,int(limit)))
         years_filter=self.parse_years(year)
+        month_bounds=self.parse_months(month) if month else None
         if kind not in ('movie','series','all'):
             raise ValueError('Invalid catalogue request')
         index=self.g['DATA']/'imdb/catalogue.sqlite'
@@ -119,20 +193,27 @@ class Features:
             self.db().close()
             with closing(sqlite3.connect('file:'+str(index)+'?mode=ro',uri=True)) as conn:
                 conn.execute('ATTACH DATABASE ? AS state',(str(self.g['DATA']/'catalogue.sqlite'),))
+                columns={r[1] for r in conn.execute('PRAGMA table_info(titles)')}
                 where="t.kind IN ('movie','series')" if kind=='all' else 't.kind=?';params=[] if kind=='all' else [kind]
                 if years_filter:
                     where+=' AND t.year IN ('+','.join('?' for _ in years_filter)+')';params.extend(years_filter)
+                if month_bounds:
+                    if 'released' not in columns:return {'metas':[],'total':0,'has_more':False,'offset':offset}
+                    where+=' AND t.released>=? AND t.released<?';params.extend(month_bounds)
                 if not years_filter or dt.date.today().year in years_filter:
-                    where+=' AND (t.year<? OR t.votes>0)';params.append(dt.date.today().year)
+                    where+=' AND (t.year<? OR t.votes>0 OR t.imdb IN (SELECT imdb FROM state.release_dates WHERE released<=?))'
+                    params.extend([dt.date.today().year,dt.date.today().isoformat()])
                 unavailable=[row[0].removeprefix('source-status:') for row in conn.execute(
                     "SELECT key FROM state.cache WHERE key LIKE 'source-status:%' AND expires>? AND json_extract(value,'$.state')='unavailable'",(time.time(),))]
+                unavailable += [row[0] for row in conn.execute("SELECT kind||':'||imdb FROM state.release_dates WHERE released>?",(dt.date.today().isoformat(),))]
                 if unavailable:
                     where+=" AND (t.kind||':'||t.imdb) NOT IN ("+','.join('?' for _ in unavailable)+')'
                     params.extend(unavailable)
                 indexes={row[1] for row in conn.execute('PRAGMA index_list(titles)')}
                 count_source='titles t INDEXED BY browse_titles' if 'browse_titles' in indexes else 'titles t'
+                if month_bounds and 'browse_release_lookup' in indexes:count_source='titles t INDEXED BY browse_release_lookup'
                 identity=index.stat()
-                count_key=(kind,tuple(years_filter),identity.st_ino,identity.st_mtime_ns,
+                count_key=(kind,tuple(years_filter),month_bounds,identity.st_ino,identity.st_mtime_ns,
                     hashlib.sha256(json.dumps(sorted(unavailable)).encode()).digest())
                 with self.count_lock:
                     entry=self.count_cache.get(count_key)
@@ -141,16 +222,17 @@ class Features:
                         total=conn.execute('SELECT COUNT(*) FROM '+count_source+' WHERE '+where,params).fetchone()[0]
                         if len(self.count_cache)>=64:self.count_cache.clear()
                         self.count_cache[count_key]=(time.monotonic()+60,total)
-                columns={r[1] for r in conn.execute('PRAGMA table_info(titles)')}
                 sorts={'votes':'t.votes','popularity':'t.votes','sortname':'t.name COLLATE NOCASE','name':'t.name COLLATE NOCASE',
                     'communityrating':'t.rating','rating':'t.rating','runtime':'t.runtime','premieredate':'t.released',
-                    'datecreated':'t.added_at','officialrating':'t.official_rating','criticrating':'t.critic_rating'}
+                    'datecreated':'t.released','officialrating':'t.official_rating','criticrating':'t.critic_rating'}
                 expression=sorts.get(str(sort_by).lower(),'t.votes')
                 field=expression.split('.')[-1].split()[0]
                 if field not in columns:expression='NULL'
                 order='ASC' if str(sort_order).lower() in ('ascending','asc') else 'DESC'
                 preferred={'t.votes':'browse_titles','t.rating':'browse_score','t.name COLLATE NOCASE':'browse_name'}.get(expression)
                 covering={'t.votes':'browse_titles','t.rating':'browse_score_cover','t.name COLLATE NOCASE':'browse_name_cover','t.runtime':'browse_runtime_cover'}.get(expression)
+                if expression=='t.released':covering='browse_release_cover'
+                if month_bounds:covering='browse_release_lookup'
                 if covering in indexes:preferred=covering
                 rank_source='titles t'+(' INDEXED BY '+preferred if preferred in indexes else '')
                 ordering=f't.year DESC,{expression} {order} NULLS LAST,t.imdb'
@@ -159,14 +241,16 @@ class Features:
                 rows=conn.execute('WITH ranked AS (SELECT t.imdb FROM '+rank_source+' WHERE '+where+
                     ' ORDER BY '+ordering+' LIMIT ? OFFSET ?) SELECT t.imdb,t.name,t.original,t.year,t.genres,a.hebrew,'+
                     ('t.rating' if 'rating' in columns else 'NULL')+','+('t.runtime' if 'runtime' in columns else 'NULL')+
-                    ',t.kind FROM ranked r JOIN titles t ON t.imdb=r.imdb LEFT JOIN state.aliases a ON a.imdb=t.imdb ORDER BY '+ordering,
+                    ',t.kind,'+('t.released' if 'released' in columns else 'NULL')+' FROM ranked r JOIN titles t ON t.imdb=r.imdb LEFT JOIN state.aliases a ON a.imdb=t.imdb ORDER BY '+ordering,
                     (*params,limit,offset)).fetchall()
             metas=[{'id':imdb,'type':actual_kind,'name':hebrew+' / '+name if hebrew else name,'originalName':original,
                 'releaseInfo':str(release_year),'genres':genres.split(',') if genres else [],
                 'poster':f'https://images.metahub.space/poster/medium/{imdb}/img',
+                'released':released+'T00:00:00Z' if released else None,
                 'imdbRating':str(rating) if rating is not None else None,'runtime':str(runtime)+' min' if runtime else None}
-                for imdb,name,original,release_year,genres,hebrew,rating,runtime,actual_kind in rows]
+                for imdb,name,original,release_year,genres,hebrew,rating,runtime,actual_kind,released in rows]
             return {'metas':self.decorate_posters(metas),'total':total,'has_more':offset+len(metas)<total,'offset':offset}
+        if month_bounds:raise RuntimeError('Month search requires the local release date index')
         cachekey=f'browse:{kind}:{years_filter}:{offset}:{limit}:{sort_by}:{sort_order}'
         saved=self.cached(cachekey)
         if saved is not None:return saved
@@ -203,6 +287,7 @@ class Features:
         if target.is_file() and time.time()-baseline<20*3600:
             self.ensure_search_index(target)
             self.ensure_sort_index(target)
+            self.apply_dates(target)
             self.log('Daily IMDb catalogue index already current');return
         for name in ('basics','ratings'):
             path=folder/f'title.{name}.tsv.gz'
@@ -248,6 +333,7 @@ class Features:
         finally:conn.close()
         staging.replace(target)
         self.ensure_sort_index(target)
+        self.apply_dates(target)
         marker.write_text(dt.datetime.now(dt.timezone.utc).isoformat()+'\n')
         self.log('Full catalogue index ready: '+str(dict(counts)))
 
@@ -297,7 +383,7 @@ class Features:
         self.log('Full-text title search index ready')
 
     def ensure_browse_indexes(self,target):
-        expected={'browse_name_cover','browse_score_cover','browse_runtime_cover'}
+        expected={'browse_name_cover','browse_score_cover','browse_runtime_cover','browse_release_cover','browse_release_lookup'}
         with closing(sqlite3.connect('file:'+str(target)+'?mode=ro',uri=True)) as conn:
             if expected.issubset({row[1] for row in conn.execute('PRAGMA index_list(titles)')}):return
         staging=target.with_name('catalogue.covering-building.sqlite')
@@ -306,6 +392,8 @@ class Features:
             conn.execute('PRAGMA journal_mode=OFF');conn.execute('PRAGMA cache_size=-16384')
             for name,expression in [('name','name COLLATE NOCASE'),('score','rating DESC'),('runtime','runtime DESC')]:
                 conn.execute(f'CREATE INDEX IF NOT EXISTS browse_{name}_cover ON titles(kind,year DESC,{expression},imdb,votes)')
+            conn.execute('CREATE INDEX IF NOT EXISTS browse_release_cover ON titles(kind,year DESC,released DESC,imdb,votes)')
+            conn.execute('CREATE INDEX IF NOT EXISTS browse_release_lookup ON titles(kind,released,year,imdb,votes) WHERE released IS NOT NULL')
             conn.commit();conn.execute('PRAGMA optimize')
         staging.replace(target)
         self.log('Covering catalogue sort indexes ready; reader files replaced atomically')
@@ -393,6 +481,8 @@ class Features:
 
     def search(self,kind,query):
         query=query.strip()
+        if re.fullmatch(r'(19|20)\d{2}-\d{2}(?:\s*\.\.\s*(19|20)\d{2}-\d{2})?',query):
+            return self.browse(kind,0,1000,month=query)['metas']
         if re.fullmatch(r'(19|20)\d{2}(?:\s*[-–—]\s*(19|20)\d{2})?',query):
             return self.browse(kind,0,1000,query)['metas']
         if re.search('[\u0590-\u05ff]',query):
@@ -439,6 +529,7 @@ class Features:
 
     def sync_discovery(self):
         self.update_index()
+        self.sync_release_dates(max_pages=100)
         with self.db() as conn:
             conn.execute("DELETE FROM cache WHERE key LIKE 'discover-page:%' OR key LIKE 'browse:%'")
             rows=conn.execute("SELECT imdb,meta FROM items WHERE kind='series'").fetchall()

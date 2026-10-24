@@ -140,6 +140,7 @@ def metadata(kind,imdb):
                 'poster':f'https://images.metahub.space/poster/medium/{imdb}/img'}
         if not isinstance(saved,dict):raise ValueError('Metadata not found')
         remember(key,saved,21600)
+    F.record_dates(kind,[saved])
     return F.localize(saved)
 
 
@@ -501,12 +502,26 @@ def resolve(key,deadline=None):
         trackers += [s[len('tracker:'):] for s in candidate.get('sources',[]) if s.startswith('tracker:')]
         magnet='magnet:?xt=urn:btih:'+infohash+''.join('&tr='+U.quote(t,safe='') for t in trackers)
         try:
-            torr({'action':'add','link':candidate.get('torrentUrl') or magnet,'save_to_db':False},timeout=3)
-            end=min(time.monotonic()+6,deadline if deadline is not None else float('inf'))
-            while time.monotonic()<end:
-                status=torr({'action':'get','hash':infohash},timeout=3)
-                if status.get('file_stats'): break
-                time.sleep(.5)
+            status={}
+            # Add waits for magnet metadata on TorrServer. A short socket
+            # timeout does not mean the background metadata lookup failed.
+            # Leave time for probing within the overall preparation budget.
+            end=min(time.monotonic()+27,deadline-5 if deadline is not None else float('inf'))
+            try:
+                status=torr({'action':'get','hash':infohash},timeout=2)
+            except Exception:pass
+            if not status.get('file_stats'):
+                try:
+                    status=torr({'action':'add','link':candidate.get('torrentUrl') or magnet,'save_to_db':False},
+                        timeout=max(.1,min(20,end-time.monotonic())))
+                except (TimeoutError,urllib.error.URLError):
+                    # The API request can outlive our socket; poll for its
+                    # completed torrent instead of dropping it immediately.
+                    pass
+            while not status.get('file_stats') and time.monotonic()<end:
+                try:status=torr({'action':'get','hash':infohash},timeout=max(.1,min(2,end-time.monotonic())))
+                except Exception:pass
+                if not status.get('file_stats'):time.sleep(.5)
             selected_file=choose_file(status.get('file_stats',[]),key,candidate.get('fileIdx'))
             return remember('resolved:'+key,{'hash':infohash,'index':selected_file['id'],
                 'filename':selected_file['path'],'length':selected_file['length'],
@@ -646,7 +661,7 @@ def prepared(key):
         with LIVE_LOCK:
             if LIVE['key'] not in (None,key) and LIVE['active']>0:
                 raise RuntimeError('Another title is currently streaming; this server supports one stream')
-        deadline=time.monotonic()+25
+        deadline=time.monotonic()+27
         for attempt in range(3):
             try:selected=resolve(key,deadline=deadline)
             except Exception:
@@ -840,7 +855,7 @@ class Handler(BaseHTTPRequestHandler):
                 started=time.monotonic()
                 log('Catalogue browse started')
                 page=F.browse(parts[1],query.get('offset',[0])[0],query.get('limit',[100])[0],query.get('year',[None])[0],
-                    query.get('sort',['votes'])[0],query.get('order',['Descending'])[0])
+                    query.get('sort',['PremiereDate'])[0],query.get('order',['Descending'])[0],query.get('month',[None])[0])
                 log(f'Catalogue browse completed in {time.monotonic()-started:.2f}s')
                 return self.reply(page)
             if parts[0] in ('manifest.json','catalog','meta'):

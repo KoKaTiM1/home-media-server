@@ -58,7 +58,7 @@ public sealed class HomeYearSortFilter(ILibraryManager library) : IAsyncResource
                 var requested = query["SortBy"].ToString().Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
                 var requestedOrders = query["SortOrder"].ToString().Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
                 var secondaryIndex = Array.FindIndex(requested, s => !s.Equals("ProductionYear", StringComparison.OrdinalIgnoreCase));
-                var secondary = secondaryIndex >= 0 ? requested[secondaryIndex] : "votes";
+                var secondary = secondaryIndex >= 0 ? requested[secondaryIndex] : "PremiereDate";
                 var direction = requestedOrders.Length > 0 ? requestedOrders[Math.Min(Math.Max(0, secondaryIndex), requestedOrders.Length - 1)]
                     : secondary is "SortName" or "Runtime" or "OfficialRating" ? "Ascending" : "Descending";
                 context.HttpContext.Items["HomeSecondarySort"] = secondary;

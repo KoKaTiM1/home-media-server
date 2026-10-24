@@ -1,7 +1,7 @@
 # Home media catalogue
 
 Jellyfin 10.11.11 is pinned in /opt/media-stack/compose.yaml. The local Dynamic
-Library extension is version 1.4.0.6; WizdomSubs Downloader is version 0.2.0.0.
+Library extension is version 1.4.0.7; WizdomSubs Downloader is version 0.2.0.0.
 Do not automatically update these plugins/Jellyfin without integration testing.
 
 ## Watching and browsing
@@ -209,3 +209,34 @@ a cached browse preview lacks a full premiere date. It cannot fall through to
 the native .strm placeholder. Recovery checks cover both empty listings and
 listed sources with failed preparation, verifying NoCompatibleStream; the saved
 Big Buck Bunny movie returns real prepared metadata and seekable HTTP206 bytes.
+
+Cold magnet metadata adds can take20 seconds; a socket timeout is followed by
+status polling rather than immediate abandonment. Already-loaded metadata is
+reused. Overall preparation stays bounded at27 seconds, with time reserved for
+probing, so a failed source returns an explicit error rather than waiting beyond
+the TV client's request timeout. Slow/dead swarms can still fail; cataloguing a
+title does not establish its torrent health.
+
+## Real release months (1.4.0.7)
+
+Default year ordering now uses actual premiere date newest-first within each
+year. Selecting score/name retains those secondary sorts. Choose Premiere date
+/Release date to restore chronological month/day order. Native Android TV has
+no server-supplied month picker; search2026-07 or2026-07..2026-09 for one month
+or an inclusive range. Normal TV search result limits remain.
+
+Provider-supplied full dates persist in release_dates independently of the daily
+IMDb rebuild, and populate the bulk index released field. Existing metadata was
+backfilled; recent two years are enriched during the existing four daily syncs.
+Known future dates are hidden from normal browsing. Dates unknown in IMDb remain
+unknown: do not invent January1. Month searches include only titles with known
+dates, so they do not cover the entire million-title index. Provider timeouts
+are deferred to subsequent syncs; opening a title can add its genuine date too.
+
+check_release_months.py verifies the native Items dates/order, Movie/Series month
+searches, inclusive ranges and Android TV Search/Hints.
+
+For online catalogue browsing only, the client's Date added/Newest sort is an
+alias for real premiere date too; the bulk index creation timestamp cannot
+distinguish new releases. Local media libraries keep Jellyfin's native Date
+added behavior. Score/name choices retain their within-year sorting.

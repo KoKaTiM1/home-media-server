@@ -51,11 +51,12 @@ public sealed class HomeBrowseFilter(ILibraryManager library, SearchResultFactor
             await next(); return;
         }
         var search = request.Query["searchTerm"].ToString();
+        var monthSearch = Regex.IsMatch(search, @"^\s*(19|20)\d{2}-\d{2}(?:\s*\.\.\s*(19|20)\d{2}-\d{2})?\s*$");
         var yearSearch = Regex.IsMatch(search, @"^\s*(19|20)\d{2}(?:\s*[-–—]\s*(19|20)\d{2})?\s*$");
         var folder = Guid.TryParse(request.Query["parentId"], out var parentId) ? library.GetItemById(parentId) as CollectionFolder : null;
         var kind = folder?.PhysicalLocations.Contains("/catalogue/movies") == true ? "movie"
             : folder?.PhysicalLocations.Contains("/catalogue/shows") == true ? "series" : null;
-        if (kind is null && folder is null && yearSearch && !request.Query.ContainsKey("parentId"))
+        if (kind is null && folder is null && (yearSearch || monthSearch) && !request.Query.ContainsKey("parentId"))
         {
             var included = request.Query["includeItemTypes"].ToString();
             kind = included.Equals("Movie", StringComparison.OrdinalIgnoreCase) ? "movie"
@@ -78,13 +79,14 @@ public sealed class HomeBrowseFilter(ILibraryManager library, SearchResultFactor
         {
             await next(); return;
         }
-        if (search.Length > 0 && !yearSearch)
+        if (search.Length > 0 && !yearSearch && !monthSearch)
         {
             await next(); return;
         }
-        var year = search.Length > 0 ? search : request.Query["years"].ToString();
+        var year = search.Length > 0 && !monthSearch ? search : request.Query["years"].ToString();
+        var month = monthSearch ? search : request.Query["month"].ToString();
         var selectedSort = context.HttpContext.Items["HomeSecondarySort"]?.ToString()
-            ?? request.Query["SortBy"].ToString().Split(',').FirstOrDefault(s => s.Length > 0 && !s.Equals("ProductionYear", StringComparison.OrdinalIgnoreCase)) ?? "votes";
+            ?? request.Query["SortBy"].ToString().Split(',').FirstOrDefault(s => s.Length > 0 && !s.Equals("ProductionYear", StringComparison.OrdinalIgnoreCase)) ?? "PremiereDate";
         var selectedOrder = context.HttpContext.Items["HomeSecondaryOrder"]?.ToString()
             ?? request.Query["SortOrder"].ToString().Split(',').FirstOrDefault(s => s.Length > 0) ?? "Descending";
         var start = int.TryParse(request.Query["startIndex"], out var offset) ? Math.Max(0, offset) : 0;
@@ -95,6 +97,7 @@ public sealed class HomeBrowseFilter(ILibraryManager library, SearchResultFactor
             client.Timeout = TimeSpan.FromSeconds(25);
             var url = $"http://catalogue-bridge:8092/browse/{kind}?offset={start}&limit={limit}";
             if (year.Length > 0) url += "&year=" + Uri.EscapeDataString(year);
+            if (month.Length > 0) url += "&month=" + Uri.EscapeDataString(month);
             url += "&sort=" + Uri.EscapeDataString(selectedSort) + "&order=" + Uri.EscapeDataString(selectedOrder);
             var page = await client.GetFromJsonAsync<Page>(url, context.HttpContext.RequestAborted);
             if (page is null) throw new InvalidOperationException("Missing browse page");

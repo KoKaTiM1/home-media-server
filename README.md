@@ -13,7 +13,8 @@ full disk image or a complete application-data backup.
 
 - Movies and series catalogue with paging beyond the original 1,000/200 limits.
 - Hebrew title lookup, related English franchise search and single/range year search.
-- Newest production year first, with selected score/name/runtime sorting within years.
+- Newest production year first, then real release date by default; selected score/name/runtime sorting within years.
+- Month searches such as `2026-07` and `2026-07..2026-09` where real dates are known.
 - Online libraries named סרטים צפייה ישירה and סדרות צפייה ישירה.
 - Wizdom Hebrew subtitles with English fallback where available. Green HE means
   confirmed Hebrew, red EN means confirmed English, gray ? means unknown.
@@ -46,7 +47,7 @@ The authoritative current catalogue behavior is described in
 stack README is retained as a historical setup document; some early manual-only
 instructions and library names there predate the integrated catalogue.
 
-Jellyfin is pinned to 10.11.11; the modified Dynamic Library is 1.4.0.6.
+Jellyfin is pinned to 10.11.11; the modified Dynamic Library is 1.4.0.7.
 Upstream Dynamic Library source retains its MIT license. Wizdom is included as
 the original provider package; its licensing remains with its authors.
 

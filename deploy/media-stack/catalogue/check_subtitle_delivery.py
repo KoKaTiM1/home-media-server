@@ -23,7 +23,10 @@ def main():
     user=api('/Users')[0]['Id']
     item='<SUBTITLE_SAMPLE_ITEM_ID>'
     body={'UserId':user,'IsPlayback':True}
-    source=api('/Items/'+item+'/PlaybackInfo',body)['MediaSources'][0]
+    response=api('/Items/'+item+'/PlaybackInfo',body)
+    if not response.get('MediaSources'):
+        raise RuntimeError('Pilot torrent currently unavailable: '+str(response.get('ErrorCode')))
+    source=response['MediaSources'][0]
     subtitles=[s for s in source['MediaStreams'] if s['Type']=='Subtitle']
     hebrew=next(s for s in subtitles if s['Language']=='heb' and s['IsExternal'])
     english=next(s for s in subtitles if s['Language']=='eng' and not s['IsExternal'])
