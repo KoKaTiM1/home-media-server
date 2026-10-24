@@ -64,7 +64,8 @@ class Connection(sqlite3.Connection):
 def db():
     DATA.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DATA / 'catalogue.sqlite', timeout=30, factory=Connection)
-    conn.execute('PRAGMA journal_mode=WAL')
+    if conn.execute('PRAGMA journal_mode').fetchone()[0]!='wal':
+        conn.execute('PRAGMA journal_mode=WAL')
     conn.execute('CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, value TEXT, expires REAL)')
     conn.execute('CREATE TABLE IF NOT EXISTS items (key TEXT PRIMARY KEY, kind TEXT, imdb TEXT, meta TEXT, buckets TEXT)')
     conn.execute('CREATE TABLE IF NOT EXISTS playback (key TEXT PRIMARY KEY, value TEXT, updated REAL)')
@@ -200,7 +201,7 @@ def refresh_subtitle_badges(limit=25):
             key='movie:'+imdb
             if kind=='series':
                 episodes=[v for v in meta.get('videos',[]) if v.get('season',0)>0 and v.get('episode',0)>0
-                          and v.get('released','9999')[:10]<=dt.date.today().isoformat()]
+                          and (v.get('released') or '9999')[:10]<=dt.date.today().isoformat()]
                 if not episodes: continue
                 sample=min(episodes,key=lambda v:(v['season'],v['episode']))
                 key=f"series:{imdb}:{sample['season']}:{sample['episode']}"
@@ -658,44 +659,56 @@ def probe(selected,key,deadline=None):
     result=subprocess.run(['ffprobe','-v','error','-rw_timeout','6000000','-analyzeduration','4000000','-probesize','4000000','-show_streams','-show_format','-of','json',raw_url],capture_output=True,timeout=min(18,remaining))
     if result.returncode: raise RuntimeError('Source probe failed')
     if selected.get('local'):return json.loads(result.stdout)
-    start=min(1048576,max(0,selected['length']-32768))
-    req=R.Request(raw_url,headers={'Range':f'bytes={start}-{start+16383}'})
+    start=min(1048576,max(0,selected['length']-2097152))
+    req=R.Request(raw_url,headers={'Range':f'bytes={start}-{start+2097151}'})
     remaining=max(.1,deadline-time.monotonic()) if deadline is not None else 12
     with R.urlopen(req,timeout=min(12,remaining)) as response:
-        if len(response.read(16384))<1024: raise RuntimeError('Source stalled during data preflight')
+        if len(response.read(min(2097152,selected['length']-start)))<min(2097152,selected['length']-start): raise RuntimeError('Source stalled during data preflight')
     return json.loads(result.stdout)
 
 
-def prepared(key):
+def prepared(key,background=False):
     with LOCKS_LOCK: lock=LOCKS.setdefault(key,threading.Lock())
     with lock:
         saved=cached('prepared:'+key)
-        if saved: return saved
+        if saved and F.source_state(key) in ('verified','downloaded'): return saved
         with LIVE_LOCK:
             if LIVE['key'] not in (None,key) and LIVE['active']>0:
                 raise RuntimeError('Another title is currently streaming; this server supports one stream')
-        deadline=time.monotonic()+27
+        deadline=time.monotonic()+(60 if background else 27)
         for attempt in range(3):
             try:selected=resolve(key,deadline=deadline)
             except Exception:
                 remember('source-status:'+key,{'state':'unavailable','checked_at':time.time()},900)
+                F.validation_result(key,False,reason='Source preparation failed')
                 raise
             try:
                 info=probe(selected,key,deadline=deadline)
                 video=next((s for s in info.get('streams',[]) if s.get('codec_type')=='video'),{})
+                if video.get('codec_name')=='h264' and video.get('pix_fmt') not in ('yuv420p','yuvj420p'):
+                    raise RuntimeError('Unsupported H264 pixel format')
                 if video.get('codec_name') not in ('h264','mpeg4','vp8','vp9'):
                     raise RuntimeError('Source requires unsupported video decoding')
+                audio=[t for t in info.get('streams',[]) if t.get('codec_type')=='audio']
+                if audio and all(t.get('codec_name')=='aac' and t.get('profile')=='Main' for t in audio):
+                    raise RuntimeError('AAC Main audio is incompatible with this TV')
+                if background:
+                    remaining=max(.1,deadline-time.monotonic())
+                    sample=subprocess.run(['ffmpeg','-v','error','-rw_timeout','6000000','-i',selected.get('local') or signed_path('raw',key),'-t','2','-map','0:v:0','-map','0:a:0?','-f','null','-'],capture_output=True,timeout=min(15,remaining))
+                    if sample.returncode:raise RuntimeError('Video decode sample failed')
                 break
             except Exception:
                 if selected['hash']=='dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c':
                     remember('open-film-failed',True,900)
                 with db() as conn: conn.execute('DELETE FROM cache WHERE key=?',('resolved:'+key,))
-                alternatives=[s for s in stream_candidates(key) if s['infoHash'].lower()!=selected['hash']]
+                try:alternatives=[s for s in stream_candidates(key) if s['infoHash'].lower()!=selected['hash']]
+                except Exception:alternatives=[]
                 remember('streams:'+key,alternatives,900)
                 try: torr({'action':'drop','hash':selected['hash']})
                 except Exception: pass
                 if attempt==2 or not alternatives:
                     remember('source-status:'+key,{'state':'unavailable','checked_at':time.time()},900)
+                    F.validation_result(key,False,reason='Video preflight failed')
                     raise
         tracks=[]; languages=set()
         for stream in info.get('streams',[]):
@@ -712,7 +725,7 @@ def prepared(key):
                 'IsForced':bool(stream.get('disposition',{}).get('forced'))})
         if not any(t['Type']=='Video' for t in tracks): raise RuntimeError('No video in selected source')
         # External search/download has a bounded deadline. A timeout never blocks video.
-        if 'heb' not in languages:
+        if not background and 'heb' not in languages:
             pool=ThreadPoolExecutor(max_workers=1)
             try:
                 external=pool.submit(external_subtitles,key,selected['filename'],'eng' in languages).result(timeout=max(.1,min(15,deadline-time.monotonic())))
@@ -732,13 +745,14 @@ def prepared(key):
             'languages':sorted(languages),'checked_at':time.time()}
         with db() as conn:
             conn.execute('INSERT OR REPLACE INTO playback VALUES (?,?,?)',(key,json.dumps(output),time.time()))
+        F.validation_result(key,True,proof={'version':2,'checked_at':output['checked_at'],'source_hash':selected['hash'],'filename':selected['filename'],'Container':output['Container']})
         kind,imdb,*_=key.split(':')
         with db() as conn: row=conn.execute('SELECT meta FROM items WHERE key=?',(kind+':'+imdb,)).fetchone()
         if row:
             folder=LIBRARY/('movies' if kind=='movie' else 'shows')/imdb
             try: make_poster(folder,json.loads(row[0]),kind,imdb)
             except OSError: log('Poster badge update deferred for '+key)
-        return remember('prepared:'+key,output,300)
+        return output if background else remember('prepared:'+key,output,300)
 
 
 def update_collections():
@@ -832,6 +846,17 @@ class Handler(BaseHTTPRequestHandler):
         response_started=False
         try:
             parsed=U.urlsplit(self.path); parts=parsed.path.strip('/').split('/')
+            if parsed.path=='/ready':
+                ready=F.ready_keys()
+                ready.update(":".join(key.split(":")[:2]) for key in list(ready))
+                wanted=U.parse_qs(parsed.query).get('keys',[''])[0]
+                if wanted:ready.intersection_update(wanted.split(','))
+                return self.reply({'titles':sorted(ready)})
+            if parsed.path=='/validation':
+                with F.db() as conn:
+                    states=dict(conn.execute('SELECT state,COUNT(*) FROM validation GROUP BY state'))
+                    due=conn.execute("SELECT COUNT(*) FROM validation WHERE state!='verified' AND next_check<=?",(time.time(),)).fetchone()[0]
+                return self.reply({'states':states,'due':due})
             if parsed.path=='/health':
                 with db() as conn: count=conn.execute('SELECT kind,COUNT(*) FROM items GROUP BY kind').fetchall()
                 return self.reply({'status':'ok','catalogue':dict(count),'subtitles_configured':True,
@@ -906,7 +931,8 @@ class Handler(BaseHTTPRequestHandler):
             if parts[0]=='stream' and len(parts)==3:
                 kind=parts[1]; ident=parts[2].removesuffix('.json').split(':')
                 key=identity(kind,*ident)
-                if cached('streams:'+key)==[] and not F.local_download(key):
+                F.enqueue(key,100)
+                if F.source_state(key) not in ('verified','downloaded'):
                     return self.reply({'streams':[]})
                 # Warm source listings without making title details wait for an
                 # indexer. No torrent/video is fetched until the user presses Play.
@@ -967,15 +993,21 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header('Connection','close')
                 self.end_headers()
                 if self.command!='HEAD':
+                    transferred=0
+                    expected=int(response.headers.get('Content-Length','0'))
                     while True:
                         chunk=response.read(128*1024)
-                        if not chunk: break
+                        if not chunk:
+                            if expected and transferred<expected:raise RuntimeError('Upstream video ended early')
+                            break
+                        transferred+=len(chunk)
                         self.wfile.write(chunk)
                         if parts[0]=='play':
                             with LIVE_LOCK: LIVE.update(key=key,touched=time.monotonic())
                 self.close_connection=True
         except (BrokenPipeError,ConnectionResetError): pass
         except urllib.error.HTTPError as error:
+            if parts[0]=='play' and error.code!=416:F.validation_result(key,False,reason='Upstream HTTP failure')
             if error.code==416 and not response_started:
                 self.send_response(416)
                 if error.headers.get('Content-Range'):
@@ -987,6 +1019,7 @@ class Handler(BaseHTTPRequestHandler):
             else: self.close_connection=True
         except Exception as error:
             log('Request failed: '+type(error).__name__)
+            if parts[0]=='play':F.validation_result(key,False,reason='Stream read failure')
             try:
                 if not response_started:
                     self.reply({'error':'Source unavailable; retry later or select another title.'},503)

@@ -120,7 +120,7 @@ class CatalogueTests(unittest.TestCase):
     def test_subtitle_preference_and_missing_languages(self):
         for languages,expected in [(['eng','heb'],'heb'),(['eng'],'eng'),([],None)]:
             with self.subTest(languages=languages),tempfile.TemporaryDirectory() as directory:
-                tracks=[{'index':0,'codec_type':'video','codec_name':'h264'},
+                tracks=[{'index':0,'codec_type':'video','codec_name':'h264','pix_fmt':'yuv420p'},
                         {'index':1,'codec_type':'audio','codec_name':'aac'}]
                 for index,lang in enumerate(languages,2):
                     tracks.append({'index':index,'codec_type':'subtitle','codec_name':'subrip','tags':{'language':lang}})
@@ -135,7 +135,7 @@ class CatalogueTests(unittest.TestCase):
     def test_downloaded_hebrew_preferred_over_embedded_english(self):
         with tempfile.TemporaryDirectory() as directory:
             selected={'filename':'movie.mp4','hash':'b'*40,'index':1}
-            info={'streams':[{'index':0,'codec_type':'video','codec_name':'h264'},
+            info={'streams':[{'index':0,'codec_type':'video','codec_name':'h264','pix_fmt':'yuv420p'},
                 {'index':1,'codec_type':'audio','codec_name':'aac'},
                 {'index':2,'codec_type':'subtitle','codec_name':'subrip','tags':{'language':'eng'}},
                 {'index':3,'codec_type':'video','codec_name':'mjpeg','disposition':{'attached_pic':1}}],

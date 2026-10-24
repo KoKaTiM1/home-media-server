@@ -66,6 +66,56 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
         && (library.GetItemById(title.Id)?.Path?.StartsWith("/catalogue/", StringComparison.Ordinal) == true
             || SearchResultFactory.IsDynamicItem(title));
 
+    private sealed class ReadyResponse
+    {
+        public List<string> Titles { get; set; } = new();
+    }
+
+    private string? HomeKey(Guid id, BaseItemKind type)
+    {
+        if (type == BaseItemKind.Episode)
+        {
+            var episode = library.GetItemById(id) as MediaBrowser.Controller.Entities.TV.Episode;
+            var cached = itemCache.GetItem(id);
+            var seriesId = episode?.SeriesId ?? cached?.SeriesId;
+            if (seriesId is null) return null;
+            var parentKey = HomeKey(seriesId.Value, BaseItemKind.Series);
+            var season = episode?.ParentIndexNumber ?? cached?.ParentIndexNumber;
+            var number = episode?.IndexNumber ?? cached?.IndexNumber;
+            return parentKey is not null && season.HasValue && number.HasValue ? $"{parentKey}:{season}:{number}" : null;
+        }
+        if (type is not (BaseItemKind.Movie or BaseItemKind.Series)) return null;
+        var native = library.GetItemById(id);
+        if (native?.Path?.StartsWith("/catalogue/", StringComparison.Ordinal) != true
+            && itemCache.GetImageUrl(id)?.StartsWith("http://<SERVER_LAN_IP>:8092/poster/", StringComparison.Ordinal) != true) return null;
+        var imdb = native?.ProviderIds.GetValueOrDefault("Imdb");
+        if (string.IsNullOrEmpty(imdb))
+        {
+            var image = itemCache.GetImageUrl(id);
+            if (Uri.TryCreate(image, UriKind.Absolute, out var uri))
+                imdb = uri.Segments.LastOrDefault()?.Replace(".jpg", "", StringComparison.Ordinal);
+        }
+        return string.IsNullOrEmpty(imdb) ? null : (type == BaseItemKind.Movie ? "movie:" : "series:") + imdb;
+    }
+
+    private async Task<HashSet<string>> ReadyAsync(IEnumerable<string?> keys, CancellationToken token)
+    {
+        var ready = new HashSet<string>();
+        var client = clients.CreateClient();
+        client.Timeout = TimeSpan.FromSeconds(3);
+        foreach (var batch in keys.Where(k => k is not null).Distinct().Chunk(100))
+        {
+            try
+            {
+                var result = await client.GetFromJsonAsync<ReadyResponse>(
+                    "http://catalogue-bridge:8092/ready?keys=" + Uri.EscapeDataString(string.Join(',', batch)), token);
+                if (result is not null) ready.UnionWith(result.Titles);
+            }
+            catch (Exception) { /* Unchecked online titles cannot be advertised as ready. */ }
+        }
+        return ready;
+    }
+
     private void PreservePoster(BaseItemDto title, string? poster = null)
     {
         if (!IsHomeTitle(title)) return;
@@ -96,7 +146,11 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
             var entries = list.Items.ToArray();
             foreach (var entry in entries)
                 if (entry.ImageTags?.GetValueOrDefault(ImageType.Primary)?.Length != 64) PreservePoster(entry);
-            list.Items = entries;
+            var keyed = entries.Select(e => (Entry: e, Key: HomeKey(e.Id, e.Type))).ToArray();
+            var ready = await ReadyAsync(keyed.Select(e => e.Key), context.HttpContext.RequestAborted);
+            var visible = keyed.Where(e => e.Key is null || ready.Contains(e.Key)).Select(e => e.Entry).ToArray();
+            list.Items = visible;
+            list.TotalRecordCount = Math.Max(visible.Length, list.TotalRecordCount - (entries.Length - visible.Length));
         }
         if (context.Result is ObjectResult titleResult && titleResult.Value is BaseItemDto title
             && title.Type is BaseItemKind.Movie or BaseItemKind.Series
@@ -130,6 +184,10 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
             && context.HttpContext.Request.Query.TryGetValue("searchTerm", out var term)
             && !string.IsNullOrWhiteSpace(term))
         {
+            var guardedHints = hints.SearchHints.Select(h => (Hint: h, Key: HomeKey(h.Id, h.Type))).ToArray();
+            var allowedHints = await ReadyAsync(guardedHints.Select(h => h.Key), context.HttpContext.RequestAborted);
+            var baseHints = guardedHints.Where(h => h.Key is null || allowedHints.Contains(h.Key)).Select(h => h.Hint).ToArray();
+            hintResult.Value = new SearchHintResult(baseHints, baseHints.Length);
             try
             {
                 var types = new HashSet<BaseItemKind> { BaseItemKind.Movie, BaseItemKind.Series };
@@ -139,7 +197,9 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
                 }
                 var remote = await catalogues.SearchAsync(term.ToString(), types,
                     context.HttpContext.RequestAborted);
-                var currentHints = hints.SearchHints.ToArray();
+                var remoteReady = await ReadyAsync(remote.Select(i => HomeKey(i.Id, i.Type)), context.HttpContext.RequestAborted);
+                remote = remote.Where(i => HomeKey(i.Id, i.Type) is not string key || remoteReady.Contains(key)).ToList();
+                var currentHints = baseHints;
                 var present = currentHints.Select(h => (h.Name.ToLowerInvariant(), h.ProductionYear)).ToHashSet();
                 var presentIds = currentHints.Select(h => h.Id).ToHashSet();
                 var extras = remote.Where(item => !presentIds.Contains(item.Id) && !present.Contains(((item.Name ?? "").ToLowerInvariant(), item.ProductionYear)))
@@ -160,7 +220,7 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
                         hint.PrimaryImageTag = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(image)));
                 hintResult.Value = new SearchHintResult(
                     currentHints.Concat(extras).Take(limit).ToArray(),
-                    hints.TotalRecordCount + extras.Length);
+                    currentHints.Length + extras.Length);
             }
             catch (Exception error)
             {

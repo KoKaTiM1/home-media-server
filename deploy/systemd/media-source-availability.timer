@@ -1,9 +1,9 @@
 [Unit]
-Description=Refresh source availability every 15 minutes
+Description=Resume persistent media validation while playback is idle
 
 [Timer]
 OnBootSec=5min
-OnUnitActiveSec=15min
+OnUnitInactiveSec=1min
 AccuracySec=30s
 
 [Install]

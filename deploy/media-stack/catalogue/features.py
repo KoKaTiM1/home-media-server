@@ -30,6 +30,9 @@ class Features:
         conn.execute('CREATE TABLE IF NOT EXISTS release_dates (kind TEXT, imdb TEXT, released TEXT, PRIMARY KEY(kind,imdb))')
         conn.execute('CREATE TABLE IF NOT EXISTS aliases (imdb TEXT PRIMARY KEY, hebrew TEXT, english TEXT)')
         conn.execute('CREATE TABLE IF NOT EXISTS downloads (key TEXT PRIMARY KEY, value TEXT)')
+        conn.execute("CREATE TABLE IF NOT EXISTS validation (key TEXT PRIMARY KEY, state TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, next_check REAL NOT NULL DEFAULT 0, checked REAL NOT NULL DEFAULT 0, proof TEXT, reason TEXT, priority INTEGER NOT NULL DEFAULT 0)")
+        conn.execute('CREATE INDEX IF NOT EXISTS validation_due ON validation(state,next_check,priority)')
+        conn.execute("CREATE INDEX IF NOT EXISTS validation_work ON validation(priority DESC,next_check) WHERE state!='verified'")
         return conn
 
     @property
@@ -75,13 +78,75 @@ class Features:
                 meta['poster']=self.poster_url(kind,imdb,badge)
         return metas
 
+    def enqueue(self,key,priority=0):
+        if not re.fullmatch(r'(movie:tt\d{5,12}|series:tt\d{5,12}:\d+:\d+)',key):return
+        with self.db() as conn:
+            conn.execute('INSERT INTO validation(key,priority) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET priority=MAX(priority,excluded.priority)',(key,priority))
+
+    def enqueue_many(self,keys,priority=0):
+        valid={key for key in keys if re.fullmatch(r'(movie:tt\d{5,12}|series:tt\d{5,12}:\d+:\d+)',key)}
+        with self.db() as conn:
+            conn.executemany('INSERT INTO validation(key,priority) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET priority=MAX(priority,excluded.priority)',((key,priority) for key in valid))
+
+    def validation_result(self,key,ok,proof=None,reason=''):
+        self.enqueue(key)
+        now=time.time()
+        with self.db() as conn:
+            attempts=conn.execute('SELECT attempts FROM validation WHERE key=?',(key,)).fetchone()[0]
+            attempts=0 if ok else attempts+1
+            # Preserve successful proof even after failure, but never let it
+            # override a newer failed check. Backoff: 6h, 12h, 1d ... max 30d.
+            delay=min(30*86400,21600*2**min(max(0,attempts-1),7))
+            conn.execute('UPDATE validation SET state=?,attempts=?,next_check=?,checked=?,proof=COALESCE(?,proof),reason=? WHERE key=?',
+                ('verified' if ok else 'unavailable',attempts,0 if ok else now+delay,now,json.dumps(proof) if proof else None,reason[:160],key))
+            if not ok:conn.execute("DELETE FROM cache WHERE key IN (?,?)",('prepared:'+key,'resolved:'+key))
+        with self.count_lock:self.count_cache.clear()
+
     def source_state(self,key):
         if self.local_download(key):return 'downloaded'
-        with self.db() as conn:row=conn.execute('SELECT value FROM playback WHERE key=?',(key,)).fetchone()
-        if row and time.time()-json.loads(row[0]).get('checked_at',0)<21600:return 'verified'
-        streams=self.cached('streams:'+key)
-        if streams is not None:return 'listed' if streams else 'unavailable'
-        return (self.cached('source-status:'+key) or {}).get('state','unknown')
+        with self.db() as conn:row=conn.execute('SELECT state,checked FROM validation WHERE key=?',(key,)).fetchone()
+        if row:
+            latest=self.cached('source-status:'+key) or {}
+            if latest.get('state')=='unavailable' and latest.get('checked_at',0)>row[1]:return 'unavailable'
+            return row[0]
+        return 'unknown'
+
+    def ready_keys(self):
+        with self.db() as conn:
+            rows=conn.execute("SELECT v.key FROM validation v LEFT JOIN cache c ON c.key='source-status:'||v.key AND c.expires>? WHERE v.state='verified' AND (c.key IS NULL OR json_extract(c.value,'$.state')!='unavailable' OR COALESCE(json_extract(c.value,'$.checked_at'),0)<=v.checked)",(time.time(),)).fetchall()
+            downloads=conn.execute('SELECT key FROM downloads').fetchall()
+        ready={key for (key,) in rows}
+        for (key,) in downloads:
+            if self.local_download(key):ready.add(key)
+        return ready
+
+    def ready_titles(self):
+        return {':'.join(key.split(':')[:2]) for key in self.ready_keys()}
+
+    def seed_validation(self):
+        # Keep the queue separate from the replaceable bulk metadata index.
+        # Existing entries retain proof, retry schedule and failure count.
+        index=self.g['DATA']/'imdb/catalogue.sqlite'
+        signature=('validation-seeded:'+str(index.stat().st_ino)) if index.is_file() else None
+        seed_bulk=signature is not None and self.cached(signature) is None
+        with self.db() as conn:
+            if seed_bulk:
+                conn.execute('ATTACH DATABASE ? AS bulk',(str(index),))
+                conn.execute("INSERT OR IGNORE INTO validation(key,priority) SELECT kind||':'||imdb||CASE WHEN kind='series' THEN ':1:1' ELSE '' END, CASE WHEN votes>10000 THEN 10 ELSE 0 END FROM bulk.titles WHERE year<=? ORDER BY year DESC,votes DESC",(dt.date.today().year,))
+                conn.execute('INSERT OR REPLACE INTO cache VALUES (?,?,?)',(signature,'true',time.time()+10*365*86400))
+            for kind,imdb in conn.execute('SELECT kind,imdb FROM discovery UNION SELECT kind,imdb FROM items').fetchall():
+                key=kind+':'+imdb+(':1:1' if kind=='series' else '')
+                conn.execute('INSERT OR IGNORE INTO validation(key,priority) VALUES (?,20)',(key,))
+            if not conn.execute("SELECT 1 FROM cache WHERE key='validation-migrated-v2'").fetchone():
+                for cachekey,raw in conn.execute("SELECT key,value FROM cache WHERE key LIKE 'source-status:%'").fetchall():
+                    status=json.loads(raw);key=cachekey.removeprefix('source-status:')
+                    if status.get('state')!='unavailable':continue
+                    checked=status.get('checked_at',time.time())
+                    conn.execute("UPDATE validation SET state='unavailable',attempts=1,checked=?,next_check=?,reason='Previous unavailable source retained' WHERE key=? AND checked=0",(checked,max(time.time(),checked+21600),key))
+                for (key,) in conn.execute('SELECT key FROM playback').fetchall():
+                    conn.execute('UPDATE validation SET priority=MAX(priority,150) WHERE key=?',(key,))
+                conn.execute('INSERT OR REPLACE INTO cache VALUES (?,?,?)',('validation-migrated-v2','true',time.time()+10*365*86400))
+
 
     def page(self,kind,year,skip):
         if kind not in ('movie','series') or not 1920<=year<=dt.date.today().year:raise ValueError('Invalid catalogue year')
@@ -94,10 +159,12 @@ class Features:
             for entry in raw:
                 imdb=entry.get('imdb_id') or entry.get('id','')
                 if not re.fullmatch(r'tt\d{5,12}',imdb):continue
-                if entry.get('released','')[:10]>dt.date.today().isoformat():continue
+                if (entry.get('released') or '')[:10]>dt.date.today().isoformat():continue
                 item=dict(entry);item['id']=imdb
                 conn.execute('INSERT OR REPLACE INTO discovery VALUES (?,?,?)',(kind,imdb,json.dumps(item)))
                 entries.append(item)
+                key=kind+':'+imdb+(':1:1' if kind=='series' else '')
+                conn.execute('INSERT INTO validation(key,priority) VALUES (?,40) ON CONFLICT(key) DO UPDATE SET priority=MAX(priority,40)',(key,))
         self.record_dates(kind,entries)
         return self.remember(cachekey,{'metas':entries,'raw_count':len(raw)},21600)
 
@@ -207,9 +274,12 @@ class Features:
                 if not years_filter or dt.date.today().year in years_filter:
                     where+=' AND (t.year<? OR t.votes>0 OR t.imdb IN (SELECT imdb FROM state.release_dates WHERE released<=?))'
                     params.extend([dt.date.today().year,dt.date.today().isoformat()])
-                unavailable=[row[0].removeprefix('source-status:') for row in conn.execute(
-                    "SELECT key FROM state.cache WHERE key LIKE 'source-status:%' AND expires>? AND json_extract(value,'$.state')='unavailable'",(time.time(),))]
-                unavailable += [row[0] for row in conn.execute("SELECT kind||':'||imdb FROM state.release_dates WHERE released>?",(dt.date.today().isoformat(),))]
+                ready=sorted(self.ready_titles())
+                # Temp table avoids SQLite variable limits as the library grows.
+                conn.execute('CREATE TEMP TABLE ready_titles(identity TEXT PRIMARY KEY)')
+                conn.executemany('INSERT INTO ready_titles VALUES (?)',((v,) for v in ready))
+                where+=" AND (t.kind||':'||t.imdb) IN (SELECT identity FROM ready_titles)"
+                unavailable=[row[0] for row in conn.execute("SELECT kind||':'||imdb FROM state.release_dates WHERE released>?",(dt.date.today().isoformat(),))]
                 if unavailable:
                     where+=" AND (t.kind||':'||t.imdb) NOT IN ("+','.join('?' for _ in unavailable)+')'
                     params.extend(unavailable)
@@ -218,7 +288,7 @@ class Features:
                 if month_bounds and 'browse_release_lookup' in indexes:count_source='titles t INDEXED BY browse_release_lookup'
                 identity=index.stat()
                 count_key=(kind,tuple(years_filter),month_bounds,identity.st_ino,identity.st_mtime_ns,
-                    hashlib.sha256(json.dumps(sorted(unavailable)).encode()).digest())
+                    hashlib.sha256(json.dumps((ready,sorted(unavailable))).encode()).digest())
                 with self.count_lock:
                     entry=self.count_cache.get(count_key)
                     if entry and entry[0]>time.monotonic():total=entry[1]
@@ -268,7 +338,7 @@ class Features:
                     imdb=entry['id']
                     if imdb in seen:continue
                     seen.add(imdb)
-                    if kind=='movie' and self.source_state('movie:'+imdb)=='unavailable':continue
+                    if kind+':'+imdb not in self.ready_titles():continue
                     if position>=offset and len(result)<limit:result.append(self.localize(entry))
                     position+=1
                     if len(result)==limit:
@@ -493,46 +563,78 @@ class Features:
             try:raw=self.hebrew_search(kind,query)
             except Exception:raw=[];self.log('Hebrew title lookup deferred; using known local aliases')
         else:
-            try:raw=self.fetch(f"{self.g['CINEMETA']}/catalog/{kind}/top/search={U.quote(query,safe='')}.json",timeout=8).get('metas',[])
-            except Exception:raw=[]
+            search_cache='search-meta:'+kind+':'+hashlib.sha256(query.casefold().encode()).hexdigest()
+            raw=self.cached(search_cache)
+            if raw is None:
+                try:
+                    raw=self.fetch(f"{self.g['CINEMETA']}/catalog/{kind}/top/search={U.quote(query,safe='')}.json",timeout=8).get('metas',[])
+                    self.remember(search_cache,raw,21600)
+                except Exception:
+                    raw=[];self.remember(search_cache,raw,300)
         local=self.index_search(kind,query);seen=set();output=[]
         if re.search('[\u0590-\u05ff]',query):
             for keyword in (self.cached('hebrew-keywords:'+self.search_key(query)) or [])[:5]:
                 local+=self.index_search(kind,keyword)
+        self.decorate_posters(raw+local)
+        self.enqueue_many((kind+':'+meta.get('id','')+(':1:1' if kind=='series' else '') for meta in raw+local),100)
+        ready=self.ready_titles()
         for meta in raw+local:
             imdb=meta.get('id')
             if not imdb or imdb in seen:continue
-            if meta.get('released','')[:10]>dt.date.today().isoformat():continue
-            if kind=='movie' and self.source_state('movie:'+imdb)=='unavailable':continue
+            if (meta.get('released') or '')[:10]>dt.date.today().isoformat():continue
+            if kind+':'+imdb not in ready:continue
             seen.add(imdb);output.append(self.localize(meta))
         return self.decorate_posters(output)
 
-    def warm_availability(self,limit=50):
-        with self.db() as conn:
-            rows=conn.execute('SELECT kind,imdb,meta FROM discovery ORDER BY rowid DESC').fetchall()
-            rows+=conn.execute('SELECT kind,imdb,meta FROM items ORDER BY rowid DESC').fetchall()
-        checked=0
-        for kind,imdb,raw in rows:
-            if checked>=limit:break
-            if kind=='movie':key='movie:'+imdb
-            else:
-                meta=json.loads(raw)
-                episodes=[v for v in meta.get('videos',[]) if v.get('season',0)>0 and v.get('episode',0)>0
-                          and v.get('released','9999')[:10]<=dt.date.today().isoformat()]
-                if not episodes:continue
-                sample=min(episodes,key=lambda v:(v['season'],v['episode']))
-                key=f"series:{imdb}:{sample['season']}:{sample['episode']}"
-            if self.cached('streams:'+key) is not None or self.cached('source-status:'+key) is not None:continue
-            try:self.g['stream_candidates'](key)
-            except urllib.error.HTTPError as error:
-                if error.code==429:break
-                continue
-            except Exception:continue
-            checked+=1;time.sleep(.7)
-        self.log(f'Source availability listings checked: {checked}; video files not downloaded')
+    def warm_availability(self,limit=20):
+        # flock survives separate cron/docker exec processes. Interrupted rows
+        # remain due and resume automatically; no in-memory-only work cursor.
+        with (self.g['DATA']/'validation.lock').open('a') as lock:
+            try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            except BlockingIOError:return
+            # Defer all torrent probes while the owner is playing anything.
+            def busy():
+                try:return any(s.get('NowPlayingItem') for s in self.jf('/Sessions'))
+                except Exception:return True
+            if busy() or self.cached('validation-provider-backoff'):return
+            self.seed_validation()
+            started=time.monotonic();checked=0
+            while checked<limit and time.monotonic()-started<480:
+                if busy():break
+                with self.db() as conn:
+                    row=conn.execute("SELECT key FROM validation WHERE state!='verified' AND next_check<=? ORDER BY priority DESC,next_check,rowid LIMIT 1",(time.time(),)).fetchone()
+                if not row:break
+                key=row[0]
+                try:
+                    # Retry only when due, with fresh source listings. A cached
+                    # negative listing must not poison its own next retry.
+                    with self.db() as conn:
+                        conn.execute('DELETE FROM cache WHERE key IN (?,?,?)',('streams:'+key,'prepared:'+key,'resolved:'+key))
+                    self.g['prepared'](key,background=True)
+                    if key.startswith('series:'):
+                        try:
+                            meta=self.g['metadata']('series',key.split(':')[1])
+                            aired=[]
+                            for episode in meta.get('videos',[]):
+                                season=episode.get('season',0);number=episode.get('episode',0)
+                                if season>0 and number>0 and (episode.get('released') or '9999')[:10]<=dt.date.today().isoformat():
+                                    aired.append(f'series:{key.split(":")[1]}:{season}:{number}')
+                            self.enqueue_many(aired,30)
+                        except Exception:self.log('Episode verification queue expansion deferred')
+                except Exception as error:
+                    if isinstance(error,urllib.error.HTTPError) and (error.code==429 or error.code>=500):
+                        self.remember('validation-provider-backoff',True,900 if error.code==429 else 300)
+                        self.log('Validation paused for source provider cooldown')
+                        break
+                    with self.db() as conn:current=conn.execute('SELECT checked FROM validation WHERE key=?',(key,)).fetchone()
+                    if not current or current[0]<time.time()-30:self.validation_result(key,False,reason=type(error).__name__)
+                checked+=1
+                time.sleep(2)
+            self.log(f'Persistent video validation: {checked} checked; unavailable entries retained with backoff')
 
     def sync_discovery(self):
         self.update_index()
+        self.seed_validation()
         self.sync_release_dates(max_pages=100)
         with self.db() as conn:
             conn.execute("DELETE FROM cache WHERE key LIKE 'discover-page:%' OR key LIKE 'browse:%'")
@@ -788,6 +890,7 @@ class Features:
                 if file.parent!=path.parent or file.is_symlink():continue
                 file.unlink(missing_ok=True)
             record.update(state='removed',removed_at=time.time());self.save_record(key,record)
+            self.validation_result(key,False,reason='Saved copy removed; online source needs verification')
             with self.db() as conn:conn.execute('DELETE FROM cache WHERE key=?',('prepared:'+key,))
             self.jf('/Library/Refresh',{},method='POST')
             self.log('Saved download removed after watching/retention: '+key)

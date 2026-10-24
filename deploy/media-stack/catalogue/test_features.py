@@ -21,6 +21,77 @@ class FeatureTests(unittest.TestCase):
         self.patch.start();self.addCleanup(self.patch.stop)
         a.F.media.mkdir();a.F.downloads.mkdir();a.F.db().close()
 
+    def verify_fixture(self,path):
+        with sqlite3.connect(path) as conn:rows=conn.execute('SELECT kind,imdb FROM titles').fetchall()
+        with a.F.db() as conn:
+            conn.executemany("INSERT INTO validation(key,state,checked,proof) VALUES (?,'verified',?,?)",((kind+':'+imdb,time.time(),json.dumps({'version':2})) for kind,imdb in rows))
+
+    def test_provider_rate_limit_pauses_the_queue(self):
+        import urllib.error
+        self.make_search_index()
+        key='movie:tt1234567';a.F.enqueue(key,100)
+        error=urllib.error.HTTPError('https://example.invalid',429,'Rate limited',{},None)
+        with patch.object(a.F,'jf',return_value=[]),patch.object(a,'prepared',side_effect=error) as prepare:
+            a.F.warm_availability(1)
+            self.assertTrue(a.cached('validation-provider-backoff'))
+            a.F.warm_availability(1)
+            self.assertEqual(prepare.call_count,1)
+        self.assertEqual(a.F.source_state(key),'pending')
+
+    def test_null_release_date_search_queues_once_and_caches_provider_response(self):
+        self.make_search_index()
+        meta={'id':'tt1234567','type':'movie','name':'Unknown release','released':None}
+        with patch.object(a.F,'fetch',return_value={'metas':[meta]}) as fetch:
+            self.assertEqual(a.F.search('movie','Unknown release'),[])
+            self.assertEqual(a.F.search('movie','Unknown release'),[])
+            self.assertEqual(fetch.call_count,1)
+        with a.F.db() as conn:
+            self.assertEqual(conn.execute('SELECT state,priority FROM validation WHERE key=?',('movie:tt1234567',)).fetchone(),('pending',100))
+            self.assertIsNotNone(conn.execute('SELECT meta FROM discovery WHERE imdb=?',('tt1234567',)).fetchone())
+
+    def test_durable_failures_backoff_and_keep_old_proof(self):
+        key='movie:tt1234567'
+        a.F.validation_result(key,True,proof={'source_hash':'a'*40})
+        a.remember('prepared:'+key,{'stale':True},300)
+        a.F.validation_result(key,False,reason='Network timeout')
+        self.assertEqual(a.F.source_state(key),'unavailable')
+        self.assertIsNone(a.cached('prepared:'+key))
+        with a.F.db() as conn:first=conn.execute('SELECT attempts,next_check,proof FROM validation WHERE key=?',(key,)).fetchone()
+        self.assertEqual(first[0],1);self.assertIn('source_hash',first[2])
+        a.F.enqueue(key,100)
+        with a.F.db() as conn:self.assertEqual(conn.execute('SELECT next_check FROM validation WHERE key=?',(key,)).fetchone()[0],first[1])
+        a.F.validation_result(key,False,reason='Still unavailable')
+        with a.F.db() as conn:second=conn.execute('SELECT attempts,next_check FROM validation WHERE key=?',(key,)).fetchone()
+        self.assertEqual(second[0],2);self.assertGreater(second[1]-first[1],21000)
+        a.F.validation_result(key,True,proof={'source_hash':'b'*40})
+        self.assertEqual(a.F.source_state(key),'verified')
+        with a.F.db() as conn:self.assertEqual(conn.execute('SELECT attempts FROM validation WHERE key=?',(key,)).fetchone()[0],0)
+
+    def test_unknown_and_listed_hidden_failure_overrides_old_success(self):
+        path=self.make_search_index()
+        key='movie:tt0145487'
+        with a.F.db() as conn:conn.execute('DELETE FROM validation WHERE key=?',(key,))
+        a.remember('streams:'+key,[{'infoHash':'a'*40}],3600)
+        self.assertEqual(a.F.source_state(key),'unknown')
+        self.assertNotIn(key,a.F.ready_titles())
+        self.assertNotIn('tt0145487',{m['id'] for m in a.F.browse('movie')['metas']})
+        a.F.validation_result(key,True,proof={'version':2})
+        a.remember('source-status:'+key,{'state':'unavailable','checked_at':time.time()+1},3600)
+        self.assertEqual(a.F.source_state(key),'unavailable')
+        self.assertNotIn(key,a.F.ready_titles())
+
+    def test_queue_resumes_without_resetting_prior_results_and_defers_playback(self):
+        self.make_search_index()
+        key='movie:tt0145487'
+        a.F.validation_result(key,False)
+        with a.F.db() as conn:before=conn.execute('SELECT state,attempts,next_check,proof FROM validation WHERE key=?',(key,)).fetchone()
+        a.F.seed_validation();a.F.seed_validation()
+        with a.F.db() as conn:after=conn.execute('SELECT state,attempts,next_check,proof FROM validation WHERE key=?',(key,)).fetchone()
+        self.assertEqual(before,after)
+        with patch.object(a.F,'jf',return_value=[{'NowPlayingItem':{'Id':'playing'}}]),patch.object(a,'prepared') as prepare:
+            a.F.warm_availability(1)
+            prepare.assert_not_called()
+
     def test_catalogue_pages_beyond_old_cap_and_year_and_hidden_sources(self):
         path=a.DATA/'imdb/catalogue.sqlite';path.parent.mkdir()
         conn=sqlite3.connect(path)
@@ -29,7 +100,8 @@ class FeatureTests(unittest.TestCase):
             (f'tt{1000000+i}','movie',f'Title {i}','Original',2025,'Drama',2000-i) for i in range(1100)])
         conn.execute('INSERT INTO titles VALUES (?,?,?,?,?,?,?)',('tt9999999','movie','Earlier','Earlier',2022,'Drama',9))
         conn.commit();conn.close()
-        a.remember('source-status:movie:tt1000000',{'state':'unavailable'},3600)
+        self.verify_fixture(path)
+        a.remember('source-status:movie:tt1000000',{'state':'unavailable','checked_at':time.time()+1},3600)
         first=a.F.browse('movie',0,1000,2025);second=a.F.browse('movie',1000,1000,2025)
         self.assertEqual(len(first['metas']),1000);self.assertEqual(len(second['metas']),99)
         self.assertEqual(first['total'],1099)
@@ -53,6 +125,7 @@ class FeatureTests(unittest.TestCase):
                 ('tt0000005','movie','Old','Old',1994,'Drama',900,9.5,100),
                 ('tt0000006','movie','Too old','Too old',1993,'Drama',900,9.5,100)])
         conn.close()
+        self.verify_fixture(path)
         a.F.ensure_search_index(path)
         return path
 

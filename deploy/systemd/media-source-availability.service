@@ -1,5 +1,5 @@
 [Unit]
-Description=Refresh compatible torrent source listings without downloading videos
+Description=Validate persistent media queue using bounded video samples
 Requires=media-stack.service
 After=media-stack.service
 RequiresMountsFor=/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>

@@ -258,3 +258,51 @@ atomic replacement with readable permissions, including concurrent rendering.
 
 check_poster_navigation.py verifies image bytes/tags across browse, detail,
 repeat detail, native refresh and search, plus series seasons/episodes.
+
+## Persistent validation catalogue (1.4.0.9)
+
+The IMDb metadata index is a discovery pool, not proof that a title can stream.
+Only saved copies or titles with successful video validation appear in the
+online watch catalogue/search. Series become visible after a verified episode;
+individual episode lists also hide unchecked episodes. Searching an unknown
+title saves its metadata and queues a high-priority check; it may appear later.
+
+The media partition's appdata/catalogue/catalogue.sqlite stores the durable
+validation queue, latest state, attempt count, retry time, and prior successful
+source proof. The separate imdb/catalogue.sqlite retains bulk title metadata.
+Both live on /dev/sda5. Bulk metadata refreshes add missing queue keys without
+resetting existing results. A verified series queues its aired episodes too.
+Previous negative source listings migrate into retained retry records.
+
+Background validation resumes one minute after each batch (maximum 20 probes
+or eight minutes before starting another probe). It pauses between probes when
+Jellyfin reports playback; provider/session outages defer the job. Checks run
+serially, read a bounded video sample and decode two seconds. They do not save
+full films. The existing TorrServer working cache is reused. A source listing
+alone is insufficient. AAC Main-only audio and non-8-bit H264 are rejected for
+this TV setup; failed candidates can fall through to alternatives.
+
+Failures retry after 6h, 12h, 1d, 2d, and so on, capped at 30d. Successful proofs
+remain until newer negative evidence or a streaming error invalidates them;
+old metadata/proofs are retained for future retries. Successful sources are
+checked again at Play, rather than re-downloading every old title each sync.
+This cannot guarantee an entire remote torrent or every physical client.
+The catalogue initially shrinks and grows as background verification succeeds.
+
+GET /validation exposes aggregate queue counts; GET /ready supplies ready keys
+for the local Jellyfin result filter. These endpoints expose no provider URL,
+torrent magnet, authentication token or signed playback URL. Existing local
+libraries, watched-download cleanup and storage reserve stay in place.
+
+Search safely handles null/unknown release dates. Provider search metadata is
+cached for six hours (five minutes after a lookup error); unknown title keys
+are queued in one database transaction. HTTP 429 pauses source validation for
+15 minutes, and provider server errors pause it for five minutes. Native search
+readiness filtering applies even when remote enrichment fails. The durable
+queue, metadata databases and proofs belong in a separate encrypted runtime
+backup; the public GitHub project snapshot intentionally excludes them.
+
+check_durable_validation.py verifies the live queue, ready-only bridge/native
+browse and search, and saved-file HTTP206 delivery. Earlier broad-catalogue
+checks used unchecked metadata as fixtures and their fixed result counts no
+longer describe the ready-only live library.
