@@ -1,5 +1,37 @@
 # Home media server
 
+## Remote web access through Tailscale
+
+Connect the viewing phone/computer to the same tailnet, then open:
+
+- OMV: `http://<TAILSCALE_IP>/`
+- Jellyfin: `http://<TAILSCALE_IP>:8096/`
+
+The source host's MagicDNS name is `<TAILSCALE_HOSTNAME>`; its tailnet address
+can differ on a replacement server. Tailnet policy must permit TCP80 for OMV
+and TCP8096 for Jellyfin to the server. Tags alone do not grant connectivity.
+
+Jellyfin keeps its original LAN binding. A persistent Tailscale TCP forwarder
+provides the additional tailnet endpoint without recreating the container:
+
+```sh
+tailscale serve --bg --tcp=8096 tcp://<SERVER_LAN_IP>:8096
+tailscale serve status
+```
+
+This configuration resumes with tailscaled after reboot. On restore, install
+Tailscale, sign in to the owner's account, reapply the intended device tags and
+SSH policy, and run the forwarding command after verifying the actual LAN IP.
+Tailscale identity/session state is private runtime data and is not exported.
+The endpoint is restricted to Tailscale connectivity; no Funnel was enabled.
+Keep the existing Jellyfin login when using its web page or native app.
+
+To remove just the Jellyfin forwarder:
+
+```sh
+tailscale serve --tcp=8096 off
+```
+
 ## Storage mount and reboot checks
 
 The existing EXT4 media filesystem uses OMV mount options
