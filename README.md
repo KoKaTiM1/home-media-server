@@ -56,8 +56,9 @@ in this hardware overview.
 
 - Separate online movies/shows and local downloaded Movies/Shows libraries.
   The owner's order puts online movies/shows first, then local Movies/Shows.
-- A persistent metadata discovery pool with no 1,000-movie/200-show total cap.
-  Normal browsing exposes validated titles; page size is separate from total size.
+- Paged movie/show browsing with no fixed total-title cap. The visible library
+  grows as background validation succeeds; saved results persist across syncs.
+  Pagination controls how many entries load per request.
 - Hebrew title lookup, related English franchise search and single/range year search.
 - Newest production year first, then real release date by default; selected score/name/runtime sorting within years.
 - Month searches such as `2026-07` and `2026-07..2026-09` where real dates are known.

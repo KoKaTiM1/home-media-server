@@ -25,11 +25,13 @@ survive source failure. Opening an unavailable favorite remains possible; Play
 must prepare a working compatible source or return an explicit failure. This
 exception applies to Favorites, not the normal online watch catalogue.
 
-The former 1,000-movie/200-show total cap is removed. The native TV app loads
-100 items as you scroll; the bridge accepts pages up to 1,000 items. These are
-page sizes, not total library limits. Only persisted/opened titles create native
-Jellyfin items; browsing does not create every episode in the metadata index.
-Visible counts grow as validation succeeds and can fall when a source fails.
+Movie/show browsing has no fixed total-title cap. The native TV app loads
+100 entries per scrolling batch; the bridge accepts up to 1,000 entries in one
+page request and supports further pages. Those request sizes do not determine
+the total library size. Visible counts depend on successful validation and
+saved copies, and can fall when a source fails. Only persisted/opened titles
+create native Jellyfin items; browsing does not create every episode in the
+metadata index.
 
 | Search or sort | Behavior |
 | --- | --- |
