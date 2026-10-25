@@ -324,8 +324,7 @@ Movies/Tests/AAC Main TV test. It uses Big Buck Bunny H264 video with AAC Main
 stereo audio. Search `AAC Main TV test` in Jellyfin. It is not a full downloaded
 film or a torrent-readiness claim. Check TV picture/sound and whether playback
 is Direct Play before widening AAC Main acceptance. Canelones' torrent stalled
-in preparation; it was not falsely marked ready. The test override allowlist
-is empty, so the general AAC Main source policy remains unchanged.
+in preparation; it was not falsely marked ready. No per-title AAC Main bypass is enabled for online playback.
 
 Dynamic Library 1.4.0.10 lets actual existing local video files use Jellyfin's
 native PlaybackInfo handler. Upstream's persisted-item branch previously
@@ -348,3 +347,9 @@ success until those audits finish, alongside new-title checks, episodes and due
 retries. The migration does not reset metadata, attempts or later retry backoff.
 Source proofs retain the observed audio codecs/profiles and policy version.
 The OMV progress tab shows failed entries scheduled and remaining audio audits.
+
+Audio-only conversion while torrent streaming is technically possible, with
+video copied unchanged and a small buffer. It is not implemented in this
+custom bridge yet: current online AAC Main-only sources remain filtered.
+The local AAC Main/LC samples establish conversion and comparative TV audio
+behavior, not end-to-end torrent conversion or seek support.

@@ -26,7 +26,7 @@ for section in ('Workers','Counts'):
  run=subprocess.run(['omv-rpc','-u','admin','HomeMediaWorkers','get'+section,'{}'],capture_output=True,text=True,check=True,timeout=30)
  payload=json.loads(run.stdout)
  assert not payload.get('error'),payload
- assert payload['total']==6 if section=='Workers' else payload['total']>=16
+ assert payload['total']==7 if section=='Workers' else payload['total']>=16
  print('OMV',section,'RPC PASS:',payload['total'],'rows',flush=True)
  if section=='Workers':
   assert all('Failed' not in row['health'] and 'disabled' not in row['health'] for row in payload['data']),payload
@@ -35,4 +35,4 @@ route=next(r for r in routes if r['url']=='/diagnostics/media-workers')
 assert len(route['component']['config']['tabs'])==2
 assert all(t['config']['autoReload']>0 for t in route['component']['config']['tabs'])
 print('Generated native OMV route: two automatic-refresh tabs PASS',flush=True)
-print('PASS; no watch state modified, physical TV playback still pending',flush=True)
+print('PASS; no watch state modified; TV audio results are tracked separately',flush=True)

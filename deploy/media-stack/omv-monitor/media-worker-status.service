@@ -1,0 +1,12 @@
+[Unit]
+Description=Prepare cached media worker and catalogue counters
+RequiresMountsFor=/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/media-stack/omv-monitor/monitor.py snapshot
+TimeoutStartSec=3min
+Nice=19
+IOSchedulingClass=idle
+CPUQuota=25%
+MemoryMax=192M

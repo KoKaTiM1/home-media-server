@@ -18,7 +18,7 @@ class MonitorTests(unittest.TestCase):
         units['media-cleanup.timer']['ActiveState']='inactive'
         with patch.object(m,'systemd',return_value=units),patch.object(m,'context',return_value={}):rows=m.workers()
         self.assertIn('Running',rows[0]['health']);self.assertIn('Healthy',rows[1]['health'])
-        self.assertIn('stopped',rows[-1]['health'])
+        self.assertIn('stopped',next(row for row in rows if row['id']=='media-cleanup')['health'])
 
     def test_counts_separate_episodes_titles_failures_and_unqueued_metadata(self):
         with tempfile.TemporaryDirectory() as directory:

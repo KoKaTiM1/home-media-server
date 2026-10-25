@@ -2,13 +2,13 @@
 
 OMV administrator page: Diagnostics > Media workers, with two tabs:
 
-- Workers and schedules: all six jobs, health/running/waiting/disabled state,
+- Workers and schedules: all scheduled jobs, health/running/waiting/disabled state,
   schedule, next run/countdown, last start/result and current validation key.
 - Catalogue queue and progress: pending movies/shows/episodes, failed/due retry
   counts, passed source checks, distinct movies/shows, indexed visible counts,
   metadata outside the queue, last-hour activity and last completed check.
 
-Worker rows refresh every10 seconds; expensive queue counts cache60 seconds.
+Worker rows refresh every10 seconds. A separate worker prepares counters in the background, one minute after each completed snapshot; the page reads the saved snapshot immediately. Metadata pool/outside-queue counters additionally cache5 minutes. Each value shows its snapshot time.
 Waiting between successful oneshot runs is healthy. A disabled timer or failed
 run is reported separately. Data is read-only; no start/stop/delete actions or
 shell input are accepted. RPC methods require the OMV administrator role.
@@ -36,3 +36,8 @@ The audio-policy resync counters show how many prior failures were scheduled
 once and how many existing successful sources still await an audio audit.
 Verified entries remain visible pending an actual failed recheck; restarting
 the worker never resets the resync marker or the increasing retry waits.
+
+The counter snapshot job is included in the worker table. It is enabled at boot,
+uses low CPU/IO priority and a192MiB memory limit, and can take longer than a
+minute on a cold database. Counter reads never launch million-row queries
+inside an OMV web request.

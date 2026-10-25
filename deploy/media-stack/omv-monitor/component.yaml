@@ -117,6 +117,6 @@ data:
               method: getCounts
         hints:
         - type: info
-          text: Counts refresh about once per minute. Source and episode checks are
+          text: Counters refresh in the background; the snapshot timestamp shows their age. Source and episode checks are
             counted separately from visible movies and shows. Failed sources remain
             saved for retries.

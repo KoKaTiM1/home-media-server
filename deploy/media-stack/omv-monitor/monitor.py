@@ -19,6 +19,7 @@ JOBS=[
  ('media-catalogue-badges','Hebrew / English subtitle badges','Hourly'),
  ('media-catalogue-collections','Jellyfin collections','Every 30 minutes'),
  ('media-cleanup','Download retention cleanup','Hourly'),
+ ('media-worker-status','Worker status counters','1 minute after previous snapshot'),
 ]
 PROPS='Id,ActiveState,SubState,Result,ExecMainStatus,ExecMainStartTimestamp,ExecMainExitTimestamp,InactiveEnterTimestamp,LastTriggerUSec,NextElapseUSecRealtime,NextElapseUSecMonotonic,UnitFileState'
 
@@ -95,13 +96,15 @@ def workers():
             'next_run':next_run,'countdown':countdown,'detail':detail})
     return rows
 
-def counts(data=DATA):
+def counts(data=DATA,refresh=False):
     now=time.time();cache=Path('/run/media-worker-counts.json')
     if data==DATA and cache.exists():
         try:
             saved=json.loads(cache.read_text())
-            if now-saved['time']<60:return saved['rows']
+            if not refresh or now-saved['time']<60:return saved['rows']
         except (OSError,ValueError,KeyError):pass
+    if data==DATA and not refresh:
+        return [{'id':'initializing','name':'Counter snapshot','value':'Initializing','detail':'Background counter job is preparing the first snapshot','updated':'Waiting for first snapshot'}]
     rows=[]
     def add(name,value,detail=''):rows.append({'id':str(len(rows)),'name':name,'value':f'{value:,}' if isinstance(value,int) else str(value),'detail':detail,'updated':stamp(now)})
     with closing(sqlite3.connect('file:'+str(data/'catalogue.sqlite')+'?mode=ro',uri=True,timeout=3)) as conn:
@@ -156,14 +159,14 @@ def counts(data=DATA):
         rows[-1]['updated']=stamp(metadata['time'])
         for kind in ('movie','series'):
             identity="substr(v.key,7)" if kind=='movie' else "substr(v.key,8,instr(substr(v.key,8),':')-1)"
-            query="SELECT COUNT(DISTINCT t.imdb) FROM validation v JOIN bulk.titles t ON t.imdb="+identity+" WHERE v.state='verified' AND t.kind=?"
+            query="SELECT COUNT(DISTINCT t.imdb) FROM validation v CROSS JOIN bulk.titles t ON t.imdb="+identity+" WHERE v.state='verified' AND t.kind=?"
             query+=" AND NOT EXISTS(SELECT 1 FROM cache c WHERE c.key='source-status:'||v.key AND c.expires>strftime('%s','now') AND json_extract(c.value,'$.state')='unavailable' AND COALESCE(json_extract(c.value,'$.checked_at'),0)>v.checked)"
             columns={r[1] for r in conn.execute('PRAGMA bulk.table_info(titles)')}
             dates=conn.execute("SELECT 1 FROM sqlite_master WHERE name='release_dates'").fetchone()
             if dates:
                 query+=" AND NOT EXISTS(SELECT 1 FROM release_dates d WHERE d.kind=t.kind AND d.imdb=t.imdb AND d.released>date('now','localtime'))"
                 if {'year','votes'}<=columns:
-                    query+=" AND (t.year<strftime('%Y','now','localtime') OR t.votes>0 OR EXISTS(SELECT 1 FROM release_dates d WHERE d.kind=t.kind AND d.imdb=t.imdb AND d.released<=date('now','localtime')))"
+                    query+=" AND (t.year<CAST(strftime('%Y','now','localtime') AS INTEGER) OR t.votes>0 OR EXISTS(SELECT 1 FROM release_dates d WHERE d.kind=t.kind AND d.imdb=t.imdb AND d.released<=date('now','localtime')))"
             visible=conn.execute(query,(kind,)).fetchone()[0]
             add('Verified indexed '+('movies' if kind=='movie' else 'shows'),visible,'Excludes known future releases and newer failed checks; saved-only media excluded')
     c=context(data)
@@ -176,5 +179,6 @@ def counts(data=DATA):
     return rows
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('section',choices=('workers','counts'));args=parser.parse_args()
-    print(json.dumps(workers() if args.section=='workers' else counts(),ensure_ascii=False))
+    parser=argparse.ArgumentParser();parser.add_argument('section',choices=('workers','counts','snapshot'));args=parser.parse_args()
+    rows=workers() if args.section=='workers' else counts(refresh=args.section=='snapshot')
+    print('Worker counter snapshot updated: '+str(len(rows))+' metrics' if args.section=='snapshot' else json.dumps(rows,ensure_ascii=False))
