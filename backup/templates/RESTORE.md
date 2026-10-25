@@ -85,7 +85,8 @@ manifests; do not simulate watched flags to test cleanup on real files.
    סדרות צפייה ישירה; keep `/catalogue/movies` and `/catalogue/shows` paths.
    Do not overwrite users' unrelated settings with copied private configuration.
    For the owner's library order, put סרטים צפייה ישירה first and
-   סדרות צפייה ישירה second using Jellyfin's Home/library-order settings.
+   סדרות צפייה ישירה second, local Movies third, and local Shows fourth,
+   using Jellyfin's Home/library-order settings.
    This is stored in the user's `Configuration.OrderedViews`, using current
    library/view IDs; preserve all other user configuration when changing it.
 
