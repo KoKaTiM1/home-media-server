@@ -4,6 +4,7 @@ import argparse
 from contextlib import closing
 from datetime import datetime
 import json
+import os
 from pathlib import Path
 import re
 import sqlite3
@@ -134,10 +135,25 @@ def counts(data=DATA):
         except (OSError,ValueError,TypeError):pass
         add('AAC Main TV test (Big Buck Bunny)',status,'AAC-LC reference is in local Movies; reported TV results are saved separately from source validation')
         conn.execute('ATTACH DATABASE ? AS bulk',('file:'+str(data/'imdb/catalogue.sqlite')+'?mode=ro',))
-        total=conn.execute('SELECT COUNT(*) FROM bulk.titles').fetchone()[0]
-        add('Metadata titles indexed locally',total,'Discovery metadata is not proof of playable video')
-        outside=conn.execute("SELECT COUNT(*) FROM bulk.titles t WHERE NOT EXISTS(SELECT 1 FROM validation v WHERE v.key=t.kind||':'||t.imdb||CASE WHEN t.kind='series' THEN ':1:1' ELSE '' END)").fetchone()[0]
-        add('Indexed titles outside the queue',outside,'Should normally be zero after discovery seeding')
+        index=data/'imdb/catalogue.sqlite';identity=[index.stat().st_ino,index.stat().st_mtime_ns]
+        metadata_file=Path('/run/media-worker-index-counts.json');metadata=None
+        if data==DATA:
+            try:
+                previous=json.loads(metadata_file.read_text())
+                if previous['identity']==identity and now-previous['time']<300:metadata=previous
+            except (OSError,ValueError,KeyError):pass
+        if metadata is None:
+            total=conn.execute('SELECT COUNT(*) FROM bulk.titles').fetchone()[0]
+            conn.execute('PRAGMA temp_store=MEMORY')
+            outside=conn.execute("SELECT COUNT(*) FROM (SELECT kind||':'||imdb||CASE WHEN kind='series' THEN ':1:1' ELSE '' END FROM bulk.titles EXCEPT SELECT key FROM validation)").fetchone()[0]
+            metadata={'identity':identity,'time':now,'total':total,'outside':outside}
+            if data==DATA:
+                temporary=metadata_file.with_name(metadata_file.name+'.'+str(os.getpid()))
+                temporary.write_text(json.dumps(metadata));temporary.replace(metadata_file)
+        add('Metadata titles indexed locally',metadata['total'],'Discovery metadata is not proof of playable video')
+        rows[-1]['updated']=stamp(metadata['time'])
+        add('Indexed titles outside the queue',metadata['outside'],'Normally zero; metadata counters cache up to 5 minutes')
+        rows[-1]['updated']=stamp(metadata['time'])
         for kind in ('movie','series'):
             identity="substr(v.key,7)" if kind=='movie' else "substr(v.key,8,instr(substr(v.key,8),':')-1)"
             query="SELECT COUNT(DISTINCT t.imdb) FROM validation v JOIN bulk.titles t ON t.imdb="+identity+" WHERE v.state='verified' AND t.kind=?"
@@ -153,7 +169,7 @@ def counts(data=DATA):
     c=context(data)
     if c.get('message'):add('Validator activity',c.get('name') or c.get('key') or c['message'],c['message'])
     if data==DATA:
-        import tempfile,os
+        import tempfile
         with tempfile.NamedTemporaryFile(mode='w',dir='/run',prefix='media-worker-counts-',delete=False) as output:
             json.dump({'time':now,'rows':rows},output);temporary=Path(output.name)
         temporary.replace(cache)
