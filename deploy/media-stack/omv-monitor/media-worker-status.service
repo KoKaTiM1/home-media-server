@@ -5,8 +5,9 @@ RequiresMountsFor=/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/python3 /opt/media-stack/omv-monitor/monitor.py snapshot
-TimeoutStartSec=3min
+TimeoutStartSec=5min
 Nice=19
-IOSchedulingClass=idle
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
 CPUQuota=25%
 MemoryMax=192M

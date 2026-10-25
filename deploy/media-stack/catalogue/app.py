@@ -92,8 +92,8 @@ def fetch(url, data=None, headers=None, timeout=20, raw=False, method=None):
         return result if raw else (json.loads(result) if result else None)
 
 
-def jf(path, data=None, method=None):
-    return fetch(JF+path,data,{'X-Emby-Token':JFKEY.read_text().strip()},method=method)
+def jf(path, data=None, method=None, timeout=20):
+    return fetch(JF+path,data,{'X-Emby-Token':JFKEY.read_text().strip()},method=method,timeout=timeout)
 
 
 def torr_headers():
@@ -803,27 +803,42 @@ def prepared(key,background=False,audio_index=None):
         return output if background else remember(prepared_key,output,300)
 
 
+def collection_items(**filters):
+    """Read native items in small pages without losing filtered-out page slots."""
+    offset=0
+    ceiling=1
+    size=100
+    while offset<ceiling:
+        query={**filters,'StartIndex':offset,'Limit':size,'EnableUserData':'false',
+               'EnableTotalRecordCount':'true' if offset==0 else 'false'}
+        page=jf('/Items?'+U.urlencode(query),timeout=60)
+        # The availability result filter subtracts hidden entries from this
+        # page's total. At most `size` entries were removed, so this bound
+        # visits every native slot, including pages containing no ready titles.
+        ceiling=max(ceiling,int(page.get('TotalRecordCount',0))+size)
+        yield from page.get('Items',[])
+        offset+=size
+
+
 def update_collections():
     """Create native Jellyfin collections after its library scan has indexed items."""
-    result=jf('/Items?Recursive=true&IncludeItemTypes=Movie,Series&Fields=Path,ProviderIds&EnableUserData=false&Limit=2000')
     with db() as conn:
         rows=conn.execute('SELECT kind,imdb,buckets FROM items').fetchall()
+    membership={(kind,imdb):json.loads(names) for kind,imdb,names in rows}
     buckets={}
-    for item in result.get('Items',[]):
+    for item in collection_items(Recursive='true',IncludeItemTypes='Movie,Series',Fields='Path,ProviderIds'):
         if not item.get('Path','').startswith('/catalogue/'): continue
         imdb=item.get('ProviderIds',{}).get('Imdb')
         kind='movie' if item['Type']=='Movie' else 'series'
-        for row_kind,row_imdb,row_buckets in rows:
-            if (kind,imdb)!=(row_kind,row_imdb): continue
-            for bucket in json.loads(row_buckets):
-                if bucket in ('Recent Releases','Popular'):
-                    buckets.setdefault('Online '+bucket,[]).append(item['Id'])
-    existing=jf('/Items?Recursive=true&IncludeItemTypes=BoxSet&EnableUserData=false&Limit=100').get('Items',[])
+        for bucket in membership.get((kind,imdb),[]):
+            if bucket in ('Recent Releases','Popular'):
+                buckets.setdefault('Online '+bucket,[]).append(item['Id'])
+    existing=list(collection_items(Recursive='true',IncludeItemTypes='BoxSet'))
     for name,ids in buckets.items():
         collection=next((i for i in existing if i['Name']==name),None)
         if not collection:
             collection=jf('/Collections?'+U.urlencode({'name':name}),{},method='POST')
-        current=jf('/Items?'+U.urlencode({'ParentId':collection['Id'],'Limit':2000,'EnableUserData':'false'})).get('Items',[])
+        current=collection_items(ParentId=collection['Id'])
         present={i['Id'] for i in current}
         pending=[item_id for item_id in ids if item_id not in present]
         for start in range(0,len(pending),50):

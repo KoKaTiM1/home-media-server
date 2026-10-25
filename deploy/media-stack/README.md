@@ -1,5 +1,21 @@
 # Home media server
 
+## Storage mount and reboot checks
+
+The existing EXT4 media filesystem uses OMV mount options
+`defaults,nofail,user_xattr,acl`. No user/group disk quotas are configured.
+Unused `usrquota`/`grpquota` options were removed from the existing OMV
+`conf.system.filesystem.mountpoint` object with `omv-confdbadm`, then applied
+using `omv-salt deploy run fstab`. This fixes boot-time quota failures caused
+by missing external quota files. Preserve the existing filesystem UUID, mount
+directory and shared-folder references; do not format or recreate the mount.
+Changes to OMV-managed mount options belong in its configuration database,
+rather than hand-editing the generated `/etc/fstab` entry.
+
+A full system reboot verified automatic startup of the media mount, Docker,
+all four containers, OMV, Tailscale SSH and all seven media timers. No desktop
+or shell login is needed for those services to start.
+
 Online catalogue integration and its current limitations are documented in
 `/opt/media-stack/catalogue/README.md`. Online Movies/Shows are separate from
 the retained media and completed-download libraries described below.

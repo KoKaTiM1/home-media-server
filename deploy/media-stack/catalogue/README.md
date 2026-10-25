@@ -1,5 +1,16 @@
 # Home media catalogue
 
+## Native collections maintenance
+
+The collections job reads native Jellyfin titles and existing collection
+members in pages of 100. It requests total counts only on the first page,
+with a 60-second maintenance request timeout. Availability filtering can
+return an empty page before the end, so paging advances by the requested
+size and uses a conservative native-slot bound. It does not stop at an empty
+filtered page or at 2,000 titles. Existing collection members are preserved;
+only missing memberships are added. Bucket matching uses a dictionary rather
+than comparing every title against every metadata row.
+
 Jellyfin 10.11.11 is pinned in /opt/media-stack/compose.yaml. The local Dynamic
 Library extension is version 1.4.0.8; WizdomSubs Downloader is version 0.2.0.0.
 Do not automatically update these plugins/Jellyfin without integration testing.

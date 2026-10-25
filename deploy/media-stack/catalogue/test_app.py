@@ -12,6 +12,43 @@ spec.loader.exec_module(a)
 
 
 class CatalogueTests(unittest.TestCase):
+    def test_collection_pages_visit_empty_filtered_pages_and_titles_beyond_2000(self):
+        offsets=[]
+        def page(path,timeout):
+            self.assertEqual(timeout,60)
+            query=a.U.parse_qs(a.U.urlsplit(path).query)
+            offset=int(query['StartIndex'][0]); offsets.append(offset)
+            self.assertEqual(query['Limit'],['100'])
+            self.assertEqual(query['EnableUserData'],['false'])
+            self.assertEqual(query['EnableTotalRecordCount'],['true' if offset==0 else 'false'])
+            visible=[{'Id':'last-title'}] if offset==2100 else []
+            return {'Items':visible,'TotalRecordCount':2101 if offset==0 else 0}
+        with patch.object(a,'jf',side_effect=page):
+            result=list(a.collection_items(Recursive='true',IncludeItemTypes='Movie,Series'))
+        self.assertEqual(result,[{'Id':'last-title'}])
+        self.assertIn(2100,offsets)
+        self.assertLessEqual(len(offsets),24)
+
+    def test_collections_add_only_missing_catalogue_members(self):
+        import json
+        with tempfile.TemporaryDirectory() as directory,patch.object(a,'DATA',Path(directory)):
+            with a.db() as conn:
+                conn.execute('INSERT INTO items VALUES (?,?,?,?,?)',
+                             ('movie:tt1234567','movie','tt1234567','{}',json.dumps(['Popular'])))
+            def items(**filters):
+                if filters.get('IncludeItemTypes')=='BoxSet':
+                    return iter([{'Id':'collection','Name':'Online Popular'}])
+                if filters.get('ParentId'):
+                    return iter([{'Id':'existing'}])
+                return iter([
+                    {'Id':identifier,'Type':'Movie','Path':path,'ProviderIds':{'Imdb':'tt1234567'}}
+                    for identifier,path in [('existing','/catalogue/movies/a/movie.strm'),
+                                             ('new','/catalogue/movies/b/movie.strm'),
+                                             ('local','/media/movies/local.mp4')]])
+            with patch.object(a,'collection_items',side_effect=items),patch.object(a,'jf') as jf:
+                a.update_collections()
+            jf.assert_called_once_with('/Collections/collection/Items?ids=new',{},method='POST')
+
     @unittest.skipUnless(importlib.util.find_spec('PIL'), 'Pillow is installed in the bridge image')
     def test_missing_artwork_uses_badged_placeholder_and_suppresses_retries(self):
         with tempfile.TemporaryDirectory() as directory:
