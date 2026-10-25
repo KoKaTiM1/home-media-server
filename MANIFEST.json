@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-10-25T09:13:36.572687+00:00",
+  "created_utc": "2026-10-25T09:13:48.949987+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -14,7 +14,7 @@
     "backup/templates/ARTIFACTS.md": "8ee172edbc15e2b65dd213d93368f803d858c2f22f1597225e722278445f62e9",
     "backup/templates/README.md": "1a70392c774cf1e29b7c11978bec0013158b302236dfe117e63d6904d8bcfaef",
     "backup/templates/RESTORE.md": "55ae9741bc189c7006ad28e5e75669e89a10b03292a0929a1c5e15d780baf04b",
-    "backup/test_export_privacy.py": "6a56533dce91582008a234b9d9a674030e93960c32172a32922eac8717b45eb9",
+    "backup/test_export_privacy.py": "5c9e19fcbb8d5dbe9832eb552cc0024e3199db0b0b665715c0b8547f1b887a5e",
     "deploy/media-stack/README.md": "7bac40ab4c594c5e2f59d1b75cd291cd3a88bf9cfe95d1e962c6642f3fd327b7",
     "deploy/media-stack/catalogue/Dockerfile": "709808a881f46517e444fa5ef7f9147e2d629925920defcaaa838782d3d5f90e",
     "deploy/media-stack/catalogue/README.md": "527a3b9549d1dc6b7e2da63f90792a71dbac06c64cbc548e4fbfbcf82db72673",

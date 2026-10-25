@@ -11,6 +11,12 @@ spec.loader.exec_module(exporter)
 
 
 class PrivacyTests(unittest.TestCase):
+    def test_missing_private_profile_cannot_create_a_public_export(self):
+        with tempfile.TemporaryDirectory() as directory,patch.object(exporter,'private_replacements',return_value={}):
+            destination=Path(directory)/'public'
+            with self.assertRaises(RuntimeError):exporter.export(destination)
+            self.assertFalse(destination.exists())
+
     def test_future_tailnet_endpoints_are_rejected_without_disclosing_values(self):
         endpoints=[
             '.'.join(map(str,(100,64,1,2))),
