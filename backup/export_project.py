@@ -105,6 +105,8 @@ def verify(root):
 
 
 def export(destination):
+    if not private_replacements():
+        raise RuntimeError('Private export-redactions.json profile required before publishing; no export created')
     destination = destination.resolve()
     if destination.exists():
         raise ValueError('Choose a new destination; existing directories are never overwritten')

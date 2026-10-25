@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-10-25T09:10:07.853676+00:00",
+  "created_utc": "2026-10-25T09:13:36.572687+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -7,7 +7,7 @@
     "RESTORE.md": "55ae9741bc189c7006ad28e5e75669e89a10b03292a0929a1c5e15d780baf04b",
     "artifacts/DynamicLibrary/meta.json": "11f8383fcf42a3e5d60dde38c2583b0692233bccd5faf328100f716a5e3faf8c",
     "artifacts/README.md": "8ee172edbc15e2b65dd213d93368f803d858c2f22f1597225e722278445f62e9",
-    "backup/export_project.py": "643d428b2fa40d64bd6b4c19b4ab62c5f155e1d2b733ad6a6f8b4961fa39fc59",
+    "backup/export_project.py": "b2db1301b231e9ef50a6829a2f5a2eed35b5a8043135c7bf68f22c4c4c4daf36",
     "backup/push_project.py": "63d7516bc86ce7e501fe614396d1323c669d14e4643d24e0dd2158187336b4f4",
     "backup/render_deployment.py": "ff3a93a85eb6c958a6e329f1e7c47d151f4db038998634003a867f8bc959c24b",
     "backup/templates/.gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
