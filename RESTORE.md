@@ -54,7 +54,12 @@ The repository excludes:
 - Transmission configuration and resume/torrent state; TorrServer configuration
   and HTTP authentication settings; media and downloads themselves.
 
-Restore these from a separate encrypted backup. A new signing key invalidates
+Restore these from a separate encrypted backup if available. No automated
+off-server runtime backup is currently configured on the source server. If the
+disk and state are lost, recreate credentials/accounts, initialize clean
+application state and rebuild the metadata/validation index instead. Existing
+media without its ownership manifest must not be treated as cleanup-owned.
+A new signing key invalidates
 old signed playback links. A fresh Jellyfin server requires the wizard and a
 new API key; do not reuse a key from a different Jellyfin installation.
 Copying live SQLite files is not a validated application backup. Use a controlled
@@ -80,7 +85,7 @@ manifests; do not simulate watched flags to test cleanup on real files.
    docker build -t home-media-catalogue:1 /opt/media-stack/catalogue
    ```
 
-5. Build the modified Dynamic Library version 1.4.0.12 from the configured
+5. Build the modified Dynamic Library version 1.4.0.13 from the configured
    source, then install its DLL and the public `meta.json` into
    `appdata/jellyfin/config/plugins/DynamicLibrary/` while Jellyfin is stopped.
    It was tested with Jellyfin 10.11.11. Install Wizdom from its publisher or
@@ -191,7 +196,7 @@ repeat the recovery checks on replacement hardware.
 
 ## Android TV failure contracts and ordinary Play
 
-Dynamic Library 1.4.0.12 addresses four reproduced server-side problems: empty
+Dynamic Library 1.4.0.13 addresses four reproduced server-side problems: empty
 successful PlaybackInfo caused Android TV 0.19.10 to dereference a null source;
 ordinary Play could bypass preparation and expose a local .strm placeholder;
 Intros returned an array where QueryResult was required; renamed collections
@@ -203,11 +208,13 @@ Live check_catalogue_filters.py and check_tv_recovery.py exercise these contract
 The recovery test briefly injects missing/preparation-failed cache responses and
 restores the original rows in finally; run only while nobody is watching. It
 also verifies an actual saved open-film HTTP206 range and fallback artwork.
-A physical Chromecast retry is still needed to confirm the app behavior.
+The owner confirmed subsequent Chromecast playback, including converted AAC
+Main audio. This does not establish that every remote title works; recheck the
+actual client after restoring.
 Covering sort indexes, count caching and six-hour artwork negative caching
 reduce catalogue delays and repeated missing-image requests.
 
-Release dates/months:1.4.0.12 defaults to actual newest premiere date within each
+Release dates/months:1.4.0.13 defaults to actual newest premiere date within each
 year; search2026-07 or2026-07..2026-09 for known-date month filtering. Dates
 persist in the runtime release_dates table independently of the daily IMDb
 rebuild. Recent-year date enrichment follows the four daily syncs; unknown dates
@@ -219,7 +226,7 @@ it does not use the shared bulk-import timestamp. Local library Date added
 semantics are unchanged. Live month checks cover this alias as well as Premiere
 date and default year order.
 
-Poster navigation:1.4.0.12 keeps canonical poster tags/URLs on catalogue previews,
+Poster navigation:1.4.0.13 keeps canonical poster tags/URLs on catalogue previews,
 native details/refreshes and search. Image-cache updates preserve media/series
 DTOs. Native query DTOs must be materialized before image mutations. Concurrent
 artwork writes use unique temporary files, atomic replacement and readable

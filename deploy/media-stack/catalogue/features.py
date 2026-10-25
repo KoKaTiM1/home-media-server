@@ -61,6 +61,35 @@ class Features:
         if badge is None:badge=self.g['poster_status'](kind,imdb)
         return f"{self.g['BASE']}/poster/{kind}/{imdb}.jpg?style={self.g.get('POSTER_STYLE','3')}&badge={badge}"
 
+    def series_episode_counts(self,imdbs):
+        """Use saved episode metadata only; do not fetch providers while browsing."""
+        imdbs=list(dict.fromkeys(i for i in imdbs if re.fullmatch(r'tt\d{5,12}',i)))
+        if not imdbs:return {}
+        counts={};today=dt.date.today().isoformat()
+        def count(raw):
+            try:videos=json.loads(raw).get('videos')
+            except (ValueError,TypeError,AttributeError):return None
+            if not isinstance(videos,list):return None
+            episodes=set()
+            for video in videos:
+                if not isinstance(video,dict):continue
+                released=video.get('released')
+                if not isinstance(released,str) or not re.match(r'^\d{4}-\d{2}-\d{2}',released) or released[:10]>today:continue
+                try:season=int(video['season']);episode=int(video['episode'])
+                except (KeyError,TypeError,ValueError):continue
+                if season>=0 and episode>0:episodes.add((season,episode))
+            return len(episodes)
+        with self.db() as conn:
+            # Stream one metadata document at a time to bound memory usage.
+            slots=','.join('?' for _ in imdbs)
+            for imdb,raw in conn.execute('SELECT imdb,meta FROM items WHERE key IN ('+slots+')', ['series:'+i for i in imdbs]):
+                value=count(raw)
+                if value is not None:counts[imdb]=value
+            for key,raw in conn.execute('SELECT key,value FROM cache WHERE key IN ('+slots+')', ['meta:series:'+i for i in imdbs]):
+                value=count(raw)
+                if value is not None:counts[key.split(':')[-1]]=value
+        return counts
+
     def decorate_posters(self,metas):
         # Keep provider artwork in storage; expose only the local badged artwork.
         with self.db() as conn:
@@ -72,11 +101,14 @@ class Features:
                     original['poster']=f'https://images.metahub.space/poster/medium/{imdb}/img'
                 conn.execute('INSERT INTO discovery VALUES (?,?,?) ON CONFLICT(kind,imdb) DO UPDATE SET meta=excluded.meta WHERE discovery.meta!=excluded.meta',(kind,imdb,json.dumps(original)))
         badges=self.g['poster_badges'](metas)
+        episodes=self.series_episode_counts([m.get('id','') for m in metas if m.get('type')=='series'])
         for meta in metas:
             kind=meta.get('type');imdb=meta.get('id','')
             if kind in ('movie','series') and re.fullmatch(r'tt\d{5,12}',imdb):
                 badge=badges[(kind,imdb)]
                 meta['poster']=self.poster_url(kind,imdb,badge)
+                meta.pop('episodeCount',None)
+                if kind=='series' and imdb in episodes:meta['episodeCount']=episodes[imdb]
         return metas
 
     def enqueue(self,key,priority=0):

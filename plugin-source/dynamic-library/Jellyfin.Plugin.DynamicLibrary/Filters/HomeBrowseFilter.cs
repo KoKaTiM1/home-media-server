@@ -36,6 +36,7 @@ public sealed class HomeBrowseFilter(ILibraryManager library, SearchResultFactor
         [JsonPropertyName("released")] public DateTime? Released { get; set; }
         [JsonPropertyName("genres")] public List<string>? Genres { get; set; }
         [JsonPropertyName("imdbRating")] public string? Rating { get; set; }
+        [JsonPropertyName("episodeCount")] public int? EpisodeCount { get; set; }
     }
 
     private sealed class Page
@@ -134,6 +135,17 @@ public sealed class HomeBrowseFilter(ILibraryManager library, SearchResultFactor
                             Fields = new[] { ItemFields.ChildCount, ItemFields.RecursiveItemCount }
                         });
                     if (data is not null) dto.UserData = data;
+                }
+                else if (native is null && user is not null && dto.Type == BaseItemKind.Series
+                    && preview.EpisodeCount is int episodes && episodes >= 0)
+                {
+                    // A not-yet-indexed preview has no native episode history.
+                    // Show only locally known released episodes; once indexed,
+                    // Jellyfin's actual per-user count always takes precedence.
+                    dto.RecursiveItemCount = episodes;
+                    dto.UserData ??= new UserItemDataDto { Key = dto.Id.ToString("N") };
+                    dto.UserData.ItemId = dto.Id;
+                    dto.UserData.UnplayedItemCount = episodes;
                 }
                 result.Add(dto);
             }

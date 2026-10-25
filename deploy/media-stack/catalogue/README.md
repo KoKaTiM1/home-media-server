@@ -2,7 +2,9 @@
 
 Online show cards reuse Jellyfin's native per-user episode counts and watched
 data, so their unwatched badge matches Recently Added for indexed series.
-Previews without indexed episode data do not invent an episode count.
+New previews without native indexing show distinct released episodes from
+locally saved metadata. They switch to the native unwatched count once indexed.
+Browsing fetches no provider episode metadata; unknown counts remain unknown.
 
 Show posters place the green HE / red EN / gray unknown subtitle marker in
 the bottom-left corner, leaving the top free for native episode-count badges.
@@ -21,7 +23,7 @@ only missing memberships are added. Bucket matching uses a dictionary rather
 than comparing every title against every metadata row.
 
 Jellyfin 10.11.11 is pinned in /opt/media-stack/compose.yaml. The local Dynamic
-Library extension is version 1.4.0.12; WizdomSubs Downloader is version 0.2.0.0.
+Library extension is version 1.4.0.13; WizdomSubs Downloader is version 0.2.0.0.
 Do not automatically update these plugins/Jellyfin without integration testing.
 
 ## Watching and browsing
@@ -67,21 +69,25 @@ still cuts off picture edges, check the TV's overscan/Screen Fit settings.
 
 ## Source availability
 
-Metadata is not a guarantee of a working torrent. Titles with a confirmed empty
-compatible-source listing or a failed playback preflight are hidden from normal
-movie browsing/search while that status is fresh. Unknown titles remain
-browsable so discovery can extend beyond prechecked releases. Series availability
-is episode-specific; the system does not hide an entire series because one
-specific episode failed. The background checker examines 50 listings per run,
-prioritizing recently browsed titles, without downloading video. It runs every
-15 minutes and defers on provider rate limiting. Empty listings expire after
-six hours; failed preflights retry after a shorter interval.
+The online watch catalogue shows only saved copies or titles with a successful
+video-source validation. Unknown and failed titles stay in the persistent
+queue rather than appearing as playable choices. A verified episode makes a
+series eligible; its episode lists also filter unchecked episodes. Searching
+an unknown title can queue it for a later check. Known failures remain saved
+for retry with increasing delays from six hours up to 30 days.
+
+The checker resumes five minutes after boot, then one minute after each batch
+finishes. Each batch starts at most 20 probes or runs up to eight minutes
+before starting another probe. It checks actual bounded video samples and
+current audio policy, pauses between probes during playback, and defers when
+providers or Jellyfin session checks are unavailable. See Persistent validation
+catalogue below for queue priorities, retained proof and retry behavior.
 
 Sources prefer H.264 1080p/720p and healthier reported swarms. Explicit zero-seed
 releases, 4K, HEVC/AV1, camera releases and archive/ISO payloads are excluded.
 An episode must match its season/episode or an explicit unambiguous file index;
 movie packs require an explicit index. Actual codecs are probed. Preparation
-has a 25-second budget with bounded metadata/source retries and subtitle lookup;
+has a 27-second foreground budget with bounded metadata/source retries and subtitle lookup;
 a stalled/dead source fails rather than waiting indefinitely. Free P2P sources
 can still stall or fail. Only one distinct video stream is supported at once.
 The server does not transcode video; clients must decode the selected release.
@@ -154,16 +160,18 @@ source data is refreshed about daily; it is not downloaded four times daily.
 A separate last-full-sync marker prevents small incremental changes from
 accidentally postponing the next daily rebuild. Index replacement is atomic.
 
-media-source-availability.timer: every 15 minutes.
+media-source-availability.timer: five minutes after boot, then one minute after each completed batch.
 media-saved-downloads.timer: every minute.
 media-catalogue-badges.timer: hourly.
 media-catalogue-collections.timer: every 30 minutes.
 media-cleanup.timer: hourly legacy completed-download retention.
+media-worker-status.timer: two minutes after boot, then one minute after each completed counter snapshot.
 
 Docker's media-storage.conf drop-in and media-stack.service require the actual
 media mount before startup. Docker/container restart policies and these timers
-are enabled. Dependencies and controlled service/container restarts are checked;
-no whole-machine reboot was performed during this change.
+are enabled. A full machine reboot on 2026-10-25 verified automatic storage,
+OMV, Docker/container, Tailscale and worker startup without an interactive login.
+Post-reboot quota and maintenance issues were repaired and checked separately.
 
 ## Validation and recovery
 
@@ -173,8 +181,9 @@ python3 /opt/media-stack/catalogue/check_subtitle_delivery.py
 python3 /opt/media-stack/catalogue/check_saved_download.py
 
 The last two are live checks for root while nobody is watching. The download
-check uses the publisher's Big Buck Bunny source and leaves the completed file
-for owner testing. No watch state is modified. The local movie successfully
+check uses the publisher's Big Buck Bunny source and can leave a completed file
+for owner testing; managed retention can subsequently remove it. Do not assume
+that an earlier sample is still present. No watch state is modified by the check. The local movie successfully
 served two HTTP 206 ranges through its original Jellyfin item, at offsets 0 and
 1,048,576. Unit checks cover episode selection, no external-torrent mutation,
 managed-file retention, active playback protection, historical watched flags,
@@ -261,7 +270,7 @@ alias for real premiere date too; the bulk index creation timestamp cannot
 distinguish new releases. Local media libraries keep Jellyfin's native Date
 added behavior. Score/name choices retain their within-year sorting.
 
-## Poster consistency on Back (1.4.0.12)
+## Poster consistency on Back
 
 Opening a title can finish a source-list check; a confirmed missing compatible
 source or newly known future release may then hide it from subsequent browsing.
@@ -371,7 +380,7 @@ The OMV progress tab shows failed entries scheduled and remaining audio audits.
 That earlier filtering-only policy is superseded by the deployed LC conversion mode described below.
 
 
-## Current audio delivery: direct LC or verified LC conversion (1.4.0.12)
+## Current audio delivery: direct LC or verified LC conversion
 
 AAC-LC sources retain direct playback. A selected non-LC track (including AAC
 Main, AC3/EAC3 and MP3) can now play through Jellyfin native HLS with video
@@ -414,3 +423,13 @@ seeking, direct LC and unchanged watched-state fields; check_audio_subtitles.py
 checks Hebrew VTT/None and unchanged native subtitle codec. AudioChecks in
 the plugin source checks authorization, media-source cloning and first-open
 canonical movie/series/season/episode creation without overwriting items.
+
+## Episode-counter validation (1.4.0.13)
+
+`check_show_counts.py --all` compares every visible online show with native
+per-user counts or locally saved released-episode metadata. The deployment
+check passed for 149 shows: 92 native indexed counts and 57 preview fallbacks.
+Counts are a snapshot, not a fixed library size. Preview counts exclude future,
+duplicate and invalid episodes and include released specials; unknown counts
+are left unknown. Watched/favorite state was verified unchanged. The feature
+regression suite passed 23 tests and the plugin built without warnings/errors.

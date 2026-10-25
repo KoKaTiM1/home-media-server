@@ -26,6 +26,32 @@ uses it only to replace values in the public copy; it never changes live files.
 Public upstream software/API URLs and generic localhost bindings remain so the
 source can be rebuilt. Authentication keys are supplied through runtime files.
 
+## Hardware currently running this stack
+
+Measured on the source server on 2026-10-25; capacities are rounded. These are
+reference specs for the existing machine, not minimum requirements.
+
+| Component | Installed hardware / allocation |
+| --- | --- |
+| CPU | Intel Core i3-2120 @ 3.30 GHz, 2 cores / 4 threads, x86-64 |
+| RAM | 2 GB installed; Linux reports 1,952 MiB usable |
+| Swap | 4.0 GB decimal / approximately 3.73 GiB on disk |
+| Disk | Western Digital WD5000AZRX-00A8LB0, 500 GB SATA rotating hard drive |
+| OS partition | EXT4, approximately 50 GB decimal / 46.6 GiB |
+| Media partition | Existing `/dev/sda5`, EXT4, approximately 445.6 GB decimal / 415 GiB raw; `df` reports 408 GiB filesystem capacity |
+| Operating system | Debian 13; OpenMediaVault 8 |
+
+The media partition holds AppData, Downloads, Media, catalogue databases and
+streaming caches. Free space changes during normal use; the download queue
+reserves at least 20 GiB. The stack supports one distinct video stream at a
+time, favors H.264 720p/1080p, and uses video copy with AAC-LC audio conversion
+where needed. Video transcoding is not the catalogue playback policy.
+Container and worker resource limits keep background work bounded on this PC;
+initial verification of the large metadata pool takes time.
+
+No disk serial numbers, network addresses or machine identifiers are included
+in this hardware overview.
+
 ## Current features
 
 - Movies and series catalogue with paging beyond the original 1,000/200 limits.
@@ -41,6 +67,10 @@ source can be rebuilt. Authentication keys are supplied through runtime files.
 - Torrent streaming and an explicit download-to-server option. Completed owned
   downloads move into the existing movies/shows storage and are preferred on
   the original title page; managed retention removes them after viewing or age.
+- Online show episode badges use native per-user unwatched counts when indexed,
+  with saved released-episode counts for previews that are not indexed yet.
+- OMV phone tables use labelled cards with borders and an optional table view;
+  desktop layout remains native.
 - Four catalogue syncs per day, mount-aware startup and enabled background timers.
 - OMV Diagnostics > Media workers: live schedules, health, current check and queue counters.
 - Persistent video validation and failed-title retry queue; only validated sources
@@ -68,13 +98,14 @@ replacement hardware and future software updates still require their own checks.
 | `RESTORE.md` | Recovery sequence and information that must be supplied separately |
 
 The authoritative current catalogue behavior is described in
-[the catalogue README](deploy/media-stack/catalogue/README.md). The original
-stack README is retained as a historical setup document; some early manual-only
-instructions and library names there predate the integrated catalogue.
+[the catalogue README](deploy/media-stack/catalogue/README.md).
+[The stack README](deploy/media-stack/README.md) describes current storage,
+service access and administration; [RESTORE.md](RESTORE.md) covers rebuilding.
+The worker-monitor and phone-layout READMEs document their optional OMV extensions.
 
-Jellyfin is pinned to 10.11.11; the modified Dynamic Library is 1.4.0.12.
-Upstream Dynamic Library source retains its MIT license. Wizdom is included as
-the original provider package; its licensing remains with its authors.
+Jellyfin is pinned to 10.11.11; the modified Dynamic Library is 1.4.0.13.
+Upstream Dynamic Library source retains its MIT license. Wizdom is installed separately from its publisher or plugin catalogue; its
+licensing remains with its authors. No provider ZIP is included in this backup.
 
 ## Snapshot updates
 
@@ -97,5 +128,9 @@ python3 /opt/media-stack/backup/push_project.py
 This stops if the checkout is dirty, the remote differs, or the remote history
 cannot be fast-forwarded. No unattended push schedule is enabled.
 
-For a complete recovery, maintain a separate encrypted off-server backup of
-credentials and application data. Never commit that unencrypted data here.
+GitHub currently provides software/configuration recovery, not recovery of
+excluded application state. No automated encrypted off-server runtime backup
+is configured. Without one, a lost disk means recreating accounts, credentials
+and library configuration, rebuilding metadata/verification, and downloading
+media again. For state recovery, maintain a separate encrypted off-server
+backup; never commit that unencrypted data here.

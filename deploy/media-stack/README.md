@@ -1,132 +1,162 @@
-# Home media server
+# Home media server: current deployment
 
-## Remote web access through Tailscale
+Debian 13 / OpenMediaVault 8 runs Jellyfin, the custom catalogue bridge,
+Transmission and TorrServer through `/opt/media-stack/compose.yaml`.
+Jellyfin is pinned to 10.11.11, the modified Dynamic Library plugin is
+1.4.0.13, and the installed Wizdom subtitle provider is 0.2.0.0.
+The initial Jellyfin wizard and catalogue integration are complete on the
+source server. A fresh recovery still needs its own accounts, keys and setup.
 
-Connect the viewing phone/computer to the same tailnet, then open:
+See [catalogue/README.md](catalogue/README.md) for browsing, validation,
+Hebrew subtitles, audio conversion, saved downloads and current limitations.
+The public repository's root README includes measured hardware specifications;
+its RESTORE.md describes rebuilding with private deployment values.
+
+## Libraries and playback
+
+The owner's library order is:
+
+1. סרטים צפייה ישירה — online movies.
+2. סדרות צפייה ישירה — online shows.
+3. Movies — local/downloaded movie files.
+4. Shows — local/downloaded episodes.
+5. Collections, followed by Downloads.
+
+Order is per-user, stored through Jellyfin's supported user configuration.
+The online catalogue shows verified sources and saved copies. The large local
+metadata index is a discovery pool; its size is not the visible playable count.
+Unverified or failed sources stay queued for retries. Four daily discovery
+syncs and the continuous background validator gradually expand the library.
+
+Use the native source/version selector on a title to stream, request
+Download to server + play, or play an existing downloaded copy. Saved files
+are linked to the original title page. If an owned saved copy is removed by
+retention, the same page can resolve a verified torrent again.
+Online show cards use native per-user unwatched counts when available and
+saved released-episode metadata for previews pending native indexing.
+Show subtitle markers sit bottom-left, clear of the episode counter.
+
+## Storage and Docker mounts
+
+The existing media filesystem is EXT4 on `/dev/sda5`; never format it as part
+of recovery. Its private deployment mount is
+`/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>`.
+Device names can change on another machine: verify the filesystem identity.
+
+| Host directory relative to the media mount | Container path / use |
+| --- | --- |
+| `appdata/jellyfin/config` | Jellyfin `/config` |
+| `appdata/jellyfin/cache` | Jellyfin `/cache`, including temporary HLS |
+| `media` | Jellyfin `/media`, read-only |
+| `downloads/complete` | Jellyfin `/downloads`, read-only |
+| `catalogue` | Jellyfin and bridge `/catalogue` |
+| Entire media filesystem | Bridge `/storage`, shared bind for atomic moves |
+| `appdata/catalogue` | Bridge `/data`: persistent queue, caches and manifests |
+| `appdata/transmission/config` | Transmission configuration |
+| `appdata/torrserver` and `streaming-cache` | TorrServer state and working cache |
+
+OMV shares are AppData (`appdata/`), Downloads (`downloads/`) and Media
+(`media/`). Movie and show folders are `media/movies` and `media/shows`,
+visible in Jellyfin as `/media/movies` and `/media/shows`.
+Managed saves use `media/movies/Saved/` and `media/shows/Saved/`; staging uses
+`downloads/complete/Saved/`. Preserve the bridge's common filesystem bind so
+final moves do not cross separate Docker mounts.
+
+OMV-managed mount options are `defaults,nofail,user_xattr,acl`, with no
+configured user/group disk quotas. Apply mount changes through OMV's supported
+configuration database and deployment tools, preserving its existing mount
+and shared-folder references. Do not overwrite generated `/etc/fstab` entries.
+
+## Retention
+
+The saved-download watcher checks every minute. It reserves 20 GiB free,
+limits queued requests to three, and selects only the requested movie/episode.
+Only manifest-owned Saved files are eligible for automatic deletion: after a
+new watched/completed signal, or 30 days after completion if unwatched.
+Active playback, changed files and unrelated retained media are protected.
+A durable move intent recovers interrupted final moves after restart.
+
+The separate hourly legacy Downloads cleaner observes indexed completed
+Transmission video under `/downloads`: watched files have a 24-hour grace
+period; unwatched files expire 30 days after observed completion. It skips
+active playback and removes matching owned subtitle sidecars. Its state is
+under `appdata/cleanup/state.json`. Existing manually retained media is excluded.
+External-player viewing does not supply Jellyfin watched status.
+TorrServer's temporary streaming cache has its own drop behavior.
+
+Cleanup intentionally deletes eligible video data. During recovery, restore
+and inspect ownership manifests and cleanup state before enabling retention.
+Preview legacy eligibility with `python3 /opt/media-stack/cleanup.py`.
+
+## Background services and OMV
+
+`media-stack.service` and Docker's storage dependency require the actual media
+mount before startup. Containers use restart policies. A full reboot on
+2026-10-25 verified automatic service startup without a user login; subsequent
+quota and maintenance issues were repaired and checked.
+
+| Worker timer | Schedule / purpose |
+| --- | --- |
+| `media-catalogue-sync` | 00:00, 06:00, 12:00, 18:00 Asia/Jerusalem, with jitter; discovery and metadata |
+| `media-source-availability` | Five minutes after boot, then one minute after each batch; bounded serial source checks |
+| `media-saved-downloads` | Every minute; track downloads, move owned files and apply managed retention |
+| `media-catalogue-badges` | Hourly; subtitle availability markers |
+| `media-catalogue-collections` | Every 30 minutes; native collection membership |
+| `media-cleanup` | Hourly; legacy Downloads retention |
+| `media-worker-status` | Two minutes after boot, then one minute after completion; cached OMV counters |
+
+Source verification pauses between probes during playback. Its batch starts
+at most 20 probes or runs up to eight minutes before starting another probe.
+Failed titles are retained and retry with backoff, not rediscovered from scratch.
+
+OMV Diagnostics > Media workers displays schedules, health, current work and
+queue/pass/failure counters. See [omv-monitor/README.md](omv-monitor/README.md).
+The optional phone layout uses labelled bordered cards and a table toggle;
+desktop styling remains native. See [omv-mobile/README.md](omv-mobile/README.md).
+Both extensions are in the project backup and have restore installers.
+
+## Access and administration
+
+Use the configured private LAN address for OMV on port 80, Jellyfin on 8096,
+Transmission on 9091, TorrServer on 8090 and the bridge on 8092. Do not publish
+these runtime addresses. Credentials remain in restricted private runtime
+files under `/opt/media-stack/secrets/`; the repository excludes them.
+The integrated Jellyfin workflow normally needs no manual TorrServer entry.
+
+For remote access, connect the client to the owner's tailnet:
 
 - OMV: `http://<TAILSCALE_IP>/`
 - Jellyfin: `http://<TAILSCALE_IP>:8096/`
 
-Find the private address and hostname in the owner's Tailscale admin console
-or with `tailscale ip -4`. Do not publish those values in this repository.
-The address can differ on a replacement server. Tailnet policy must permit TCP80 for OMV
-and TCP8096 for Jellyfin to the server. Tags alone do not grant connectivity.
+Find the private address using `tailscale ip -4` or the owner's admin console.
+Tailnet policy must permit the intended ports; tags alone do not grant access.
+Tailscale SSH additionally needs the owner's SSH policy and device tag.
+Keep the normal Jellyfin login. No Tailscale Funnel is enabled.
 
-Jellyfin keeps its original LAN binding. A persistent Tailscale TCP forwarder
-provides the additional tailnet endpoint without recreating the container:
+Jellyfin retains its LAN binding. The persistent tailnet-only TCP forwarder is:
 
 ```sh
 tailscale serve --bg --tcp=8096 tcp://<SERVER_LAN_IP>:8096
 tailscale serve status
 ```
 
-This configuration resumes with tailscaled after reboot. On restore, install
-Tailscale, sign in to the owner's account, reapply the intended device tags and
-SSH policy, and run the forwarding command after verifying the actual LAN IP.
-Tailscale identity/session state is private runtime data and is not exported.
-The endpoint is restricted to Tailscale connectivity; no Funnel was enabled.
-Keep the existing Jellyfin login when using its web page or native app.
+On replacement hardware, sign in to Tailscale, apply intended tags and access
+rules, verify the actual LAN address, then configure forwarding. Identity/state
+files are private and excluded from GitHub. To remove only this forwarding:
+`tailscale serve --tcp=8096 off`.
 
-To remove just the Jellyfin forwarder:
+Routine read-only checks:
 
 ```sh
-tailscale serve --tcp=8096 off
+docker compose -f /opt/media-stack/compose.yaml ps
+systemctl list-timers 'media-*'
+systemctl --failed
+journalctl -u media-source-availability.service --no-pager -n 30
 ```
 
-## Storage mount and reboot checks
-
-The existing EXT4 media filesystem uses OMV mount options
-`defaults,nofail,user_xattr,acl`. No user/group disk quotas are configured.
-Unused `usrquota`/`grpquota` options were removed from the existing OMV
-`conf.system.filesystem.mountpoint` object with `omv-confdbadm`, then applied
-using `omv-salt deploy run fstab`. This fixes boot-time quota failures caused
-by missing external quota files. Preserve the existing filesystem UUID, mount
-directory and shared-folder references; do not format or recreate the mount.
-Changes to OMV-managed mount options belong in its configuration database,
-rather than hand-editing the generated `/etc/fstab` entry.
-
-A full system reboot verified automatic startup of the media mount, Docker,
-all four containers, OMV, Tailscale SSH and all seven media timers. No desktop
-or shell login is needed for those services to start.
-
-Online catalogue integration and its current limitations are documented in
-`/opt/media-stack/catalogue/README.md`. Online Movies/Shows are separate from
-the retained media and completed-download libraries described below.
-
-All persistent media, downloads, application configuration, and torrent streaming
-cache use `/dev/sda5`, filesystem UUID `<MEDIA_FILESYSTEM_UUID>`,
-mounted at `/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>`.
-Linux reports approximately 415 GiB; decimal drive sizes are larger.
-
-## Stream a torrent
-
-Open <http://<SERVER_LAN_IP>:8090/> (TorrServer), username `server`. It uses the same
-locally stored password as Transmission:
-`<SERVICE_HOME>/.config/media-stack/transmission_password`.
-Add a torrent file or magnet link for media you are entitled to access, then open
-the stream using a supported player, such as VLC. Browser support depends on the
-video and audio codecs. TorrServer supplies an HTTP stream; it is a separate
-interface from Jellyfin and is not an integrated Jellyfin torrent-search plugin.
-
-TorrServer uses disk cache at `/streaming-cache` inside its container, backed by
-the media partition. The configured buffer is 128 MiB and disconnect timeout is
-60 seconds; `RemoveCacheOnDrop` is enabled. No torrent source catalogue has been
-configured. Playback with an actual torrent still needs a client-side test.
-
-## Download and watch later
-
-Open <http://<SERVER_LAN_IP>:9091/transmission/web/>, username `server`, using the local
-password file above. Completed downloads are under `downloads/complete` on the
-media filesystem. Jellyfin can read that directory as `/downloads`.
-
-Finish the Jellyfin wizard at <http://<SERVER_LAN_IP>:8096/>. Add a library for completed
-downloads using `/downloads` (Mixed Movies and Shows content type if using a
-single flat download area), and optional retained media from `/media`.
-Jellyfin has read-only access to both paths. Automatic retention applies only to
-completed Transmission video downloads indexed under `/downloads`; manually
-retained `/media` content is excluded.
-
-## Enable watched-status cleanup
-
-1. Finish Jellyfin setup, create the owner account, and add the download library.
-2. Create an API key in Jellyfin Dashboard → API Keys.
-3. Save the key to `/opt/media-stack/secrets/jellyfin_api_key` on this server,
-   owned by root with mode `0600`. Do not paste the key into chat or commit it.
-4. Run `python3 /opt/media-stack/cleanup.py` to preview eligibility.
-5. Run `systemctl start media-cleanup.service`, then inspect
-   `journalctl -u media-cleanup.service --no-pager -n 30`.
-
-The enabled `media-cleanup.timer` checks hourly. It waits without deleting until
-the API key, completed Jellyfin setup, both APIs, and the media mount are
-available. It observes movies and episodes independently. A watched flag from
-any Jellyfin user starts a 24-hour grace period at first observation. Clearing
-the watched flag resets this grace period. Unwatched completed downloads expire
-30 days after the cleaner first observes completion; torrent creation date and
-file modification dates are deliberately not used. Active playback is skipped.
-
-Before deleting a video the cleaner stops its Transmission torrent. For a
-multi-episode torrent, other episodes stay in place and the torrent remains
-stopped; do not restart it unless you intend to redownload missing files. The
-torrent entry is removed only when all listed files are gone. The cleaner also
-removes matching same-stem subtitle sidecars. It never recursively deletes
-directories. Other leftovers may require manual review.
-
-This policy deletes downloaded video data, not merely `.torrent` metadata.
-Cleanup cannot observe watched status in external players; watched-based
-deletion of downloaded files requires playback through Jellyfin or marking the
-item watched there. TorrServer's temporary cache uses its own drop behavior.
-
-## Administration
-
-Compose project: `/opt/media-stack/compose.yaml`.
-Startup unit: `media-stack.service`. Cleanup state is under
-`appdata/cleanup/state.json` on the media filesystem.
-
-Commands: `docker compose -f /opt/media-stack/compose.yaml ps`,
-`systemctl list-timers media-cleanup.timer`, and
-`python3 /opt/media-stack/test_cleanup.py`.
-
-Current services bind to LAN address `<SERVER_LAN_IP>`. A router DHCP reservation is
-recommended to keep that address stable; no router setting was changed here.
-OMV is at <http://<SERVER_LAN_IP>/>; change its default administrator password during
-initial setup.
+The public backup contains source, deployment templates, units, tests and
+recovery instructions. It excludes runtime databases, users/watch history,
+credentials, media and compiled plugins. Build the configured plugin from
+source; install Wizdom separately. No automated off-server runtime backup is
+configured. If the disk is lost, software can be rebuilt, but excluded state
+must be recreated and media downloaded again unless separately backed up.

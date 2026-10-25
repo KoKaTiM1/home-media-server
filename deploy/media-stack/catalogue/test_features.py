@@ -13,6 +13,38 @@ a=importlib.util.module_from_spec(spec);spec.loader.exec_module(a)
 
 
 class FeatureTests(unittest.TestCase):
+    def test_preview_episode_count_uses_local_released_distinct_episodes_without_network(self):
+        import datetime
+        past=(datetime.date.today()-datetime.timedelta(days=1)).isoformat()
+        future=(datetime.date.today()+datetime.timedelta(days=1)).isoformat()
+        metadata={'videos':[
+            {'season':1,'episode':1,'released':past},
+            {'season':1,'episode':1,'released':past},
+            {'season':0,'episode':1,'released':past},
+            {'season':1,'episode':2,'released':future},
+            {'season':1,'episode':3},
+            {'season':1,'episode':0,'released':past},
+            {'season':'invalid','episode':4,'released':past}]}
+        with a.F.db() as conn:
+            conn.execute('INSERT INTO items VALUES (?,?,?,?,?)',
+                         ('series:tt1234567','series','tt1234567',json.dumps(metadata),'[]'))
+        with patch.object(a,'fetch',side_effect=AssertionError('Browsing must not fetch episode metadata')):
+            result=a.F.decorate_posters([{'id':'tt1234567','type':'series','name':'Fixture'}])
+        self.assertEqual(result[0]['episodeCount'],2)
+        self.assertIn('/poster/series/',result[0]['poster'])
+        self.assertNotIn('tt7654321',a.F.series_episode_counts(['tt7654321']))
+
+    def test_episode_count_prefers_saved_cache_and_survives_cache_expiry(self):
+        import datetime
+        past=(datetime.date.today()-datetime.timedelta(days=1)).isoformat()
+        original={'videos':[{'season':1,'episode':1,'released':past}]}
+        with a.F.db() as conn:
+            conn.execute('INSERT INTO items VALUES (?,?,?,?,?)',
+                         ('series:tt1234567','series','tt1234567',json.dumps(original),'[]'))
+        updated={'videos':[{'season':1,'episode':i,'released':past} for i in (1,2,3)]}
+        a.remember('meta:series:tt1234567',updated,-1)
+        self.assertEqual(a.F.series_episode_counts(['tt1234567']),{'tt1234567':3})
+
     def setUp(self):
         self.directory=tempfile.TemporaryDirectory();self.addCleanup(self.directory.cleanup)
         self.root=Path(self.directory.name)

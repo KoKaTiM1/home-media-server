@@ -25,12 +25,12 @@ slots for existing-series episodes and due failures. Many passed episodes can
 belong to one visible show; source-check counts are not library title counts.
 AAC Main test status is separate from proof that a physical Chromecast plays it.
 
-The owner reported distorted AAC Main audio and better AAC-LC audio in the
-paired60-second samples. Both decoded without errors on the server. During the
-Main test, the TV session reported video transcoding with IsAudioDirect=true;
-the AAC audio was passed unchanged. Keep AAC Main-only filtering enabled.
-The exact encoder-versus-TV-decoder cause is unproven. The private persisted
-aac-main-tv-result.json supplies the reported result to the progress page.
+The owner initially reported distorted direct AAC Main audio and better AAC-LC
+audio in the paired samples. The deployed policy now accepts conversion-
+dependent sources only after a verified AAC-LC conversion sample. The owner
+confirmed the converted Big Buck Bunny test on Chromecast. Direct AAC Main
+pass-through is not used for these catalogue sources. The private persisted
+`aac-main-tv-result.json` supplies the reported result to the progress page.
 
 The audio-policy resync counters show how many prior failures were scheduled
 once and how many existing successful sources still await an audio audit.
