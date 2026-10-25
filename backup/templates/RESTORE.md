@@ -85,7 +85,7 @@ manifests; do not simulate watched flags to test cleanup on real files.
    docker build -t home-media-catalogue:1 /opt/media-stack/catalogue
    ```
 
-5. Build the modified Dynamic Library version 1.4.0.13 from the configured
+5. Build the modified Dynamic Library version 1.4.0.14 from the configured
    source, then install its DLL and the public `meta.json` into
    `appdata/jellyfin/config/plugins/DynamicLibrary/` while Jellyfin is stopped.
    It was tested with Jellyfin 10.11.11. Install Wizdom from its publisher or
@@ -275,3 +275,14 @@ excluded private application data or media. A separate encrypted backup on
 another device/storage provider is needed for that recovery. Keeping a
 backup on the same disk does not protect against losing that disk.
 
+
+## Favorites and timeout verification
+
+Dynamic Library 1.4.0.14 preserves unavailable titles in explicit Favorites
+queries without exposing them in normal online browse/search. Verify an existing
+unavailable favorite remains visible and that Play still returns a compatible
+source or explicit failure. Preserve user hearts/watch history during recovery.
+The bridge shares a 27-second preparation budget; the plugin waits at most 30
+seconds for that request. First stream data has a separate 15-second budget.
+Use sanitized Playback phase events in bridge logs to distinguish preparation,
+probe/conversion and initial-data failures. TV app retries may add client time.

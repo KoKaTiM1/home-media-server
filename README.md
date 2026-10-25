@@ -71,6 +71,7 @@ in this hardware overview.
   with saved released-episode counts for previews that are not indexed yet.
 - OMV phone tables use labelled cards with borders and an optional table view;
   desktop layout remains native.
+- Unavailable favorites stay visible; playback preparation and initial video-data waits are bounded and failures have local phase diagnostics.
 - Four catalogue syncs per day, mount-aware startup and enabled background timers.
 - OMV Diagnostics > Media workers: live schedules, health, current check and queue counters.
 - Persistent video validation and failed-title retry queue; only validated sources
@@ -103,7 +104,7 @@ The authoritative current catalogue behavior is described in
 service access and administration; [RESTORE.md](RESTORE.md) covers rebuilding.
 The worker-monitor and phone-layout READMEs document their optional OMV extensions.
 
-Jellyfin is pinned to 10.11.11; the modified Dynamic Library is 1.4.0.13.
+Jellyfin is pinned to 10.11.11; the modified Dynamic Library is 1.4.0.14.
 Upstream Dynamic Library source retains its MIT license. Wizdom is installed separately from its publisher or plugin catalogue; its
 licensing remains with its authors. No provider ZIP is included in this backup.
 

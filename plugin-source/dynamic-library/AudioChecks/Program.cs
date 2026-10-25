@@ -22,6 +22,18 @@ static MediaSourceInfo Source(string profile) => new()
         new() { Index = 2, Type = MediaStreamType.Subtitle, Codec = "srt", Language = "heb" }
     }
 };
+var favoriteContext = new DefaultHttpContext();
+favoriteContext.Request.QueryString = new QueryString("?Filters=IsFavorite");
+Check(Jellyfin.Plugin.DynamicLibrary.Filters.HomeCatalogueResultFilter.IsFavoritesQuery(favoriteContext.Request.Query), "Native favorites filter");
+favoriteContext.Request.QueryString = new QueryString("?isFavorite=true");
+Check(Jellyfin.Plugin.DynamicLibrary.Filters.HomeCatalogueResultFilter.IsFavoritesQuery(favoriteContext.Request.Query), "Explicit favorite query");
+favoriteContext.Request.QueryString = new QueryString("?isFavorite=false&Filters=IsUnplayed");
+Check(!Jellyfin.Plugin.DynamicLibrary.Filters.HomeCatalogueResultFilter.IsFavoritesQuery(favoriteContext.Request.Query), "False favorite query stays filtered");
+var noSources = new HashSet<string>();
+Check(Jellyfin.Plugin.DynamicLibrary.Filters.HomeCatalogueResultFilter.KeepInResults(true, "movie:tt00000000", noSources), "Unavailable favorites stay visible");
+Check(!Jellyfin.Plugin.DynamicLibrary.Filters.HomeCatalogueResultFilter.KeepInResults(false, "movie:tt00000000", noSources), "Unavailable ordinary titles stay hidden");
+Check(Jellyfin.Plugin.DynamicLibrary.Filters.HomeCatalogueResultFilter.KeepInResults(false, null, noSources), "Local media stays visible");
+Console.WriteLine("PASS: favorites query variants, unavailable favorites preserved, normal ready-only filtering");
 var context = new DefaultHttpContext();
 context.Request.Headers["Authorization"] = "MediaBrowser Client=\"Fixture\", DeviceId=\"test-device\", Token=\"test-playback-token\"";
 var id = Guid.NewGuid();

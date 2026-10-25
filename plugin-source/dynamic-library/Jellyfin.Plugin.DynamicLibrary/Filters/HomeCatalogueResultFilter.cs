@@ -138,6 +138,14 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
         itemCache.StoreImageUrl(title.Id, poster);
     }
 
+    public static bool IsFavoritesQuery(Microsoft.AspNetCore.Http.IQueryCollection query)
+        => string.Equals(query["isFavorite"], "true", StringComparison.OrdinalIgnoreCase)
+            || query["filters"].ToString().Split(',', StringSplitOptions.TrimEntries)
+                .Any(value => value.Equals("IsFavorite", StringComparison.OrdinalIgnoreCase));
+
+    public static bool KeepInResults(bool favoritesQuery, string? key, ISet<string> ready)
+        => favoritesQuery || key is null || ready.Contains(key);
+
     public async Task OnResultExecutionAsync(ResultExecutingContext context, ResultExecutionDelegate next)
     {
         if (context.Result is ObjectResult listResult && listResult.Value is QueryResult<BaseItemDto> list)
@@ -148,8 +156,12 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
             foreach (var entry in entries)
                 if (entry.ImageTags?.GetValueOrDefault(ImageType.Primary)?.Length != 64) PreservePoster(entry);
             var keyed = entries.Select(e => (Entry: e, Key: HomeKey(e.Id, e.Type))).ToArray();
-            var ready = await ReadyAsync(keyed.Select(e => e.Key), context.HttpContext.RequestAborted);
-            var visible = keyed.Where(e => e.Key is null || ready.Contains(e.Key)).Select(e => e.Entry).ToArray();
+            var favoritesQuery = IsFavoritesQuery(context.HttpContext.Request.Query);
+            // Favorites represent saved user intent, including sources waiting
+            // for retry. Ordinary online browsing remains ready-only.
+            var ready = favoritesQuery ? new HashSet<string>()
+                : await ReadyAsync(keyed.Select(e => e.Key), context.HttpContext.RequestAborted);
+            var visible = keyed.Where(e => KeepInResults(favoritesQuery, e.Key, ready)).Select(e => e.Entry).ToArray();
             list.Items = visible;
             list.TotalRecordCount = Math.Max(visible.Length, list.TotalRecordCount - (entries.Length - visible.Length));
         }
@@ -258,7 +270,7 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
                     if (context.HttpContext.Items["HomeAudioStreamIndex"] is int requestedProbeAudio)
                         infoUri += "&audio=" + requestedProbeAudio;
                     var client = clients.CreateClient();
-                    client.Timeout = TimeSpan.FromSeconds(75);
+                    client.Timeout = TimeSpan.FromSeconds(30);
                     var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
                     options.Converters.Add(new JsonStringEnumConverter());
                     var info = await client.GetFromJsonAsync<Prepared>(infoUri, options,
@@ -327,6 +339,10 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
                         audioService.Register(indexedId.Value, source);
                         HomeAudioService.Configure(source, indexedId.Value, playback.PlaySessionId ?? Guid.NewGuid().ToString("N"), context.HttpContext.Request);
                     }
+                }
+                catch (OperationCanceledException) when (context.HttpContext.RequestAborted.IsCancellationRequested)
+                {
+                    throw;
                 }
                 catch (Exception error)
                 {

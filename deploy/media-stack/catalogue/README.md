@@ -23,7 +23,7 @@ only missing memberships are added. Bucket matching uses a dictionary rather
 than comparing every title against every metadata row.
 
 Jellyfin 10.11.11 is pinned in /opt/media-stack/compose.yaml. The local Dynamic
-Library extension is version 1.4.0.13; WizdomSubs Downloader is version 0.2.0.0.
+Library extension is version 1.4.0.14; WizdomSubs Downloader is version 0.2.0.0.
 Do not automatically update these plugins/Jellyfin without integration testing.
 
 ## Watching and browsing
@@ -433,3 +433,31 @@ Counts are a snapshot, not a fixed library size. Preview counts exclude future,
 duplicate and invalid episodes and include released specials; unknown counts
 are left unknown. Watched/favorite state was verified unchanged. The feature
 regression suite passed 23 tests and the plugin built without warnings/errors.
+
+## Favorites and bounded playback (1.4.0.14)
+
+Favorites retain saved online titles even when their sources become unavailable;
+normal online browsing/search remains ready-only. The heart and watched state
+are not erased by a failed source. An unavailable favorite can still be opened,
+but Play returns an explicit error unless a compatible source can be prepared.
+
+Foreground preparation shares a 27-second budget across same-title lock waits,
+provider calls, metadata resolution, video probing and audio-conversion checks.
+The plugin's preparation HTTP timeout is 30 seconds. Initial stream resolution
+and the first video byte share a separate 15-second budget. These limits apply
+to individual server requests, not a promise that the TV app never retries.
+Sources may still become unavailable after a successful bounded sample check.
+
+Busy preparation and disconnected clients do not count as negative source proof.
+Preparation tries alternate compatible sources within the same budget; it does
+not switch sources after delivery begins. Failed cached preparation is cleared,
+previous successful proof is retained for diagnosis, and retries use the existing
+persistent backoff queue. Manual favorites do not bypass playback checks.
+
+Docker bridge logs contain structured Playback events for preparation, torrent
+resolution, video probing, audio conversion and first video bytes, including
+phase duration and exception class. Exception text, provider links, torrent
+magnets, authentication tokens and signed URLs are deliberately excluded.
+`test_playback_deadlines.py` uses synthetic local HTTP servers and isolated
+state to test trickling responses, header-only stalls, lock waits, busy-server
+and cancellation handling, source fallback, retained proof and safe diagnostics.
