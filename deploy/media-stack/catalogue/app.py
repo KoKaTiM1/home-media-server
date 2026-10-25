@@ -847,7 +847,12 @@ def detail_playback_busy():
     """Fail closed: even paused/native/downloaded playback protects the server."""
     with LIVE_LOCK:
         if LIVE['active']>0:return True
-    try:return any(session.get('NowPlayingItem') for session in jf('/Sessions',timeout=1))
+    try:
+        # This callback itself runs inside remaining(). Its status request must
+        # not call the same cancellation callback recursively through fetch().
+        end=min(time.monotonic()+1,getattr(BUDGET,'deadline',None) or float('inf'))
+        with request_budget(end,None):
+            return any(session.get('NowPlayingItem') for session in jf('/Sessions',timeout=1))
     except Exception:return True
 
 

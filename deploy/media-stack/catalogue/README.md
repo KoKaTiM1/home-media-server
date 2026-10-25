@@ -351,3 +351,8 @@ never format the existing filesystem or erase watched state to satisfy a check.
 The modified plugin retains its upstream MIT license. Metadata uses IMDb's
 non-commercial datasets, Cinemeta and Wikidata; posters/trailers come from
 metadata providers, and trailer videos are not mirrored.
+
+Details-page preparation status checks use an isolated bounded HTTP budget
+without their own cancellation callback. This prevents recursive self-cancellation
+while retaining active/paused and unreachable-session suppression. The regression
+check uses a real local HTTP session response, including paused playback.

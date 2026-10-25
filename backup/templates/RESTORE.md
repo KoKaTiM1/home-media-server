@@ -328,3 +328,8 @@ content, not only different menu labels. Titles begin עברית 1 / עברית 
 None and English keep existing behavior. Older `he.srt` links remain readable,
 and old prepared-cache entries rebuild on the next preparation. No provider can
 guarantee a second available version or synchronization with every release.
+
+Details-page preparation status checks use an isolated bounded HTTP budget
+without their own cancellation callback. This prevents recursive self-cancellation
+while retaining active/paused and unreachable-session suppression. The regression
+check uses a real local HTTP session response, including paused playback.

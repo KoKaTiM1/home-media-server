@@ -104,3 +104,27 @@ class DetailRouteTests(unittest.TestCase):
                 with urllib.request.urlopen(url,timeout=2) as response:self.assertTrue(json.load(response)['streams'])
                 warm.assert_called_once_with(KEY)
         finally:server.shutdown();server.server_close();thread.join()
+
+class SessionCancellationTests(unittest.TestCase):
+    setUp=fixtures.FeatureTests.setUp
+    def test_real_session_request_inside_cancel_callback_has_no_recursion(self):
+        from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
+        import json
+        responses=[[],[{'NowPlayingItem':{'Id':'fixture'},'PlayState':{'IsPaused':True}}]]
+        calls=[]
+        class Sessions(BaseHTTPRequestHandler):
+            def log_message(self,*args):pass
+            def do_GET(self):
+                calls.append(self.path)
+                self.send_response(200);self.end_headers();self.wfile.write(json.dumps(responses[len(calls)-1]).encode())
+        server=ThreadingHTTPServer(('127.0.0.1',0),Sessions)
+        thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+        secret=self.root/'test-key';secret.write_text('fixture-key')
+        try:
+            with patch.multiple(a,JF=f'http://127.0.0.1:{server.server_port}',JFKEY=secret),a.request_budget(time.monotonic()+3,a.detail_playback_busy):
+                self.assertGreater(a.remaining(1),0,'An idle session must allow speculative preparation')
+                self.assertEqual(calls,['/Sessions'])
+                self.assertIs(a.BUDGET.cancel,a.detail_playback_busy,'Restore the outer cancellation callback')
+                with self.assertRaises(a.ClientCancelled):a.remaining(1)
+                self.assertEqual(calls,['/Sessions','/Sessions'])
+        finally:server.shutdown();server.server_close();thread.join()
