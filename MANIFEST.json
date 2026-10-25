@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-10-25T08:38:06.367771+00:00",
+  "created_utc": "2026-10-25T08:40:40.825805+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -8,12 +8,12 @@
     "artifacts/DynamicLibrary/Jellyfin.Plugin.DynamicLibrary.dll": "1755ca411ebc2b86791b7720d5b51fddf80a2ce709dae7890ec31bd67a5dabf9",
     "artifacts/DynamicLibrary/meta.json": "11f8383fcf42a3e5d60dde38c2583b0692233bccd5faf328100f716a5e3faf8c",
     "artifacts/wizdom-0.2.0.0.zip": "717b67732162424d72bb5212b2b86f3395a5e08f7edac93fb2ad5e6e5ba71f5f",
-    "backup/export_project.py": "6d38ca90c5be962a0bdbefc36acf9e6f183c89489c45c6df9494594080959982",
+    "backup/export_project.py": "596ae0c5b4526488f34d5127539337bed51abe5bd7f4f46e15e5a80ee4c61028",
     "backup/push_project.py": "5c10c1ef3e1623d1f1179c74ee004cd5da1c1868a9a2102118bec871d2c49364",
     "backup/templates/.gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
     "backup/templates/README.md": "2ec3a813da3d459f0e347ae91cd8d599f2257a17b3d1c345968a05f39828a4d8",
     "backup/templates/RESTORE.md": "3c8519a9e1b09d5f2e951c868224a3babaa0ea887033199826cc7127b949f4bc",
-    "deploy/media-stack/README.md": "99fb11d122f8d8326d85b9c6badfb6e809e31cebb0a7165a468a5de8ce7f6395",
+    "deploy/media-stack/README.md": "5ca746dc4d002a96e05de808737bc1559dc96f774eba57182159ed8f61af155a",
     "deploy/media-stack/catalogue/Dockerfile": "709808a881f46517e444fa5ef7f9147e2d629925920defcaaa838782d3d5f90e",
     "deploy/media-stack/catalogue/README.md": "138c93ce2e4e847eb942768ffb7c9079be482b42778c4e9fbaa9cde4e449b667",
     "deploy/media-stack/catalogue/app.py": "f81cbfacab8d64bb5273a585979f58d0e8132526d2c76182282f465909d0e7d5",

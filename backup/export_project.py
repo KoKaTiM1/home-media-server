@@ -45,12 +45,15 @@ def secret_values():
 def verify(root):
     secrets = secret_values()
     forbidden = re.compile(rb'-----BEGIN (?:OPENSSH |RSA |EC |DSA )?PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|AKIA[A-Z0-9]{16}|[?&]sig=[a-f0-9]{64}')
+    private_network = re.compile(
+        rb'(?<![0-9.])100\.(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}(?![0-9.])'
+        rb'|(?:[a-z0-9-]+\.)+ts\.net\b|fd7a:115c:a1e0:[0-9a-f:]+', re.I)
     failures = []
     for path in sorted(root.rglob('*')):
         if not path.is_file() or '.git' in path.relative_to(root).parts:
             continue
         data = path.read_bytes()
-        if any(value in data for value in secrets) or forbidden.search(data):
+        if any(value in data for value in secrets) or forbidden.search(data) or private_network.search(data):
             failures.append(str(path.relative_to(root)))
         if any(part in {'secrets', '__pycache__', 'obj', 'bin'} for part in path.relative_to(root).parts):
             failures.append(str(path.relative_to(root)))

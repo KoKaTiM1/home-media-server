@@ -7,8 +7,9 @@ Connect the viewing phone/computer to the same tailnet, then open:
 - OMV: `http://<TAILSCALE_IP>/`
 - Jellyfin: `http://<TAILSCALE_IP>:8096/`
 
-The source host's MagicDNS name is `<TAILSCALE_HOSTNAME>`; its tailnet address
-can differ on a replacement server. Tailnet policy must permit TCP80 for OMV
+Find the private address and hostname in the owner's Tailscale admin console
+or with `tailscale ip -4`. Do not publish those values in this repository.
+The address can differ on a replacement server. Tailnet policy must permit TCP80 for OMV
 and TCP8096 for Jellyfin to the server. Tags alone do not grant connectivity.
 
 Jellyfin keeps its original LAN binding. A persistent Tailscale TCP forwarder
