@@ -9,8 +9,10 @@ import json
 from pathlib import Path
 import re
 import shutil
+import sqlite3
 import subprocess
 import urllib.parse
+import xml.etree.ElementTree as ET
 
 STACK = Path('/opt/media-stack')
 STORAGE = Path('/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>')
@@ -63,6 +65,34 @@ def secret_values():
                 elif isinstance(value, str) and len(value) >= 12:
                     values.add(value.encode())
             collect(obj)
+    # Include credentials managed outside the stack's dedicated secret files.
+    configuration=STORAGE/'appdata/jellyfin/config/config'
+    if configuration.is_dir():
+        for path in configuration.rglob('*.xml'):
+            try:tree=ET.parse(path)
+            except ET.ParseError:raise RuntimeError('Cannot inspect a private XML credential store')
+            for field in tree.iter():
+                name=field.tag.lower().replace('_','').replace('-','')
+                if any(word in name for word in ('apikey','password','secret','token')) and field.text and len(field.text.strip())>=12:
+                    values.add(field.text.strip().encode())
+    state=Path('/var/lib/tailscale/tailscaled.state')
+    if state.is_file():
+        try:state_values=json.loads(state.read_text())
+        except (ValueError,OSError):raise RuntimeError('Cannot inspect private Tailscale state')
+        for value in state_values.values():
+            if isinstance(value,str) and len(value)>=12:values.add(value.encode())
+    database=STORAGE/'appdata/jellyfin/config/data/jellyfin.db'
+    if database.is_file():
+        with sqlite3.connect('file:'+str(database)+'?mode=ro',uri=True,timeout=3) as conn:
+            tables=conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+            for (table,) in tables:
+                quoted='"'+table.replace('"','""')+'"'
+                columns=conn.execute('PRAGMA table_info('+quoted+')').fetchall()
+                for column in columns:
+                    if column[1].lower() not in {'accesstoken','apikey','token','secret','password','passwordhash'}:continue
+                    field='"'+column[1].replace('"','""')+'"'
+                    for (value,) in conn.execute('SELECT '+field+' FROM '+quoted):
+                        if isinstance(value,str) and len(value)>=12:values.add(value.encode())
     for value in list(values):
         values.add(base64.b64encode(value))
         try:values.add(urllib.parse.quote(value.decode(),safe='').encode())
