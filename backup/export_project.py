@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Export an allowlisted project snapshot; never copy runtime data or secrets."""
 import argparse
+import base64
 import datetime as dt
 import hashlib
 import json
@@ -8,10 +9,32 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import urllib.parse
 
 STACK = Path('/opt/media-stack')
 STORAGE = Path('/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>')
 SKIP = {'.git', '__pycache__', 'obj', 'bin', 'build', '.claude', '.github'}
+
+
+def private_replacements():
+    profile=STACK/'secrets/export-redactions.json'
+    if not profile.is_file():return {}
+    values=json.loads(profile.read_text())
+    if not isinstance(values,dict) or not all(isinstance(k,str) and isinstance(v,str) and v for k,v in values.items()):
+        raise RuntimeError('Invalid private export replacement profile; values withheld')
+    return values
+
+
+def sanitize_snapshot(root):
+    values=private_replacements()
+    for path in root.rglob('*'):
+        if not path.is_file():continue
+        try:text=path.read_text()
+        except UnicodeDecodeError:raise RuntimeError('Opaque file cannot be publicly exported: '+str(path.relative_to(root)))
+        for name,value in sorted(values.items(),key=lambda item:len(item[1]),reverse=True):
+            text=text.replace(value,'<'+name+'>')
+        path.write_text(text)
+    (root/'deployment-values.example.json').write_text(json.dumps({name:'' for name in values},indent=2)+'\n')
 
 
 def secret_values():
@@ -39,25 +62,36 @@ def secret_values():
                 elif isinstance(value, str) and len(value) >= 12:
                     values.add(value.encode())
             collect(obj)
+    for value in list(values):
+        values.add(base64.b64encode(value))
+        try:values.add(urllib.parse.quote(value.decode(),safe='').encode())
+        except UnicodeDecodeError:pass
     return values
 
 
 def verify(root):
     secrets = secret_values()
-    forbidden = re.compile(rb'-----BEGIN (?:OPENSSH |RSA |EC |DSA )?PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|AKIA[A-Z0-9]{16}|[?&]sig=[a-f0-9]{64}')
+    identifiers=list(private_replacements().values())
+    forbidden = re.compile(rb'-----BEGIN (?:OPENSSH |RSA |EC |DSA )?PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|AKIA[A-Z0-9]{16}|[?&]sig=[a-f0-9]{64}|tskey-[A-Za-z0-9_-]{20,}|(?:privkey|nodekey|machinekey):[a-f0-9]{64}|https://login\.tailscale\.com/a/[A-Za-z0-9]+')
     private_network = re.compile(
         rb'(?<![0-9.])100\.(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}(?![0-9.])'
-        rb'|(?:[a-z0-9-]+\.)+ts\.net\b|fd7a:115c:a1e0:[0-9a-f:]+', re.I)
+        rb'|(?:[a-z0-9-]+\.)+ts\.net\b|fd7a:115c:a1e0:[0-9a-f:]+'
+        rb'|(?<![0-9.])(?:10\.(?:[0-9]{1,3}|\*)\.(?:[0-9]{1,3}|\*)\.(?:[0-9]{1,3}|\*)'
+        rb'|192\.168\.(?:[0-9]{1,3}|\*)\.(?:[0-9]{1,3}|\*)'
+        rb'|172\.(?:1[6-9]|2[0-9]|3[01])\.(?:[0-9]{1,3}|\*)\.(?:[0-9]{1,3}|\*))(?![0-9.])', re.I)
     failures = []
     for path in sorted(root.rglob('*')):
         if not path.is_file() or '.git' in path.relative_to(root).parts:
             continue
         data = path.read_bytes()
-        if any(value in data for value in secrets) or forbidden.search(data) or private_network.search(data):
+        network_data=re.sub(rb'(?i)(targetAbi[\x22\x27]?\s*:\s*[\x22\x27]?)(?:10\.11\.0\.0|10\.11\.11\.0)',rb'\1<SOFTWARE_ABI>',data)
+        if (any(value in data or value.decode(errors='ignore').encode('utf-16le') in data for value in secrets)
+                or any(value.encode() in data for value in identifiers)
+                or forbidden.search(data) or private_network.search(network_data)):
             failures.append(str(path.relative_to(root)))
         if any(part in {'secrets', '__pycache__', 'obj', 'bin'} for part in path.relative_to(root).parts):
             failures.append(str(path.relative_to(root)))
-        if path.suffix in {'.sqlite', '.db', '.key', '.pem', '.mp4', '.mkv', '.torrent'}:
+        if path.suffix.lower() in {'.sqlite', '.db', '.key', '.pem', '.mp4', '.mkv', '.torrent', '.dll', '.zip', '.pdb'}:
             failures.append(str(path.relative_to(root)))
     if failures:
         raise RuntimeError('Snapshot rejected; review these paths (values withheld): ' + ', '.join(sorted(set(failures))))
@@ -92,13 +126,14 @@ def export(destination):
             copy(source, Path('deploy/systemd') / source.name)
     copy(Path('/etc/systemd/system/docker.service.d/media-storage.conf'), 'deploy/systemd/docker.service.d/media-storage.conf')
     plugins = STORAGE / 'appdata/jellyfin/config/plugins/DynamicLibrary'
-    for name in ['Jellyfin.Plugin.DynamicLibrary.dll', 'meta.json']:
+    for name in ['meta.json']:
         copy(plugins / name, Path('artifacts/DynamicLibrary') / name)
-    copy(STACK / 'vendor/wizdom-0.2.0.0.zip', 'artifacts/wizdom-0.2.0.0.zip')
+    copy(STACK / 'backup/templates/ARTIFACTS.md', 'artifacts/README.md')
     for relative in ['README.md', 'RESTORE.md', '.gitignore']:
         copy(STACK / 'backup/templates' / relative, relative)
     command = subprocess.run(['omv-confdbadm', 'read', 'conf.system.sharedfolder'], check=True, capture_output=True, text=True)
     (destination / 'deploy/omv-sharedfolders.json').write_text(json.dumps(json.loads(command.stdout), indent=2) + '\n')
+    sanitize_snapshot(destination)
     verify(destination)
     manifest = {'created_utc': dt.datetime.now(dt.timezone.utc).isoformat(), 'scope': 'project code/configuration/plugin artifacts; excludes secrets, runtime databases and media', 'files': {}}
     for path in sorted(destination.rglob('*')):

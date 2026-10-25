@@ -4,10 +4,22 @@ Project backup for a Debian 13 / OpenMediaVault home media server running
 Jellyfin, a custom catalogue bridge, Transmission and TorrServer through Docker.
 
 This public repository contains project code, deployment configuration, custom
-plugin source, installed plugin artifacts and recovery instructions. It does
+plugin source, public artifact metadata and recovery instructions. It does
 **not** contain passwords, API keys, private SSH keys, Jellyfin accounts/watch
 history, runtime databases, media files or downloaded subtitles. It is not a
-full disk image or a complete application-data backup.
+full disk image or a complete application-data backup. Private server addresses,
+storage/library IDs and account-specific values are replaced by deployment
+placeholders. Compiled assemblies and archives are excluded as well.
+
+Before deploying, copy `deployment-values.example.json` to a private location
+outside this checkout, fill in your own values, and render the required files:
+
+```sh
+python3 backup/render_deployment.py --values /private/deployment-values.json
+```
+
+See `RESTORE.md` for the staged setup order. Keep credentials in private runtime
+secret files. Never commit rendered, machine-specific deployment files.
 
 ## Current features
 
@@ -45,7 +57,7 @@ replacement hardware and future software updates still require their own checks.
 | `deploy/systemd/` | Startup unit, storage dependency, services and timers |
 | `deploy/omv-sharedfolders.json` | Reference export of supported OMV shared-folder configuration |
 | `plugin-source/dynamic-library/` | Modified MIT-licensed Dynamic Library source |
-| `artifacts/` | Exact installed Dynamic Library DLL/meta and Wizdom 0.2.0.0 package |
+| `artifacts/` | Public plugin metadata and local build/install instructions |
 | `backup/export_project.py` | Allowlisted export and secret checks for future snapshots |
 | `MANIFEST.json` | SHA-256 checksums and snapshot creation time |
 | `RESTORE.md` | Recovery sequence and information that must be supplied separately |

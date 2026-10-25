@@ -4,6 +4,26 @@ This is a reviewed recovery guide, not an unattended disk installer. Do not
 format a disk or overwrite `/etc/fstab` to restore this project. Do not enable
 cleanup timers until runtime state and managed-download manifests are restored.
 
+## Configure private deployment values first
+
+The public files contain placeholders instead of private addresses, account
+identifiers and storage/library UUIDs. Copy `deployment-values.example.json`
+to a private file outside the checkout, fill in values for the destination,
+then run `python3 backup/render_deployment.py --values /private/values.json`.
+It replaces provided values without displaying them and leaves unfilled
+placeholders for later stages. Use `--strict` after all deployment fields are
+configured. A rendered checkout contains private values: never push it publicly.
+
+Set network/storage values before using Compose. On a fresh installation,
+complete the Jellyfin wizard and create the intended online/local libraries
+using the UI or supported API, then obtain their actual view IDs to fill the
+plugin's library-ID fields. Render those source files before building the DLL.
+Unused legacy-library IDs may use distinct freshly generated UUIDs. Optional
+diagnostic sample IDs are needed only when running the corresponding checks.
+This public backup intentionally contains no compiled DLL or third-party ZIP;
+build/install them after configuring the private values. Credentials remain in
+runtime secret files and do not belong in the deployment-values file.
+
 ## 1. Identify existing storage
 
 The source server uses EXT4 on `/dev/sda5`, UUID
@@ -60,11 +80,12 @@ manifests; do not simulate watched flags to test cleanup on real files.
    docker build -t home-media-catalogue:1 /opt/media-stack/catalogue
    ```
 
-5. With Jellyfin stopped, restore `artifacts/DynamicLibrary/` into
-   `appdata/jellyfin/config/plugins/DynamicLibrary/`. The supplied DLL is
-   modified version 1.4.0.12, tested with Jellyfin 10.11.11. Restore/extract the
-   Wizdom package into its own plugin directory. Preserve readable ownership.
-6. If rebuilding the DLL from source instead, from this repository root:
+5. Build the modified Dynamic Library version 1.4.0.12 from the configured
+   source, then install its DLL and the public `meta.json` into
+   `appdata/jellyfin/config/plugins/DynamicLibrary/` while Jellyfin is stopped.
+   It was tested with Jellyfin 10.11.11. Install Wizdom from its publisher or
+   Jellyfin's catalogue, preserving its license and readable ownership.
+6. From this repository root, build the DLL locally:
 
    ```sh
    docker run --rm --memory 512m --cpus 1 \
