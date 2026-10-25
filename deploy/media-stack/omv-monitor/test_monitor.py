@@ -31,6 +31,8 @@ class MonitorTests(unittest.TestCase):
             with sqlite3.connect(data/'catalogue.sqlite') as c:
                 c.execute('CREATE TABLE validation(key TEXT PRIMARY KEY,state TEXT,next_check REAL,checked REAL,proof TEXT)')
                 c.execute('CREATE TABLE cache(key TEXT PRIMARY KEY,value TEXT,expires REAL)')
+                c.execute('CREATE TABLE manual_rechecks(key TEXT PRIMARY KEY,status TEXT)')
+                c.executemany('INSERT INTO manual_rechecks VALUES (?,?)',[('movie:tt1000004','pending'),('movie:tt1000003','failed'),('movie:tt1000001','passed')])
                 c.execute('CREATE TABLE audio_recheck(key TEXT PRIMARY KEY,completed REAL)')
                 c.execute("INSERT INTO audio_recheck VALUES ('movie:tt1000001',0)")
                 c.execute('INSERT INTO cache VALUES (?,?,?)',('audio-policy-resync-v1',json.dumps({'scheduled_at':1,'failed_scheduled':3}),9999999999))
@@ -52,4 +54,7 @@ class MonitorTests(unittest.TestCase):
             self.assertEqual(values['Indexed titles outside the queue'],'1')
             self.assertEqual(values['Passed sources awaiting new audio-policy audit'],'1')
             self.assertEqual(values['Previously failed entries scheduled for audio resync'],'3')
+            self.assertEqual(values['User reports awaiting fresh check'],'1')
+            self.assertEqual(values['User reports failed latest check'],'1')
+            self.assertEqual(values['User reports passed fresh check'],'1')
 if __name__=='__main__':unittest.main()

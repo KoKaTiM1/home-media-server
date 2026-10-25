@@ -3,7 +3,7 @@
 Debian 13 / OpenMediaVault 8 runs Jellyfin, the custom catalogue bridge,
 Transmission and TorrServer through `/opt/media-stack/compose.yaml`.
 Jellyfin is pinned to 10.11.11, the modified Dynamic Library plugin is
-1.4.0.17, and the installed Wizdom subtitle provider is 0.2.0.0.
+1.4.0.18, and the installed Wizdom subtitle provider is 0.2.0.0.
 The initial Jellyfin wizard and catalogue integration are complete on the
 source server. A fresh recovery still needs its own accounts, keys and setup.
 
@@ -172,3 +172,9 @@ Hebrew subtitle selection offers up to two distinct versions labelled עברית
 and עברית 2, best release match first. Stable variant URLs keep their files
 separate; explicit None and English fallback remain available. A second choice
 depends on available releases and does not guarantee synchronization.
+
+Online Delete reports a title for fresh verification rather than removing its
+virtual record or saved media. Reports are durable, prioritized and visible in
+OMV worker counts; successful fresh checks return titles to ordinary browsing.
+Local media deletion retains its native behavior. TV media-management settings
+and existing user permissions determine whether Delete is visible.

@@ -1,7 +1,7 @@
 # Home media server — modified Dynamic Library plugin
 
 This is the modified plugin used by **home-media-server**, currently
-**1.4.0.17**, tested with **Jellyfin 10.11.11**. Its active configuration uses
+**1.4.0.18**, tested with **Jellyfin 10.11.11**. Its active configuration uses
 the project's local catalogue bridge. The generic upstream feature list does
 not describe which providers or services this deployment uses.
 
@@ -55,3 +55,9 @@ Hebrew subtitle choices are labelled עברית 1 / עברית 2. Bridge variant
 remain in the native subtitle relay query: both tracks can share a language but
 must retain distinct URLs/files/indexes. HomeSubtitleTracks labels both direct
 and audio-converted playback without changing language IDs or explicit None.
+
+Online Delete reports a title for fresh verification rather than removing its
+virtual record or saved media. Reports are durable, prioritized and visible in
+OMV worker counts; successful fresh checks return titles to ordinary browsing.
+Local media deletion retains its native behavior. TV media-management settings
+and existing user permissions determine whether Delete is visible.

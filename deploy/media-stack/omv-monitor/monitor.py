@@ -117,7 +117,7 @@ def counts(data=DATA,refresh=False):
     with closing(sqlite3.connect('file:'+str(data/'catalogue.sqlite')+'?mode=ro',uri=True,timeout=3)) as conn:
         conn.set_progress_handler(lambda:int(foreground_busy(data)),10000)
         grouped=dict(conn.execute('SELECT state,COUNT(*) FROM validation GROUP BY state'))
-        add('Awaiting first check',grouped.get('pending',0),'Movie, first-episode and additional-episode source keys')
+        add('Waiting for verification / recheck',grouped.get('pending',0),'Movie, first-episode and additional-episode source keys')
         add('Failed / not passed — retained for retry',grouped.get('unavailable',0),'Not deleted; retry waits increase up to 30 days')
         due=conn.execute("SELECT COUNT(*) FROM validation WHERE state='unavailable' AND next_check<=?",(now,)).fetchone()[0]
         add('Failed checks due for retry now',due,'One in five probes is reserved for due failures')
@@ -134,8 +134,13 @@ def counts(data=DATA,refresh=False):
                 add('Previously failed entries scheduled for audio resync',migration.get('failed_scheduled',0),'One-time resync; later failures keep normal increasing retry waits')
                 add('Audio resync scheduled at',stamp(migration.get('scheduled_at',0)))
 
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE name='manual_rechecks'").fetchone():
+            reports=dict(conn.execute('SELECT status,COUNT(*) FROM manual_rechecks GROUP BY status'))
+            add('User reports awaiting fresh check',reports.get('pending',0),'Prioritized ahead of discovery; waits while playback or navigation is active')
+            add('User reports failed latest check',reports.get('failed',0),'Hidden from ordinary browsing; retained for scheduled retries')
+            add('User reports passed fresh check',reports.get('passed',0),'Fresh source check passed after the latest report')
         pending=dict(conn.execute("SELECT CASE WHEN key LIKE 'movie:%' THEN 'Movies' WHEN key LIKE '%:1:1' THEN 'Shows' ELSE 'Episodes' END,COUNT(*) FROM validation WHERE state='pending' GROUP BY 1"))
-        for kind in ('Movies','Shows','Episodes'):add(kind+' awaiting first check',pending.get(kind,0),'Shows use S1E1 as the initial check; other episodes counted separately')
+        for kind in ('Movies','Shows','Episodes'):add(kind+' waiting for check',pending.get(kind,0),'Shows use S1E1 as the initial check; other episodes counted separately')
         distinct=conn.execute("SELECT COUNT(DISTINCT CASE WHEN key LIKE 'movie:%' THEN key END),COUNT(DISTINCT CASE WHEN key LIKE 'series:%' THEN substr(key,1,instr(substr(key,8),':')+6) END) FROM validation WHERE state='verified'").fetchone()
         add('Passed distinct movies',distinct[0]);add('Passed distinct shows',distinct[1])
         recent=conn.execute('SELECT COUNT(*),MAX(checked) FROM validation WHERE checked>?',(now-3600,)).fetchone()

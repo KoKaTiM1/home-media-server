@@ -37,6 +37,8 @@ class Features:
         conn.execute('CREATE TABLE IF NOT EXISTS audio_recheck (key TEXT PRIMARY KEY, completed REAL NOT NULL DEFAULT 0)')
         conn.execute('CREATE INDEX IF NOT EXISTS validation_due ON validation(state,next_check,priority)')
         conn.execute("CREATE INDEX IF NOT EXISTS validation_work ON validation(priority DESC,next_check) WHERE state!='verified'")
+        conn.execute('CREATE TABLE IF NOT EXISTS manual_rechecks(key TEXT PRIMARY KEY,requested REAL,request_id TEXT,status TEXT)')
+        conn.execute('CREATE TABLE IF NOT EXISTS recheck_requests(id TEXT PRIMARY KEY,requested REAL,count INTEGER)')
         self.ensure_read_model(conn)
         return conn
 
@@ -199,10 +201,72 @@ class Features:
         with self.db() as conn:
             conn.executemany('INSERT INTO validation(key,priority) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET priority=MAX(priority,excluded.priority)',((key,priority) for key in valid))
 
-    def validation_result(self,key,ok,proof=None,reason=''):
+    def consume_rechecks(self):
+        """Consume trusted, atomically written plugin events without HTTP secrets."""
+        root=self.g['LIBRARY']/'.recheck-requests'
+        for path in sorted((root/'pending').glob('*.json'))[:100]:
+            if not re.fullmatch(r'[a-f0-9]{32}\.json',path.name):continue
+            try:
+                if path.is_symlink() or path.stat().st_size>16384:continue
+                request=json.loads(path.read_text())
+                ident=request['id'];requested=float(request['requested']);scopes=request['keys']
+                if ident!=path.stem or not 0<requested<=time.time()+300 or not isinstance(scopes,list) or not 1<=len(scopes)<=100:raise ValueError('Invalid request')
+                if not all(isinstance(scope,str) and re.fullmatch(r'(movie:tt\d{5,12}|series:tt\d{5,12}(?::\d{1,3}(?::\d{1,4})?)?)',scope) for scope in scopes):raise ValueError('Invalid scope')
+                for scope in scopes:
+                    parts=scope.split(':')
+                    if len(parts)>=3 and not 0<=int(parts[2])<=300:raise ValueError('Invalid season')
+                    if len(parts)==4 and not 1<=int(parts[3])<=2000:raise ValueError('Invalid episode')
+                with self.db() as conn:
+                    inserted=conn.execute('INSERT OR IGNORE INTO recheck_requests VALUES (?,?,0)',(ident,requested)).rowcount
+                    if inserted:
+                        keys=set()
+                        for scope in scopes:
+                            parts=scope.split(':')
+                            if parts[0]=='movie' or len(parts)==4:keys.add(scope)
+                            else:
+                                prefix=scope+':'
+                                keys.update(row[0] for row in conn.execute('SELECT key FROM validation WHERE key>=? AND key<?',(prefix,prefix+'\uffff')))
+                                if not any(key.startswith(prefix) for key in keys):keys.add(scope+(':1:1' if len(parts)==2 else ':1'))
+                        for key in keys:
+                            previous=conn.execute('SELECT requested FROM manual_rechecks WHERE key=?',(key,)).fetchone()
+                            if previous and previous[0]>=requested:continue
+                            conn.execute("INSERT INTO validation(key,state,priority,next_check,reason) VALUES (?,'pending',1000,0,'User requested fresh verification') ON CONFLICT(key) DO UPDATE SET state='pending',priority=MAX(priority,1000),next_check=0,reason='User requested fresh verification'",(key,))
+                            conn.execute("INSERT INTO manual_rechecks VALUES (?,?,?,'pending') ON CONFLICT(key) DO UPDATE SET requested=excluded.requested,request_id=excluded.request_id,status='pending'",(key,requested,ident))
+                            # Preserve current resolved transport for any existing
+                            # viewer. The worker clears it immediately before its
+                            # fresh probe, after playback has become idle.
+                            cachekeys=['prepared:'+key,'source-status:'+key]
+                            conn.execute('DELETE FROM cache WHERE key IN (?,?)',cachekeys)
+                            conn.execute('DELETE FROM cache WHERE key>=? AND key<?',('prepared:'+key+':','prepared:'+key+':\uffff'))
+                        conn.execute('UPDATE recheck_requests SET count=? WHERE id=?',(len(keys),ident))
+                done=root/'processed';done.mkdir(parents=True,exist_ok=True)
+                try:path.replace(done/path.name)
+                except FileNotFoundError:pass # Another process committed it.
+                with self.count_lock:self.count_cache.clear()
+            except (FileNotFoundError,PermissionError):continue
+            except (ValueError,KeyError,TypeError,UnicodeError):
+                rejected=root/'processed';rejected.mkdir(parents=True,exist_ok=True)
+                try:path.replace(rejected/(path.name+'.rejected'))
+                except FileNotFoundError:pass
+                self.log('Invalid local recheck request rejected')
+
+    def manual_recheck_state(self,key):
+        with self.db() as conn:row=conn.execute('SELECT status FROM manual_rechecks WHERE key=?',(key,)).fetchone()
+        return row[0] if row else None
+
+    def validation_result(self,key,ok,proof=None,reason='',attempt_started=None,background=False):
+        self.consume_rechecks()
         self.enqueue(key)
         now=time.time()
         with self.db() as conn:
+            report=conn.execute('SELECT requested,status FROM manual_rechecks WHERE key=?',(key,)).fetchone()
+            if report:
+                budget=self.g.get('BUDGET')
+                started=attempt_started if attempt_started is not None else getattr(budget,'validation_started',0) or 0
+                is_background=background or getattr(budget,'validation_background',False)
+                if started and started<report[0]:return False
+                if report[1]=='pending' and (not is_background or started<report[0]):return False
+                conn.execute('UPDATE manual_rechecks SET status=? WHERE key=?',('passed' if ok else 'failed',key))
             attempts=conn.execute('SELECT attempts FROM validation WHERE key=?',(key,)).fetchone()[0]
             attempts=0 if ok else attempts+1
             # Preserve successful proof even after failure, but never let it
@@ -215,6 +279,9 @@ class Features:
         with self.count_lock:self.count_cache.clear()
 
     def source_state(self,key):
+        self.consume_rechecks()
+        reported=self.manual_recheck_state(key)
+        if reported in ('pending','failed'):return 'pending' if reported=='pending' else 'unavailable'
         if self.local_download(key):return 'downloaded'
         with self.db() as conn:row=conn.execute('SELECT state,checked FROM validation WHERE key=?',(key,)).fetchone()
         if row:
@@ -224,13 +291,15 @@ class Features:
         return 'unknown'
 
     def ready_keys(self):
+        self.consume_rechecks()
         with self.db() as conn:
+            reported={row[0] for row in conn.execute("SELECT key FROM manual_rechecks WHERE status!='passed'")}
             rows=conn.execute("SELECT v.key FROM home_ready v LEFT JOIN home_source_status c ON c.key=v.key AND c.expires>? WHERE c.key IS NULL OR c.state!='unavailable' OR c.checked<=v.checked",(time.time(),)).fetchall()
             downloads=conn.execute('SELECT key FROM downloads').fetchall()
         ready={key for (key,) in rows}
         for (key,) in downloads:
             if self.local_download(key):ready.add(key)
-        return ready
+        return ready-reported
 
     def ready_titles(self):
         return {':'.join(key.split(':')[:2]) for key in self.ready_keys()}
@@ -708,6 +777,7 @@ class Features:
         return self.decorate_posters(output)
 
     def warm_availability(self,limit=20):
+        self.consume_rechecks()
         # flock survives separate cron/docker exec processes. Interrupted rows
         # remain due and resume automatically; no in-memory-only work cursor.
         with (self.g['DATA']/'validation.lock').open('a') as lock:
@@ -734,14 +804,14 @@ class Features:
                     self.remember('validation-worker',{'message':blocked+'; resumes automatically','started':time.time()},180)
                     break
                 with self.db() as conn:
-                    row=None
+                    row=conn.execute("SELECT v.key FROM manual_rechecks m JOIN validation v ON v.key=m.key WHERE m.status='pending' AND v.next_check<=? ORDER BY m.requested LIMIT 1",(time.time(),)).fetchone()
                     # Audit saved successful sources without resetting the
                     # visible catalogue. One in ten slots until completed.
-                    if checked%10==9:
+                    if not row and checked%10==9:
                         row=conn.execute("SELECT a.key FROM audio_recheck a JOIN validation v ON v.key=a.key WHERE a.completed=0 AND v.state='verified' ORDER BY a.rowid LIMIT 1").fetchone()
                     # Reserve one in five probes for due failures so a large
                     # discovery backlog cannot starve the saved retry list.
-                    if checked%5==0:
+                    if not row and checked%5==0:
                         row=conn.execute("SELECT key FROM validation WHERE state='unavailable' AND next_check<=? ORDER BY next_check,priority DESC LIMIT 1",(time.time(),)).fetchone()
                     if not row:
                         # Most slots widen the catalogue; one in five grows
@@ -754,6 +824,7 @@ class Features:
                 if not row:break
                 key=row[0]
                 self.remember('validation-worker',{'key':key,'started':time.time(),'position':checked+1,'message':'Video sample validation running'},180)
+                attempt_started=time.time()
                 try:
                     # Retry only when due, with fresh source listings. A cached
                     # negative listing must not poison its own next retry.
@@ -780,7 +851,7 @@ class Features:
                         self.log('Validation paused for source provider cooldown')
                         break
                     with self.db() as conn:current=conn.execute('SELECT checked FROM validation WHERE key=?',(key,)).fetchone()
-                    if not current or current[0]<time.time()-30:self.validation_result(key,False,reason=type(error).__name__)
+                    if not current or current[0]<time.time()-30:self.validation_result(key,False,reason=type(error).__name__,attempt_started=attempt_started,background=True)
                 checked+=1
                 self.remember('validation-worker',{'key':key,'started':time.time(),'position':checked,'message':'Last probe finished; proceeding to next queue entry'},180)
                 time.sleep(2)

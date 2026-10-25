@@ -72,6 +72,7 @@ Check(firstText?.StartsWith("WEBVTT") == true && firstText.Contains("ראשון"
 var invalidSub = await subController.Get("movie:tt00000000", "heb", "vtt", new string('a',64), "../../secret");
 Check(invalidSub is Microsoft.AspNetCore.Mvc.BadRequestResult && subFactory.Handler.Requests == 2, "Invalid variant rejected before network");
 Console.WriteLine("PASS: two Hebrew labels/display names, stable language IDs, distinct variant relay/VTT, None/English preservation and invalid variant rejection");
+await RecheckChecks.Run();
 var favoriteContext = new DefaultHttpContext();
 favoriteContext.Request.QueryString = new QueryString("?Filters=IsFavorite");
 Check(Jellyfin.Plugin.DynamicLibrary.Filters.HomeCatalogueResultFilter.IsFavoritesQuery(favoriteContext.Request.Query), "Native favorites filter");

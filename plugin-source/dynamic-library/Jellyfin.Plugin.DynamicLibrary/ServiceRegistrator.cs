@@ -44,6 +44,7 @@ public class ServiceRegistrator : IPluginServiceRegistrator
         services.AddSingleton<HomeAudioService>();
         services.AddSingleton<HomeImageService>();
         services.AddSingleton<HomeForegroundService>();
+        services.AddSingleton<HomeRecheckStore>();
         services.AddSingleton<IMediaSourceProvider, HomeMediaSourceProvider>();
         services.AddSingleton<SearchResultFactory>();
         services.AddSingleton<DynamicLibraryService>();
@@ -63,6 +64,7 @@ public class ServiceRegistrator : IPluginServiceRegistrator
         services.AddSingleton<HomeCatalogueResultFilter>();
         services.AddSingleton<HomeYearSortFilter>();
         services.AddSingleton<HomeBrowseFilter>();
+        services.AddSingleton<HomeRecheckDeleteFilter>();
 
         // Register filters with MVC
         services.PostConfigure<Microsoft.AspNetCore.Mvc.MvcOptions>(options =>
@@ -70,6 +72,7 @@ public class ServiceRegistrator : IPluginServiceRegistrator
             options.Filters.AddService<HomeCatalogueResultFilter>();
             options.Filters.AddService<HomeYearSortFilter>();
             options.Filters.AddService<HomeBrowseFilter>(order: -20);
+            options.Filters.AddService<HomeRecheckDeleteFilter>(order: -90);
             options.Filters.AddService<RequestLoggerFilter>(order: -100);       // Log ALL requests first (debug)
             options.Filters.AddService<ImageFilter>(order: 0);                  // Run first for images
             options.Filters.AddService<ItemLookupFilter>(order: 0);             // Run first for item lookups

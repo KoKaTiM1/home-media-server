@@ -1,7 +1,7 @@
 # Home media catalogue
 
 Current deployed behavior, reviewed 2026-10-25 against Dynamic Library
-**1.4.0.17**, Jellyfin **10.11.11**, the bridge and systemd units. This is the
+**1.4.0.18**, Jellyfin **10.11.11**, the bridge and systemd units. This is the
 current operating guide, rather than a chronological list of old features.
 The installed WizdomSubs Downloader version is **0.2.0.0**.
 
@@ -356,3 +356,37 @@ Details-page preparation status checks use an isolated bounded HTTP budget
 without their own cancellation callback. This prevents recursive self-cancellation
 while retaining active/paused and unreachable-session suppression. The regression
 check uses a real local HTTP session response, including paused playback.
+
+## Report a broken online title with Delete
+
+For online Movies, Shows, seasons and episodes, the native **Delete** action
+now means hide and request fresh source verification. It does not remove the
+STRM record, artwork, downloaded file, favorite or watched history. A movie or
+episode is queued directly; a season/show queues its known episode keys (or a
+first-episode seed if none are known). The normal catalogue hides reported keys
+until a fresh background video/audio check passes. Existing Favorites remain
+accessible under the existing unavailable-favorite rule.
+
+Reports bypass the title's current retry delay and receive the next eligible
+worker slot ahead of discovery. Provider cooldowns, active/paused playback and
+navigation priority still apply. Source listings and prepared/resolved caches
+are cleared before that worker attempt, so an old successful preparation cannot
+count as a new pass. Old proof is retained for diagnosis; failures stay hidden
+and return to normal retry backoff. An in-flight check begun before the report
+cannot undo it. Requests and results survive process restarts.
+
+The Android TV app calls this action Delete and keeps its existing confirmation
+dialog. If it is hidden, enable **Settings > Customization > Enable media
+management** on that TV once. It requires existing deletion permission; this
+feature does not grant it. Use the online libraries for this reporting action.
+Local Movies/Shows/Downloads keep native real-file deletion behavior. Mixed
+online/local bulk deletion requests are rejected before anything is changed.
+
+Authenticated native DELETE is intercepted before filesystem removal; a failed
+report-queue write returns an error instead of falling back to deletion. The
+plugin writes an atomic private event under `.recheck-requests/pending` on the
+existing shared catalogue volume. The bridge commits it once and archives the
+event under `processed`. No public reporting mutation endpoint or new credential
+is introduced. OMV Media workers > Counts includes reports waiting, failed and
+passed. A past sample or a successful recheck still cannot guarantee future
+torrent availability or compatibility with every TV.

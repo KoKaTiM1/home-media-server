@@ -85,7 +85,7 @@ manifests; do not simulate watched flags to test cleanup on real files.
    docker build -t home-media-catalogue:1 /opt/media-stack/catalogue
    ```
 
-5. Build the modified Dynamic Library version 1.4.0.17 from the configured
+5. Build the modified Dynamic Library version 1.4.0.18 from the configured
    source, then install its DLL and the public `meta.json` into
    `appdata/jellyfin/config/plugins/DynamicLibrary/` while Jellyfin is stopped.
    It was tested with Jellyfin 10.11.11. Install Wizdom from its publisher or
@@ -180,7 +180,7 @@ This downloads metadata, not movie files; allow time/storage for the initial bui
   reboot separately if appropriate; a healthy service alone is not reboot proof.
 
 The source-server deployment was checked on 2026-10-25 with Dynamic Library
-1.4.0.17: a zero-warning plugin build, Python feature and playback-deadline/stream
+1.4.0.18: a zero-warning plugin build, Python feature and playback-deadline/stream
 regression suites, .NET favorites/audio/indexing checks, native
 Favorites queries retaining unavailable titles, explicit failed-source responses,
 local HTTP206 playback and unchanged existing watched/favorite records. The
@@ -278,7 +278,7 @@ backup on the same disk does not protect against losing that disk.
 
 ## Favorites and timeout verification
 
-Dynamic Library 1.4.0.17 preserves unavailable titles in explicit Favorites
+Dynamic Library 1.4.0.18 preserves unavailable titles in explicit Favorites
 queries without exposing them in normal online browse/search. Verify an existing
 unavailable favorite remains visible and that Play still returns a compatible
 source or explicit failure. Preserve user hearts/watch history during recovery.
@@ -333,3 +333,23 @@ Details-page preparation status checks use an isolated bounded HTTP budget
 without their own cancellation callback. This prevents recursive self-cancellation
 while retaining active/paused and unreachable-session suppression. The regression
 check uses a real local HTTP session response, including paused playback.
+
+### Online Delete as a recheck report
+
+Keep Dynamic Library18 and the bridge report consumer together. The existing
+`/catalogue` mapping must be writable by the Jellyfin UID and bridge. Pending
+reports are atomic JSON events in `/catalogue/.recheck-requests/pending`; the
+bridge archives committed events under `processed`. Runtime SQLite tables
+`manual_rechecks` and `recheck_requests` preserve the latest result and request
+idempotence. These are runtime state and remain excluded from the public backup.
+No extra API key or public mutation endpoint is needed.
+
+Enable media management in each TV's Customization settings if Delete is not
+shown. Existing Jellyfin deletion permissions still apply. Online Delete is
+intercepted as hide/recheck; local deletion remains native. Before exercising
+DELETE after restore, verify the authenticated read-only
+`/HomeCatalogue/Rechecks/Capabilities?itemId=<ONLINE_ITEM_ID>` reports
+`Registered=true`, mode `online-delete-recheck`, the expected catalogue scope
+and current plugin version. Never test deletion against a local movie. Confirm
+virtual metadata/native records and watch/favorite state remain unchanged, then
+verify the reported key becomes pending/priority1000 with no retry delay.

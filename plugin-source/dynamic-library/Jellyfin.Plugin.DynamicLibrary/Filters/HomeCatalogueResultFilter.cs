@@ -188,6 +188,17 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
             list.Items = visible;
             list.TotalRecordCount = Math.Max(visible.Length, list.TotalRecordCount - (entries.Length - visible.Length));
         }
+        // Latest media returns a plain array rather than QueryResult. Keep
+        // reported/unavailable online cards out of Home too, while preserving
+        // local media and the explicit Favorites exception.
+        if (context.Result is ObjectResult arrayResult && arrayResult.Value is IEnumerable<BaseItemDto> plainItems)
+        {
+            var keyed = plainItems.Select(e => (Entry: e, Key: HomeKey(e.Id, e.Type))).ToArray();
+            var favoritesQuery = IsFavoritesQuery(context.HttpContext.Request.Query);
+            var ready = favoritesQuery ? new HashSet<string>()
+                : await ReadyAsync(keyed.Select(e => e.Key), context.HttpContext.RequestAborted);
+            arrayResult.Value = keyed.Where(e => KeepInResults(favoritesQuery, e.Key, ready)).Select(e => e.Entry).ToArray();
+        }
         if (context.Result is ObjectResult progressResult)
         {
             var progressItems = progressResult.Value switch

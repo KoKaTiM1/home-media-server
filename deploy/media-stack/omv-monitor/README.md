@@ -44,3 +44,8 @@ Restore this folder to `/opt/media-stack/omv-monitor`, configure the destination
 media-partition path in `monitor.py`, and run `python3 install.py` as root.
 The installer uses supported workbench manifest/engined RPC extension locations;
 OMV core files remain unchanged. It restarts only the OMV RPC engine.
+
+User report counters show keys awaiting a fresh check, failed on the latest
+reported check and passed after a report. These are latest per-key states, not
+a count of every click. Reports are prioritized by the ordinary source worker
+and obey its playback/navigation/provider pauses.

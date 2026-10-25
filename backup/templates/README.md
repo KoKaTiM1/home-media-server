@@ -52,7 +52,7 @@ initial verification of the large metadata pool takes time.
 No disk serial numbers, network addresses or machine identifiers are included
 in this hardware overview.
 
-## Current features — deployed 2026-10-25 (Dynamic Library 1.4.0.17)
+## Current features — deployed 2026-10-25 (Dynamic Library 1.4.0.18)
 
 - Separate online movies/shows and local downloaded Movies/Shows libraries.
   The owner's order puts online movies/shows first, then local Movies/Shows.
@@ -80,6 +80,10 @@ in this hardware overview.
   indicator preference locally. No inferred progress overwrites watch history.
 - OMV phone tables use labelled cards with borders and an optional table view;
   desktop layout remains native.
+- Delete on online titles reports them for fresh verification without removing
+  metadata, saved files or watch history. Reported sources are hidden and
+  prioritized; fresh passes return them to the catalogue. Native local-file
+  deletion keeps its existing behavior.
 - Unavailable favorites stay visible without losing hearts or watched state.
   Normal online browsing continues to hide unavailable sources.
 - Shared 27-second foreground preparation budget, a 30-second plugin HTTP
@@ -130,7 +134,7 @@ The [worker-monitor guide](deploy/media-stack/omv-monitor/README.md) and
 [phone-layout guide](deploy/media-stack/omv-mobile/README.md) describe the installed
 OMV extensions. `RESTORE.md` includes all seven worker schedules and startup steps.
 
-Jellyfin is pinned to 10.11.11; the modified Dynamic Library is 1.4.0.17.
+Jellyfin is pinned to 10.11.11; the modified Dynamic Library is 1.4.0.18.
 The modified plugin must be built from this repository's configured source;
 installing an upstream release does not include these server-specific features.
 Its [plugin README](plugin-source/dynamic-library/README.md) describes this fork;

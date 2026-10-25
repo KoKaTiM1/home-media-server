@@ -894,10 +894,19 @@ def warm_details(key):
     return True
 
 
+@contextmanager
+def validation_attempt(background):
+    previous=(getattr(BUDGET,'validation_started',None),getattr(BUDGET,'validation_background',False))
+    BUDGET.validation_started=time.time();BUDGET.validation_background=background
+    try:yield
+    finally:BUDGET.validation_started,BUDGET.validation_background=previous
+
+
 def prepared(key,background=False,audio_index=None,cancel=None):
     speculative=getattr(BUDGET,'speculative',False)
     deadline=time.monotonic()+(DETAIL_SECONDS if speculative else 60 if background else PREPARATION_SECONDS)
-    with request_budget(deadline,cancel),playback_phase(key,'preparation'):
+    F.consume_rechecks()
+    with validation_attempt(background),request_budget(deadline,cancel),playback_phase(key,'preparation'):
         with LOCKS_LOCK:lock=LOCKS.setdefault(key,threading.Lock())
         # Speculative navigation never waits behind actual Play or a worker.
         if speculative:
