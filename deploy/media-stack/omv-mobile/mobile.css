@@ -1,0 +1,48 @@
+/* Only narrow screens and phone/tablet touch layouts. No desktop overrides. */
+@media (max-width: 767px), (max-width: 1024px) and (hover: none) and (pointer: coarse) {
+  omv-datatable { display: block; min-width: 0; max-width: 100%; }
+  .omv-phone-table-hint {
+    margin: 8px 0; font-size: 13px; line-height: 1.5;
+    color: var(--mat-color-secondary-text, #555);
+  }
+  .omv-phone-table-scroll {
+    display: block; width: 100%; max-width: 100%; overflow-x: auto;
+    -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain;
+    border: 1px solid var(--omv-background-color-muted, #ddd);
+    border-radius: 6px; box-sizing: border-box;
+  }
+  .omv-phone-table-scroll > ngx-datatable {
+    width: var(--omv-phone-table-width) !important;
+    min-width: var(--omv-phone-table-width) !important;
+  }
+  .omv-phone-table-scroll .datatable-header-cell,
+  .omv-phone-table-scroll .datatable-body-cell { font-size: 14px; }
+  .omv-phone-table-scroll .datatable-footer {
+    position: sticky; left: 0; z-index: 11;
+    width: var(--omv-phone-viewport) !important;
+    max-width: var(--omv-phone-viewport); overflow: visible !important;
+    background: var(--mat-background-color-card, white);
+  }
+  .omv-phone-table-scroll .datatable-footer-inner {
+    height: auto !important; min-height: 56px; flex-wrap: wrap;
+  }
+  .omv-phone-table-scroll .datatable-footer .page-count {
+    height: auto; line-height: 1.5; padding: 8px 12px;
+    flex: 1 1 100%; box-sizing: border-box;
+  }
+  .omv-phone-table-scroll .datatable-footer .datatable-pager {
+    flex: 1 1 100%; margin: 0 4px 6px; text-align: center;
+  }
+  .omv-phone-table-scroll .datatable-footer .datatable-pager a {
+    min-width: 36px; height: 40px; line-height: 40px; padding: 0 3px;
+  }
+  omv-datatable .action-toolbar mat-toolbar {
+    height: auto; min-height: 56px; flex-wrap: wrap; gap: 4px; padding: 6px;
+  }
+  omv-datatable .action-toolbar .mat-icon-button {
+    min-width: 44px; min-height: 44px;
+  }
+  omv-datatable .action-toolbar .mat-form-field {
+    max-width: 100%; min-width: 140px; flex: 1 1 180px;
+  }
+}

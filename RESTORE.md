@@ -176,3 +176,17 @@ After Jellyfin and its API key are restored, run
 configures bounded native HLS buffering and segment cleanup through the API.
 Audio conversion uses Jellyfin's own ffmpeg with video copy; saved originals
 are retained until the existing managed watched/age cleanup removes them.
+# Optional OMV phone layout
+
+After restoring `deploy/media-stack/omv-mobile` to
+`/opt/media-stack/omv-mobile`, run:
+
+```sh
+python3 /opt/media-stack/omv-mobile/install.py
+```
+
+This installs local assets and a separate nginx include for readable phone
+tables. It validates and reloads nginx without modifying OMV's packaged web
+files. Desktop styling remains native. Refresh Safari after installation.
+Use the same command with `--remove` to disable the extension.
+
