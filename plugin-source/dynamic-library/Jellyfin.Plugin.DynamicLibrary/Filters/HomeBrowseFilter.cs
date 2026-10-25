@@ -5,6 +5,7 @@ using System.Globalization;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.DynamicLibrary.Providers;
 using Jellyfin.Plugin.DynamicLibrary.Services;
+using MediaBrowser.Controller.Dto;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Dto;
@@ -124,14 +125,15 @@ public sealed class HomeBrowseFilter(ILibraryManager library, SearchResultFactor
                 var native = library.GetItemById(dto.Id);
                 if (user is not null && native is not null)
                 {
-                    var data = userData.GetUserData(user, native);
-                    if (data is not null) dto.UserData = new UserItemDataDto
-                    {
-                        Key = native.GetUserDataKeys().FirstOrDefault() ?? dto.Id.ToString("N"),
-                        Played = data.Played, IsFavorite = data.IsFavorite,
-                        PlayCount = data.PlayCount, PlaybackPositionTicks = data.PlaybackPositionTicks,
-                        LastPlayedDate = data.LastPlayedDate
-                    };
+                    // Native series DTO enrichment supplies the per-user unwatched
+                    // badge and recursive counts, just as Recently Added does.
+                    var data = userData.GetUserDataDto(native, dto, user,
+                        new DtoOptions(false)
+                        {
+                            EnableImages = false,
+                            Fields = new[] { ItemFields.ChildCount, ItemFields.RecursiveItemCount }
+                        });
+                    if (data is not null) dto.UserData = data;
                 }
                 result.Add(dto);
             }

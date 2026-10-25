@@ -1,5 +1,9 @@
 # Home media catalogue
 
+Online show cards reuse Jellyfin's native per-user episode counts and watched
+data, so their unwatched badge matches Recently Added for indexed series.
+Previews without indexed episode data do not invent an episode count.
+
 Show posters place the green HE / red EN / gray unknown subtitle marker in
 the bottom-left corner, leaving the top free for native episode-count badges.
 Movie subtitle markers remain at the top-left. Poster style versions refresh
@@ -17,7 +21,7 @@ only missing memberships are added. Bucket matching uses a dictionary rather
 than comparing every title against every metadata row.
 
 Jellyfin 10.11.11 is pinned in /opt/media-stack/compose.yaml. The local Dynamic
-Library extension is version 1.4.0.8; WizdomSubs Downloader is version 0.2.0.0.
+Library extension is version 1.4.0.12; WizdomSubs Downloader is version 0.2.0.0.
 Do not automatically update these plugins/Jellyfin without integration testing.
 
 ## Watching and browsing
@@ -257,7 +261,7 @@ alias for real premiere date too; the bulk index creation timestamp cannot
 distinguish new releases. Local media libraries keep Jellyfin's native Date
 added behavior. Score/name choices retain their within-year sorting.
 
-## Poster consistency on Back (1.4.0.8)
+## Poster consistency on Back (1.4.0.12)
 
 Opening a title can finish a source-list check; a confirmed missing compatible
 source or newly known future release may then hide it from subsequent browsing.
@@ -367,7 +371,7 @@ The OMV progress tab shows failed entries scheduled and remaining audio audits.
 That earlier filtering-only policy is superseded by the deployed LC conversion mode described below.
 
 
-## Current audio delivery: direct LC or verified LC conversion (1.4.0.11)
+## Current audio delivery: direct LC or verified LC conversion (1.4.0.12)
 
 AAC-LC sources retain direct playback. A selected non-LC track (including AAC
 Main, AC3/EAC3 and MP3) can now play through Jellyfin native HLS with video
