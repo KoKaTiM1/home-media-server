@@ -60,6 +60,7 @@ async def main():
         await page.wait_for_timeout(1500)
         print('Phone title:',await page.title(),flush=True)
         print('Phone layout:',await page.evaluate("""() => ({viewport:innerWidth, document:document.documentElement.scrollWidth,
+            classes:[...document.querySelectorAll('ngx-datatable')].map(e=>e.className),
             tables:[...document.querySelectorAll('.omv-phone-table-scroll')].map(e=>({width:e.clientWidth,scroll:e.scrollWidth})),
             headers:[...document.querySelectorAll('.datatable-header-cell')].map(e=>Math.round(e.getBoundingClientRect().width))})"""),flush=True)
         await page.screenshot(path='/root/omv-phone-tables.png',full_page=True)
@@ -67,15 +68,33 @@ async def main():
         assert not errors
         assert await page.locator('.omv-phone-table-scroll').count()>0
         assert await page.evaluate('document.documentElement.scrollWidth<=innerWidth+2')
+        assert await page.locator('.omv-phone-card-view').count()>0
+        assert await page.locator('.omv-phone-table-scroll').first.evaluate('(e)=>e.scrollWidth<=e.clientWidth+2')
+        assert await page.locator('[data-omv-label="Worker"]').count()==7
+        print('Phone cards show labelled fields without horizontal scrolling PASS',flush=True)
+        await page.get_by_role('button',name='Switch to table view with column sorting').first.click()
+        await page.wait_for_timeout(500)
         assert await page.locator('.omv-phone-table-scroll').first.evaluate('(e)=>e.scrollWidth>e.clientWidth')
         await page.locator('.omv-phone-table-scroll').first.evaluate('(e)=>e.scrollLeft=400')
         assert await page.locator('.omv-phone-table-scroll').first.evaluate('(e)=>e.scrollLeft>0')
-        print('Phone table horizontal scrolling PASS',flush=True)
+        print('Optional native table view and horizontal scrolling PASS',flush=True)
         for path,expected in (('/storage/shared-folders','AppData'),('/storage/filesystems','/dev/sda5')):
             await page.goto(BASE+'/#'+path,wait_until='networkidle',timeout=60000)
             await page.wait_for_function("text => [...document.querySelectorAll('.omv-phone-table-scroll .datatable-body-cell')].some(e=>e.textContent.includes(text))",arg=expected,timeout=60000)
             await page.wait_for_timeout(600)
             assert await page.evaluate('document.documentElement.scrollWidth<=innerWidth+2')
+            assert await page.locator('.omv-phone-table-scroll').first.evaluate('(e)=>e.scrollWidth<=e.clientWidth+2')
+            assert await page.locator('.datatable-body-cell[data-omv-label]').count()>0
+            if path=='/storage/shared-folders':
+                await page.locator('.datatable-body-row .datatable-body-cell').first.click()
+                await page.wait_for_function("document.querySelectorAll('.datatable-body-row.active').length===1",timeout=10000)
+                await page.get_by_role('button',name='Switch to table view with column sorting').first.click()
+                await page.wait_for_timeout(300)
+                assert await page.locator('.datatable-body-row.active').count()==1
+                await page.get_by_role('button',name='Switch to details that fit the screen').first.click()
+                await page.wait_for_timeout(300)
+                assert await page.locator('.datatable-body-row.active').count()==1
+                print('Native row selection survives card/table switches PASS',flush=True)
             print('Native phone view PASS:',path,flush=True)
             await page.screenshot(path='/root/omv-phone-'+path.rsplit('/',1)[1]+'.png',full_page=True)
         await page.set_viewport_size({'width':844,'height':390})
@@ -86,6 +105,8 @@ async def main():
         await page.wait_for_timeout(1200)
         assert await page.locator('.omv-phone-table-scroll').count()==0
         assert await page.locator('.omv-phone-table-hint').count()==0
+        assert await page.locator('.omv-phone-view-button').count()==0
+        assert await page.locator('[data-omv-label]').count()==0
         print('Return to desktop removes all wrappers/hints PASS',flush=True)
         await context.close()
         baseline=await desktop_layout(browser,False)

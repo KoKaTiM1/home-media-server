@@ -5,6 +5,12 @@
     margin: 8px 0; font-size: 13px; line-height: 1.5;
     color: var(--mat-color-secondary-text, #555);
   }
+  .omv-phone-view-button {
+    display: inline-block; min-height: 44px; margin: 6px 0 10px;
+    padding: 8px 14px; border: 1px solid currentColor; border-radius: 6px;
+    background: var(--mat-background-color-card, white);
+    color: var(--mat-primary-color-text, #176da8); font: inherit;
+  }
   .omv-phone-table-scroll {
     display: block; width: 100%; max-width: 100%; overflow-x: auto;
     -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain;
@@ -35,6 +41,49 @@
   }
   .omv-phone-table-scroll .datatable-footer .datatable-pager a {
     min-width: 36px; height: 40px; line-height: 40px; padding: 0 3px;
+  }
+  /* Cards retain the actual native cells, controls, selection and data. */
+  .omv-phone-card-view { overflow-x: clip; border: 0; }
+  .omv-phone-card-view > ngx-datatable {
+    width: 100% !important; min-width: 0 !important; overflow: visible;
+  }
+  .omv-phone-card-view .datatable-header { display: none !important; }
+  .omv-phone-card-view .datatable-body,
+  .omv-phone-card-view .datatable-scroll,
+  .omv-phone-card-view .datatable-row-wrapper,
+  .omv-phone-card-view .datatable-body-row,
+  .omv-phone-card-view .datatable-row-group {
+    display: block !important; width: 100% !important; min-width: 0 !important;
+    height: auto !important; box-sizing: border-box;
+  }
+  .omv-phone-card-view .datatable-row-group { transform: none !important; }
+  .omv-phone-card-view .datatable-body-row {
+    margin: 0 0 12px; border: 1px solid var(--omv-background-color-muted, #ddd);
+    border-radius: 8px; overflow: hidden;
+    background: var(--mat-background-color-card, white);
+  }
+  .omv-phone-card-view .datatable-body-cell {
+    display: grid !important; grid-template-columns: minmax(80px, 35%) minmax(0, 1fr);
+    gap: 10px; width: 100% !important; min-width: 0 !important;
+    height: auto !important; padding: 10px 12px !important;
+    white-space: normal !important; box-sizing: border-box; line-height: 1.5;
+  }
+  .omv-phone-card-view .datatable-body-cell + .datatable-body-cell {
+    border-top: 1px solid var(--mat-color-divider, rgb(128 128 128 / 15%));
+  }
+  .omv-phone-card-view .datatable-body-cell::before {
+    content: attr(data-omv-label); font-weight: 600; overflow-wrap: anywhere;
+  }
+  .omv-phone-card-view .datatable-body-cell-label,
+  .omv-phone-card-view .datatable-body-cell-label > *,
+  .omv-phone-card-view .datatable-body-cell-label .omv-text-truncate {
+    min-width: 0 !important; max-width: 100% !important;
+    white-space: normal !important; overflow-wrap: anywhere;
+    text-overflow: clip !important; overflow: visible !important;
+  }
+  .omv-phone-card-view .mat-chip {
+    height: auto !important; min-height: 32px; white-space: normal !important;
+    line-height: 1.5; padding-top: 4px; padding-bottom: 4px;
   }
   omv-datatable .action-toolbar mat-toolbar {
     height: auto; min-height: 56px; flex-wrap: wrap; gap: 4px; padding: 6px;

@@ -2,9 +2,14 @@
 
 This local extension keeps native OMV tables, row selection, sorting, and
 actions. On screens up to 767 CSS pixels (or touch screens up to 1024 pixels),
-tables retain readable column widths inside a horizontal scroll area. Headers
-and rows scroll together. Native pagination stays at the visible left edge;
-toolbar buttons have larger touch targets. Outside these breakpoints no CSS
+each normal table row becomes a full-width card with a label and complete
+value for each column. Long paths wrap instead of being truncated. A **Show
+table** button restores the native column layout for sorting or comparison;
+**Show cards** returns to the full details. Native controls, row selection and
+pagination remain in place, and toolbar buttons have larger touch targets.
+Virtualized tables keep the scroll layout because their row positions depend
+on fixed heights. In table view, headers and rows scroll together and native
+pagination stays at the visible left edge. Outside these breakpoints no CSS
 overrides apply and the script removes its wrappers when resizing to desktop.
 
 Install or restore after copying this folder to `/opt/media-stack/omv-mobile`:

@@ -14,7 +14,7 @@
     let changed = false;
     for (const [table, state] of tables) {
       if (!table.isConnected) {
-        state.hint.remove(); state.wrapper.remove(); tables.delete(table);
+        state.hint.remove(); state.button.remove(); state.wrapper.remove(); tables.delete(table);
       }
     }
     document.querySelectorAll('omv-datatable ngx-datatable').forEach(table => {
@@ -24,18 +24,37 @@
         wrapper.className = 'omv-phone-table-scroll';
         wrapper.tabIndex = 0;
         wrapper.setAttribute('role', 'region');
-        wrapper.setAttribute('aria-label', 'Scrollable table');
+        wrapper.setAttribute('aria-label', 'Table details');
         const hint = document.createElement('p');
         hint.className = 'omv-phone-table-hint';
-        hint.textContent = 'Swipe the table sideways to see all columns.';
-        table.before(hint, wrapper);
+        const button = document.createElement('button');
+        button.type = 'button'; button.className = 'omv-phone-view-button';
+        table.before(button, hint, wrapper);
         wrapper.append(table);
-        state = {wrapper, hint, width: 0, viewport: 0};
+        state = {wrapper, hint, button, width: 0, viewport: 0, cards: !table.matches('.scroll-vertical.virtualized')};
+        button.addEventListener('click', () => {
+          state.cards = !state.cards;
+          dispatchEvent(new Event('resize')); schedule();
+        });
         tables.set(table, state);
       }
       const viewport = state.wrapper.clientWidth;
       if (!viewport) return;
-      const columns = table.querySelectorAll('.datatable-header-cell').length || 4;
+      const headers = [...table.querySelectorAll('.datatable-header-cell')];
+      const columns = headers.length || 4;
+      const labels = headers.map(cell => (cell.querySelector('.datatable-header-cell-label')?.textContent || cell.textContent).trim());
+      table.querySelectorAll('.datatable-body-row').forEach(row => {
+        row.querySelectorAll('.datatable-body-cell').forEach((cell, index) => {
+          cell.setAttribute('data-omv-label', labels[index] || (cell.querySelector('input[type="checkbox"]') ? 'Select' : 'Details'));
+        });
+      });
+      state.wrapper.classList.toggle('omv-phone-card-view', state.cards);
+      state.button.hidden = table.matches('.scroll-vertical.virtualized');
+      const buttonText = state.cards ? 'Show table' : 'Show cards';
+      if (state.button.textContent !== buttonText) state.button.textContent = buttonText;
+      state.button.setAttribute('aria-label', state.cards ? 'Switch to table view with column sorting' : 'Switch to details that fit the screen');
+      const hint = state.cards ? '' : 'Swipe the table sideways to see all columns.';
+      if (state.hint.textContent !== hint) state.hint.textContent = hint;
       const width = Math.max(viewport, 560, columns * 160);
       if (width !== state.width || viewport !== state.viewport) {
         state.wrapper.style.setProperty('--omv-phone-table-width', width + 'px');
@@ -43,7 +62,7 @@
         state.width = width; state.viewport = viewport;
         changed = true;
       }
-      state.hint.hidden = width <= viewport;
+      state.hint.hidden = state.cards || width <= viewport;
     });
     // ngx-datatable recalculates its native flex columns against the wider host.
     if (changed) dispatchEvent(new Event('resize'));
@@ -56,9 +75,10 @@
     } else {
       if (observer) observer.disconnect();
       let changed = false;
-      for (const [table, {wrapper, hint}] of tables) {
+      for (const [table, {wrapper, hint, button}] of tables) {
+        table.querySelectorAll('[data-omv-label]').forEach(cell => cell.removeAttribute('data-omv-label'));
         if (table.isConnected) wrapper.before(table);
-        wrapper.remove(); hint.remove(); changed = true;
+        wrapper.remove(); hint.remove(); button.remove(); changed = true;
       }
       tables.clear();
       if (changed) dispatchEvent(new Event('resize'));
