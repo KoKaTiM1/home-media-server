@@ -94,6 +94,10 @@ in this hardware overview.
   metadata, saved files or watch history. Reported sources are hidden and
   prioritized; fresh passes return them to the catalogue. Native local-file
   deletion keeps its existing behavior.
+- Timed per-title viewing holds let other verification work continue while a
+  selected title is excluded from audits/retries and managed saved-file cleanup.
+  Holds preserve existing readiness and native progress/favorites, persist across
+  reboot and expire automatically without restarting playback services.
 - Unavailable favorites stay visible without losing hearts or watched state.
   Normal online browsing continues to hide unavailable sources.
 - Shared 27-second foreground preparation budget, a 30-second plugin HTTP

@@ -162,6 +162,9 @@ def counts(data=DATA,refresh=False):
             add('User reports awaiting fresh check',reports.get('pending',0),'Prioritized ahead of discovery; waits while playback or navigation is active')
             add('User reports failed latest check',reports.get('failed',0),'Hidden from ordinary browsing; retained for scheduled retries')
             add('User reports passed fresh check',reports.get('passed',0),'Fresh source check passed after the latest report')
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE name='verification_holds'").fetchone():
+            held=conn.execute('SELECT COUNT(*),MIN(expires) FROM verification_holds WHERE expires>?',(now,)).fetchone()
+            add('Titles protected from verification / cleanup',held[0],('Earliest hold ends '+stamp(held[1]) if held[1] else 'No active holds')+'; other titles continue normally')
         pending=dict(conn.execute("SELECT CASE WHEN key LIKE 'movie:%' THEN 'Movies' WHEN key LIKE '%:1:1' THEN 'Shows' ELSE 'Episodes' END,COUNT(*) FROM validation WHERE state='pending' GROUP BY 1"))
         for kind in ('Movies','Shows','Episodes'):add(kind+' waiting for check',pending.get(kind,0),'Shows use S1E1 as the initial check; other episodes counted separately')
         distinct=conn.execute("SELECT COUNT(DISTINCT CASE WHEN key LIKE 'movie:%' THEN key END),COUNT(DISTINCT CASE WHEN key LIKE 'series:%' THEN substr(key,1,instr(substr(key,8),':')+6) END) FROM validation WHERE state='verified'").fetchone()

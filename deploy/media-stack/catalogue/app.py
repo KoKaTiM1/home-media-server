@@ -937,6 +937,7 @@ def validation_attempt(background):
 
 
 def prepared(key,background=False,audio_index=None,cancel=None):
+    if background and F.verification_held(key):raise Checkpoint('Title temporarily protected from background verification')
     speculative=getattr(BUDGET,'speculative',False)
     deadline=time.monotonic()+(DETAIL_SECONDS if speculative else WORK_SECONDS if background else PREPARATION_SECONDS)
     if background:deadline=min(deadline,getattr(BUDGET,'worker_deadline',deadline))

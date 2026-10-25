@@ -223,7 +223,7 @@ class ReliabilityTests(unittest.TestCase):
             for server in (bridge,upstream):server.shutdown();server.server_close()
 
     def test_worker_session_check_inside_cancellation_does_not_recurse(self):
-        with patch.object(a.F,'seed_validation'),patch.object(a.REL,'schedule'),patch.object(a.REL,'next_audit',return_value=(KEY,)),patch.object(a.F,'jf',return_value=[]) as sessions,patch.object(a,'prepared') as prepare:
+        with patch.object(a.F,'seed_validation'),patch.object(a.REL,'schedule'),patch.object(a.F,'worker_audit',return_value=(KEY,)),patch.object(a.F,'jf',return_value=[]) as sessions,patch.object(a,'prepared') as prepare:
             a.F.enqueue(KEY)
             def check(*args,**kwargs):
                 # Mimic fetch checking remaining() inside the native session request.

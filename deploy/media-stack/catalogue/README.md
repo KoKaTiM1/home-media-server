@@ -445,3 +445,21 @@ audit awaiting/passed/failed, passed v5 direct/conversion sources, daily audits
 due, resumable preparation checkpoints, failed titles and the existing complete
 discovery queue. A paused worker may retain its last saved phase; the worker's
 health/message explains whether it is currently running or waiting.
+
+
+## Temporary title holds
+
+A private timed hold in `verification_holds` excludes an exact movie/episode key
+from initial/daily audits, manual-report work, checkpoint resumption, discovery
+verification and managed saved-file cleanup. Other titles continue normally.
+The hold preserves existing readiness, source proof, files and native watch/
+favorite records; it does not mark an audit complete or fabricate a pass.
+Holds persist across reboot and expire automatically. Foreground Play remains
+available, and a hold does not pin torrent pieces forever or guarantee peers
+will still be available later. Watch progress stays in Jellyfin's native state.
+
+The worker and managed-download jobs load the updated host-bound Python code
+on their next invocation, so adding a hold does not require restarting Jellyfin
+or the catalogue bridge. OMV counters show the number of protected titles and
+the earliest expiry. Native active/paused-session and navigation safeguards
+continue to defer heavy work during detected viewing.

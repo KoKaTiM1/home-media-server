@@ -79,7 +79,7 @@ class FeatureTests(unittest.TestCase):
         self.make_search_index()
         movie='movie:tt1234567';episode='series:tt2345678:7:18'
         a.F.enqueue(movie,20);a.F.enqueue(episode,100)
-        with patch.object(a.F,'jf',return_value=[]),patch.object(a,'prepared',return_value={}) as prepare,patch('features.time.sleep'),patch.object(a.REL,'next_audit',return_value=None):
+        with patch.object(a.F,'jf',return_value=[]),patch.object(a,'prepared',return_value={}) as prepare,patch('features.time.sleep'),patch.object(a.F,'worker_audit',return_value=None):
             a.F.warm_availability(1)
             prepare.assert_called_once_with(movie,background=True,cancel=unittest.mock.ANY)
 
@@ -89,7 +89,7 @@ class FeatureTests(unittest.TestCase):
         a.F.validation_result(failed,False)
         a.F.enqueue(new,100)
         with a.F.db() as conn:conn.execute('UPDATE validation SET next_check=0 WHERE key=?',(failed,))
-        with patch.object(a.F,'jf',return_value=[]),patch.object(a,'prepared',return_value={}) as prepare,patch('features.time.sleep'),patch.object(a.REL,'next_audit',return_value=None):
+        with patch.object(a.F,'jf',return_value=[]),patch.object(a,'prepared',return_value={}) as prepare,patch('features.time.sleep'),patch.object(a.F,'worker_audit',return_value=None):
             a.F.warm_availability(1)
             prepare.assert_called_once_with(failed,background=True,cancel=unittest.mock.ANY)
 

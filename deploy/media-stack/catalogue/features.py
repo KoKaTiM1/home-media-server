@@ -37,6 +37,7 @@ class Features:
         conn.execute('CREATE TABLE IF NOT EXISTS audio_recheck (key TEXT PRIMARY KEY, completed REAL NOT NULL DEFAULT 0)')
         conn.execute('CREATE INDEX IF NOT EXISTS validation_due ON validation(state,next_check,priority)')
         conn.execute("CREATE INDEX IF NOT EXISTS validation_work ON validation(priority DESC,next_check) WHERE state!='verified'")
+        conn.execute('CREATE TABLE IF NOT EXISTS verification_holds(key TEXT PRIMARY KEY,expires REAL NOT NULL,reason TEXT)')
         conn.execute('CREATE TABLE IF NOT EXISTS manual_rechecks(key TEXT PRIMARY KEY,requested REAL,request_id TEXT,status TEXT)')
         conn.execute('CREATE TABLE IF NOT EXISTS recheck_requests(id TEXT PRIMARY KEY,requested REAL,count INTEGER)')
         self.ensure_read_model(conn)
@@ -779,6 +780,19 @@ class Features:
             seen.add(imdb);output.append(self.localize(meta))
         return self.decorate_posters(output)
 
+    def verification_held(self,key):
+        with self.db() as conn:
+            return bool(conn.execute('SELECT 1 FROM verification_holds WHERE key=? AND expires>?',(key,time.time())).fetchone())
+
+    def worker_audit(self,recurring=False):
+        # Holds are scheduling exclusions, not failed/finished audit results.
+        # Keep original proof/readiness/history and automatically retry after expiry.
+        with self.g['REL'].db() as conn:
+            row=conn.execute("SELECT a.key FROM verification_audit a JOIN validation v ON v.key=a.key WHERE a.completed=0 AND (v.state='verified' OR v.next_check<=?) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=v.key AND h.expires>unixepoch()) ORDER BY a.priority DESC,COALESCE(json_extract(v.proof,'$.version'),0),a.scheduled LIMIT 1",(time.time(),)).fetchone()
+            if not row and recurring:
+                row=conn.execute("SELECT key FROM validation WHERE state='verified' AND checked<=? AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=validation.key AND h.expires>unixepoch()) ORDER BY checked LIMIT 1",(time.time()-86400,)).fetchone()
+        return row
+
     def warm_availability(self,limit=20):
         self.consume_rechecks()
         # flock survives separate cron/docker exec processes. Interrupted rows
@@ -812,27 +826,28 @@ class Features:
                     self.remember('validation-worker',{'message':blocked+'; resumes automatically','started':time.time()},180)
                     break
                 with self.db() as conn:
-                    row=conn.execute("SELECT v.key FROM manual_rechecks m JOIN validation v ON v.key=m.key WHERE m.status='pending' AND v.next_check<=? ORDER BY m.requested LIMIT 1",(time.time(),)).fetchone()
+                    row=conn.execute("SELECT v.key FROM manual_rechecks m JOIN validation v ON v.key=m.key WHERE m.status='pending' AND v.next_check<=? AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=v.key AND h.expires>unixepoch()) ORDER BY m.requested LIMIT 1",(time.time(),)).fetchone()
                     # Initial audits precede discovery; one in five ordinary
                     # slots subsequently rechecks a success older than 24 hours.
-                    if not row:row=self.g['REL'].next_audit(recurring=slot%5==4)
+                    if not row:row=self.worker_audit(recurring=slot%5==4)
                     if not row:
-                        work=conn.execute("SELECT w.key,w.value FROM preparation_work w JOIN validation v ON v.key=w.key WHERE v.state='verified' OR v.next_check<=? ORDER BY w.updated LIMIT 1",(time.time(),)).fetchone()
+                        work=conn.execute("SELECT w.key,w.value FROM preparation_work w JOIN validation v ON v.key=w.key WHERE (v.state='verified' OR v.next_check<=?) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=v.key AND h.expires>unixepoch()) ORDER BY w.updated LIMIT 1",(time.time(),)).fetchone()
                         if work:row=(work[0],)
                     # Reserve one in five probes for due failures so a large
                     # discovery backlog cannot starve the saved retry list.
                     if not row and checked%5==0:
-                        row=conn.execute("SELECT key FROM validation WHERE state='unavailable' AND next_check<=? ORDER BY next_check,priority DESC LIMIT 1",(time.time(),)).fetchone()
+                        row=conn.execute("SELECT key FROM validation WHERE state='unavailable' AND next_check<=? AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=validation.key AND h.expires>unixepoch()) ORDER BY next_check,priority DESC LIMIT 1",(time.time(),)).fetchone()
                     if not row:
                         # Most slots widen the catalogue; one in five grows
                         # episode coverage of shows already visible.
                         breadth="(key LIKE 'movie:%' OR key LIKE 'series:%:1:1')"
                         wanted="NOT "+breadth if checked%5==4 else breadth
-                        row=conn.execute("SELECT key FROM validation WHERE state!='verified' AND next_check<=? AND "+wanted+" ORDER BY priority DESC,next_check,rowid LIMIT 1",(time.time(),)).fetchone()
+                        row=conn.execute("SELECT key FROM validation WHERE state!='verified' AND next_check<=? AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=validation.key AND h.expires>unixepoch()) AND "+wanted+" ORDER BY priority DESC,next_check,rowid LIMIT 1",(time.time(),)).fetchone()
                     if not row:
-                        row=conn.execute("SELECT key FROM validation WHERE state!='verified' AND next_check<=? ORDER BY priority DESC,next_check,rowid LIMIT 1",(time.time(),)).fetchone()
+                        row=conn.execute("SELECT key FROM validation WHERE state!='verified' AND next_check<=? AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=validation.key AND h.expires>unixepoch()) ORDER BY priority DESC,next_check,rowid LIMIT 1",(time.time(),)).fetchone()
                 if not row:break
                 key=row[0]
+                if self.verification_held(key):continue
                 self.remember('validation-worker',{'key':key,'started':time.time(),'position':checked+1,'message':'Video sample validation running'},180)
                 attempt_started=time.time()
                 slot+=1;self.remember('verification-v5-slot',{'slot':slot},10*365*86400)
@@ -1099,7 +1114,7 @@ class Features:
                 if not batch or start>=result.get('TotalRecordCount',start):break
             self.remember('saved-native-index',index,300)
         for key,record in self.records().items():
-            if record.get('state')!='ready':continue
+            if record.get('state')!='ready' or self.verification_held(key):continue
             kind,imdb,*numbers=key.split(':')
             relevant=[];played=False;current_watch={}
             for user in users:
