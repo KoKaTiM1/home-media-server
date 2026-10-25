@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-10-24T23:58:46.183742+00:00",
+  "created_utc": "2026-10-25T00:05:21.544160+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -31,12 +31,12 @@
     "deploy/media-stack/cleanup.py": "66e13afeb51cf64b2357945df85f05fa5a5e037b7a63ca4acce7186fcdf53726",
     "deploy/media-stack/compose.yaml": "f9a116ea83bb1cc7b0f14cef5cd2edd73596a564e8aafa5e2e3369a7ade4f013",
     "deploy/media-stack/configure-subtitles.py": "e5aab4c4f44e79717b5a247ef30e03560ab406818e253a75e91d8c3d60a8e60c",
-    "deploy/media-stack/omv-monitor/README.md": "3b5db366ba0e807f4572b525827594123505a73fb57b04292e9fb482ecbe0bce",
+    "deploy/media-stack/omv-monitor/README.md": "23212bf1aee9bf264930d601f7642ce23484666ad1af4d18759c4a52a4b0afb8",
     "deploy/media-stack/omv-monitor/check_live.py": "998606fd60acab7da2677d7be92fb778fc3714aa62bfc6d585bc7a044c811d60",
     "deploy/media-stack/omv-monitor/component.yaml": "7a6d0ac96a6338ced7c974b52f7117474df6d57bdd8374e2c0161cc77c11b1cd",
     "deploy/media-stack/omv-monitor/home-media-workers.inc": "ae430feaf1611d0937e9445e41bb7f01043f27492a39ec161cfbcffc4691124c",
     "deploy/media-stack/omv-monitor/install.py": "77fcd507051b76ddff02061fcb4e60b80e8a65db396473ae393c04336e8daed6",
-    "deploy/media-stack/omv-monitor/monitor.py": "dda369857cc29944f526c0027dd18dcaf8c777504dd43477e8f5067092a9d237",
+    "deploy/media-stack/omv-monitor/monitor.py": "6288e65b44ef45dbb6f5ca032925f3eff91f3da9fc512e649834e5d71f3e934a",
     "deploy/media-stack/omv-monitor/navigation.yaml": "c5b3c25f85ac7f5c8fb80f905d0d45789b62712a312e7f49c03f6531e0ec6576",
     "deploy/media-stack/omv-monitor/route.yaml": "59159d3a649c96e19e2af8b7a1e6b79d05228a9a195718cc2be9e63afe6b8544",
     "deploy/media-stack/omv-monitor/test_monitor.py": "b95b9cab828488f3c27733ef32c0d482aa26798759ee505855afc5dfc2c7a959",

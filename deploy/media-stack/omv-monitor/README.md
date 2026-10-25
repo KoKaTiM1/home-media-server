@@ -24,3 +24,10 @@ The initial validation scheduler allocates most probes to new titles, with
 slots for existing-series episodes and due failures. Many passed episodes can
 belong to one visible show; source-check counts are not library title counts.
 AAC Main test status is separate from proof that a physical Chromecast plays it.
+
+The owner reported distorted AAC Main audio and better AAC-LC audio in the
+paired60-second samples. Both decoded without errors on the server. During the
+Main test, the TV session reported video transcoding with IsAudioDirect=true;
+the AAC audio was passed unchanged. Keep AAC Main-only filtering enabled.
+The exact encoder-versus-TV-decoder cause is unproven. The private persisted
+aac-main-tv-result.json supplies the reported result to the progress page.

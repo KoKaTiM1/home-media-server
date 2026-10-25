@@ -119,7 +119,10 @@ def counts(data=DATA):
         latest=conn.execute('SELECT MAX(checked) FROM validation').fetchone()[0]
         add('Most recent completed check',stamp(latest))
         sample=data.parent.parent/'media/movies/Tests/AAC Main TV test/AAC Main TV test.mp4'
-        add('AAC Main TV test (Big Buck Bunny)', 'Ready for TV test; confirmation pending' if sample.is_file() else 'Test sample not available','Search AAC Main TV test in Jellyfin Movies; direct playback and sound must be checked on TV')
+        status='Ready for TV test; confirmation pending' if sample.is_file() else 'Test sample not available'
+        try:status=json.loads((data/'aac-main-tv-result.json').read_text()).get('status',status)
+        except (OSError,ValueError,TypeError):pass
+        add('AAC Main TV test (Big Buck Bunny)',status,'AAC-LC reference is in local Movies; reported TV results are saved separately from source validation')
         conn.execute('ATTACH DATABASE ? AS bulk',('file:'+str(data/'imdb/catalogue.sqlite')+'?mode=ro',))
         total=conn.execute('SELECT COUNT(*) FROM bulk.titles').fetchone()[0]
         add('Metadata titles indexed locally',total,'Discovery metadata is not proof of playable video')
