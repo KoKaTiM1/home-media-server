@@ -102,6 +102,10 @@ in this hardware overview.
 - Details-page source preparation: one job, up to 12 seconds, suppressed during
   viewing, with successful results reused for five minutes. Failed speculative
   preparation keeps existing verification. Slow sources can still delay Play.
+- Resource-bounded verification: one FFmpeg/FFprobe job across worker and HTTP
+  processes, single-thread decoding/filtering and small decoded checksum frames
+  keep HD checks within the bridge memory limit. Original playback resolution
+  stays unchanged; resource interruptions checkpoint instead of rejecting media.
 - Local playback diagnostics identify phase, elapsed time and exception type;
   private links, magnets and credentials are excluded.
 - Faster shared initial loading: a compact persistent cache of verified-title

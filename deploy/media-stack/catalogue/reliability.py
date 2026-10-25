@@ -32,6 +32,13 @@ class Checkpoint(RuntimeError):
     """Work remains useful or was interrupted; do not record a negative proof."""
 
 
+class ResourceCheckpoint(Checkpoint):pass
+class DecodeFailure(RuntimeError):pass
+class MissingVideoFrames(RuntimeError):pass
+class MissingSelectedAudio(RuntimeError):pass
+class SourceStalled(RuntimeError):pass
+
+
 def rank(candidate):
     title = candidate.get('title','')+' '+candidate.get('name','')
     def count(*names):
@@ -76,8 +83,8 @@ def evidence(output, seconds, audio):
         # a discontinuity must not turn a few frames into a six-second pass.
         return (max(t+d for t,d in values)-min(t for t,d in values)>=seconds-tolerance
                 and sum(d for _,d in values)>=seconds-tolerance)
-    if not enough(video,.25):raise RuntimeError('Missing decoded video frames or timestamps')
-    if audio and not enough(sound,.15):raise RuntimeError('Missing selected audio frames or timestamps')
+    if not enough(video,.25):raise MissingVideoFrames('Missing decoded video frames or timestamps')
+    if audio and not enough(sound,.15):raise MissingSelectedAudio('Missing selected audio frames or timestamps')
     return {'video_frames':len(video),'video_first_pts':min(t for t,_ in video),'video_last_pts':max(t+d for t,d in video),
             'audio_frames':len(sound),'audio_first_pts':min((t for t,_ in sound),default=None),
             'audio_last_pts':max((t+d for t,d in sound),default=None)}
@@ -244,7 +251,7 @@ class Reliability:
         # Separate CLI workers and HTTP handlers share a torrent lease. An
         # existing unrelated reader disables attribution rather than borrowing
         # its progress. Native playback is never stopped to acquire this lock.
-        with self.lock('torrent:'+selected.get('hash','local')):
+        with self.lock('global-verification'),self.lock('torrent:'+selected.get('hash','local')):
             baseline=self.cache_state(selected)
             attributable=bool(baseline.get('Hash')) and not baseline.get('Readers')
             return self.run_locked(command,key,phase,selected,token,deadline,attributable)
@@ -258,7 +265,8 @@ class Reliability:
                     if time.monotonic()>=deadline:raise Checkpoint('Preparation checkpoint')
                     try:
                         out,err=process.communicate(timeout=min(POLL_SECONDS,max(.01,deadline-time.monotonic())))
-                        if process.returncode or (command[command.index('-v')+1]=='error' and err):raise RuntimeError('Playback sample process failed')
+                        if process.returncode<0 or re.search(rb'Cannot allocate memory|Resource temporarily unavailable|pthread_create failed',err,re.I):raise ResourceCheckpoint('Verification resource limit; retry serially')
+                        if process.returncode or (command[command.index('-v')+1]=='error' and err):raise DecodeFailure('Playback sample process failed')
                         return subprocess.CompletedProcess(command,process.returncode,out,err)
                     except subprocess.TimeoutExpired as waiting:
                         err=waiting.stderr or b''
@@ -276,7 +284,7 @@ class Reliability:
                             required_buffer='Current selected-file reader pieces' if attributable else 'Selected sample delivered byte ranges',
                             speed=round(speed),last_useful_progress=time.time()-(now-last),
                             state='preparing' if now-last<STALL_SECONDS else 'stalled')
-                        if now-last>=STALL_SECONDS:raise RuntimeError('Selected sample stalled')
+                        if now-last>=STALL_SECONDS:raise SourceStalled('Selected sample stalled')
             finally:
                 if process.poll() is None:process.kill()
                 process.communicate()
@@ -284,7 +292,7 @@ class Reliability:
     def sample(self,key,selected,info,audio_index,conversion,position,seconds,deadline):
         token=uuid.uuid4().hex
         source=selected.get('local') or self.source_url('raw',key,selected,token)
-        command=['ffmpeg','-nostdin','-v','error','-xerror','-err_detect','explode','-threads','1']
+        command=['ffmpeg','-nostdin','-v','error','-xerror','-err_detect','explode','-threads','1','-filter_threads','1','-filter_complex_threads','1']
         if position:command+=['-ss',str(position)]
         video=next(s for s in info['streams'] if s.get('codec_type')=='video' and not s.get('disposition',{}).get('attached_pic'))
         command+=['-i',source,'-t',str(seconds),'-map','0:'+str(video['index'])]
@@ -300,13 +308,13 @@ class Reliability:
                 converted=self.run(command+['-c:v','copy','-c:a','aac','-profile:a','aac_low','-ac','2','-ar','48000',output],
                                    key,'audio conversion',selected,token,deadline)
                 # With loglevel info, errors are fail-fast through -xerror.
-                checked=self.run(['ffprobe','-v','error','-analyzeduration','60000000','-probesize','16000000','-show_streams','-of','json',output],key,'conversion probe',selected,token,deadline)
+                checked=self.run(['ffprobe','-v','error','-threads','1','-analyzeduration','60000000','-probesize','16000000','-show_streams','-of','json',output],key,'conversion probe',selected,token,deadline)
                 streams=json.loads(checked.stdout).get('streams',[])
                 original=video
                 if not any(s.get('codec_type')=='video' and s.get('codec_name')==original['codec_name'] for s in streams):raise RuntimeError('Video copy missing')
                 if not any(s.get('codec_type')=='audio' and s.get('codec_name')=='aac' and s.get('profile')=='LC' and s.get('channels')==2 for s in streams):raise RuntimeError('AAC-LC stereo missing')
-                command=['ffmpeg','-nostdin','-v','error','-xerror','-err_detect','explode','-threads','1','-i',output,'-map','0:v:0','-map','0:a:0']
-            result=self.run(command+['-c:v','wrapped_avframe']+(['-c:a','pcm_s16le'] if audio_index is not None else [])+['-f','framecrc','-'],
+                command=['ffmpeg','-nostdin','-v','error','-xerror','-err_detect','explode','-threads','1','-filter_threads','1','-filter_complex_threads','1','-i',output,'-map','0:v:0','-map','0:a:0']
+            result=self.run(command+['-vf','scale=160:-2:flags=fast_bilinear','-c:v','rawvideo','-threads','1']+(['-c:a','pcm_s16le'] if audio_index is not None else [])+['-fps_mode','passthrough','-max_interleave_delta','100000','-f','framecrc','-'],
                             key,'sample decode',selected,token,deadline)
         return {'position':position,'seconds':seconds,**evidence(result.stdout,seconds,audio_index is not None)}
 

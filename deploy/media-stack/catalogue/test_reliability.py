@@ -22,9 +22,9 @@ class ReliabilityTests(unittest.TestCase):
         (self.root/'secret').write_text('fixture-secret')
         a.F.db().close();a.REL.db().close()
 
-    def fixture(self,name='fixture.mkv',audio='aac',delayed=False,multiple=False):
+    def fixture(self,name='fixture.mkv',audio='aac',delayed=False,multiple=False,size='64x64'):
         path=self.root/name
-        command=['ffmpeg','-nostdin','-v','error','-threads','1','-f','lavfi','-i','testsrc2=s=64x64:r=10:d=16',
+        command=['ffmpeg','-nostdin','-v','error','-threads','1','-f','lavfi','-i',f'testsrc2=s={size}:r=10:d=16',
                  '-f','lavfi','-i','sine=frequency=440:duration=16']
         if delayed:command+=['-filter_complex','[0:v]setpts=PTS+10/TB[v]','-map','[v]','-map','1:a:0']
         else:command+=['-map','0:v:0','-map','1:a:0']
@@ -162,6 +162,24 @@ class ReliabilityTests(unittest.TestCase):
         corrupt(0,8)
         a.REL.sample(KEY,selected,info,1,False,0,6,time.monotonic()+30)
         with self.assertRaises(RuntimeError):a.REL.sample(KEY,selected,info,1,False,8,2,time.monotonic()+30)
+
+    def test_hd_conversion_seek_stays_within_small_container_memory(self):
+        # The later AAC sample starts after video preroll. Full-size wrapped
+        # frame packets queued behind that audio used to exhaust 256 MiB.
+        selected,info=self.fixture(audio='ac3',size='1920x1080')
+        proof=a.REL.verify(KEY,selected,info,1,True,time.monotonic()+60)
+        self.assertTrue(proof['audio_conversion'])
+        self.assertEqual(next(s['width'] for s in info['streams'] if s['codec_type']=='video'),1920)
+        self.assertGreater(proof['samples'][1]['video_frames'],10)
+
+    def test_resource_termination_checkpoints_without_bad_source_proof(self):
+        import sys
+        from reliability import ResourceCheckpoint
+        selected={'hash':'a'*40,'index':1,'filename':'fixture.mkv','length':123}
+        command=[sys.executable,'-c','import os,signal;os.kill(os.getpid(),signal.SIGKILL)','-v','error']
+        with patch.object(a.REL,'cache_state',return_value={}):
+            with self.assertRaises(ResourceCheckpoint):a.REL.run(command,KEY,'sample decode',selected,'f'*32,time.monotonic()+2)
+        self.assertFalse(a.REL.excluded(KEY,selected))
 
     def test_progress_clock_keeps_useful_slow_source_and_rejects_stall(self):
         import sys

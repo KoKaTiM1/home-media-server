@@ -826,7 +826,7 @@ def run_preflight(command,**kwargs):
 def probe(selected,key,deadline=None):
     token=hashlib.sha256(os.urandom(32)).hexdigest()[:32]
     raw_url=selected.get('local') or REL.source_url('raw',key,selected,token)
-    result=REL.run(['ffprobe','-v','error','-analyzeduration','4000000','-probesize','4000000',
+    result=REL.run(['ffprobe','-v','error','-threads','1','-analyzeduration','4000000','-probesize','4000000',
         '-show_streams','-show_format','-of','json',raw_url],key,'video probe',selected,token,deadline or time.monotonic()+WORK_SECONDS)
     if result.stderr:raise RuntimeError('Source probe decoding error')
     return json.loads(result.stdout)

@@ -270,8 +270,15 @@ when preparation has to continue in the background.
 Workers yield during active or paused playback and navigation, including during
 a probe. Missing session information defers work. Cancelling a sample closes
 its own blocked upstream reader; it does not drop a shared torrent or stop the
-viewer's connection. Per-title and per-torrent process locks avoid competing
-CLI/HTTP preparations. Work, winners, alternatives and audit results persist
+viewer's connection. Per-title and per-torrent process locks bind work consistently; a global
+verification lock permits only one FFmpeg/FFprobe job across CLI/HTTP processes.
+Decoder, encoder and filter threads are limited to one for this small server.
+Decoded verification frames are reduced to 160 pixels wide before checksum
+evidence, with bounded output interleaving; this prevents HD preroll/audio
+offset queues from exhausting memory. Playback and conversion video stay copied
+at their original resolution.
+A killed process or memory/thread allocation failure checkpoints the job instead
+of declaring the source unplayable. Work, winners, alternatives and audit results persist
 across reboot; this does not pre-download full movies or enable every torrent
 on startup. A two-window sample is not a guarantee of complete-film playback.
 
