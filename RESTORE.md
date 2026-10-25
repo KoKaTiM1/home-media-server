@@ -96,10 +96,37 @@ Docker storage drop-in into `/etc/systemd/system/docker.service.d/`. After
 `systemctl daemon-reload`, confirm the actual `RequiresMountsFor` targets.
 Do not restart Docker during active viewing merely to apply this dependency.
 
-Schedules: catalogue sync 00:00/06:00/12:00/18:00 Asia/Jerusalem with jitter;
-source listings every 15 minutes; saved-download management every minute;
-subtitle availability badges hourly; collections every 30 minutes; legacy
-download cleanup hourly. Enable reviewed timers after state checks.
+The exported unit files are the authoritative schedule definitions. Current
+background services are:
+
+| Unit | Purpose | Schedule |
+| --- | --- | --- |
+| `media-stack.service` | Start the four Docker containers after storage is mounted | At boot |
+| `media-catalogue-sync` | Discover new catalogue titles and update metadata | 00:00/06:00/12:00/18:00 Asia/Jerusalem, with jitter |
+| `media-source-availability` | Probe sources, verify audio/video, retry failures | Five minutes after boot, then one minute after each batch finishes |
+| `media-saved-downloads` | Track requested downloads, move completed owned files, apply managed retention | Every minute |
+| `media-catalogue-badges` | Refresh Hebrew/English subtitle badges | Hourly |
+| `media-catalogue-collections` | Refresh native Jellyfin collection memberships using small pages | Every 30 minutes |
+| `media-cleanup` | Apply legacy completed-download retention | Hourly |
+| `media-worker-status` | Prepare the OMV dashboard's cached queue/health counters | Two minutes after boot, then one minute after completion |
+
+Each timer above has a matching `.service` script command in `deploy/systemd`.
+After copying the reviewed units and restoring private state, enable startup:
+
+```sh
+systemctl daemon-reload
+systemctl enable --now media-stack.service
+systemctl enable --now media-catalogue-sync.timer media-source-availability.timer \
+  media-saved-downloads.timer media-catalogue-badges.timer \
+  media-catalogue-collections.timer media-cleanup.timer media-worker-status.timer
+systemctl list-timers 'media-*'
+systemctl --failed
+```
+
+Enable retention timers only after restoring and checking their private state;
+these timers intentionally remove eligible owned downloads. The source checker
+pauses between probes during playback. Counters run with limited CPU/memory and
+low disk priority. No login is required for enabled system services to start.
 
 A fresh bulk IMDb index can be created with `docker compose run --rm --no-deps
 catalogue-bridge imdb-sync` from `/opt/media-stack`, followed by discovery sync.
@@ -121,12 +148,20 @@ This downloads metadata, not movie files; allow time/storage for the initial bui
 - Confirm systemd units/timers and mount dependencies, then test a controlled
   reboot separately if appropriate; a healthy service alone is not reboot proof.
 
-Last source validation: 27 catalogue unit tests, zero-warning .NET build,
+Earlier source validation: 27 catalogue unit tests, zero-warning .NET build,
 year/range/paging/search/native HE-poster live checks passed. Existing 36 HE and
 2 EN posters were rendered and pixel-verified as green/red. Cached Hebrew VTT
 relay and invalid-signature checks passed. A later Breaking Bad pilot full
 playback/subtitle-selection retest hit torrent timeouts; do not claim that
 particular source is currently working.
+
+Subsequent validation covered AAC-LC conversion of torrent and saved-file audio,
+Hebrew subtitle selection, persistent validation resync and collections paging.
+The owner confirmed the AAC Main sample on Chromecast. A real full reboot on
+2026-10-25 verified storage, core services, all four containers, Tailscale and
+the worker timers start automatically. Post-reboot quota/maintenance failures
+were repaired and checked separately. These checks describe the source server;
+repeat the recovery checks on replacement hardware.
 
 ## Android TV failure contracts and ordinary Play
 
@@ -176,7 +211,7 @@ After Jellyfin and its API key are restored, run
 configures bounded native HLS buffering and segment cleanup through the API.
 Audio conversion uses Jellyfin's own ffmpeg with video copy; saved originals
 are retained until the existing managed watched/age cleanup removes them.
-# Optional OMV phone layout
+## Optional OMV phone layout
 
 After restoring `deploy/media-stack/omv-mobile` to
 `/opt/media-stack/omv-mobile`, run:
@@ -189,4 +224,21 @@ This installs local assets and a separate nginx include for readable phone
 tables. It validates and reloads nginx without modifying OMV's packaged web
 files. Desktop styling remains native. Refresh Safari after installation.
 Use the same command with `--remove` to disable the extension.
+
+## Remote access and surviving a hardware failure
+
+The stack README's Tailscale section includes sign-in, SSH and persistent
+Jellyfin TCP forwarding instructions. A replacement installation must join
+the owner's tailnet and receive the intended tags/access rules; do not copy
+Tailscale identity into the public repository. Preserve the original LAN IP
+or update the address references consistently. A different media disk also
+requires updating the filesystem UUID references before startup.
+
+If the PC fails while its media disk remains healthy, that disk can retain
+the existing `appdata`, catalogue state and media. Attach and identify it
+without formatting, then adapt this deployment to the replacement machine.
+If the disk fails too, GitHub can rebuild the software but cannot recover
+excluded private application data or media. A separate encrypted backup on
+another device/storage provider is needed for that recovery. Keeping a
+backup on the same disk does not protect against losing that disk.
 

@@ -33,8 +33,9 @@ full disk image or a complete application-data backup.
 Torrent listings, metadata and subtitle matches are not guarantees of successful
 playback or exact subtitle timing. Native TV uses its existing search controls;
 its result limits and lack of a year picker remain. Bulk metadata lacks critic
-scores/age certificates. Physical TV rendering and a full-machine reboot are
-not established by the server-side validation.
+scores/age certificates. The owner confirmed Chromecast playback including
+AAC Main converted to AAC-LC. A full system reboot verified automatic startup;
+replacement hardware and future software updates still require their own checks.
 
 ## Layout
 
