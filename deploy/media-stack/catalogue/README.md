@@ -1,5 +1,10 @@
 # Home media catalogue
 
+Show posters place the green HE / red EN / gray unknown subtitle marker in
+the bottom-left corner, leaving the top free for native episode-count badges.
+Movie subtitle markers remain at the top-left. Poster style versions refresh
+the client image identity when the placement changes.
+
 ## Native collections maintenance
 
 The collections job reads native Jellyfin titles and existing collection

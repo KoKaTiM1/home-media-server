@@ -41,7 +41,7 @@ PROVIDER = 'https://torrentio.strem.fun'
 VIDEO = {'.mkv', '.mp4', '.webm', '.m4v', '.avi', '.ts'}
 LOCKS = {}
 LOCKS_LOCK = threading.Lock()
-POSTER_STYLE = '3'
+POSTER_STYLE = '4'
 STREAM_LIMIT = threading.Semaphore(1)
 POSTER_LIMIT = threading.Semaphore(3)
 POSTER_LOCKS = [threading.Lock() for _ in range(64)]
@@ -286,8 +286,10 @@ def make_poster(folder,meta,kind,imdb):
     image=Image.open(original).convert('RGB')
     draw=ImageDraw.Draw(image)
     font=ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',23)
-    draw.rounded_rectangle((8,8,83,48),radius=6,fill={'HE':'#126b47','EN':'#b3261e','?':'#555555'}[badge])
-    draw.text((22,12),badge,font=font,fill='white')
+    # TV clients overlay episode counts in a top corner of series posters.
+    top=max(8,image.height-48) if kind=='series' else 8
+    draw.rounded_rectangle((8,top,83,top+40),radius=6,fill={'HE':'#126b47','EN':'#b3261e','?':'#555555'}[badge])
+    draw.text((22,top+4),badge,font=font,fill='white')
     save_jpeg_atomic(image,folder/'poster.jpg',85)
     (folder/'badge.txt').write_text(badge)
     (folder/'badge-style.txt').write_text(POSTER_STYLE)
