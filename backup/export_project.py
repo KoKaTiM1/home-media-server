@@ -4,6 +4,7 @@ import argparse
 import base64
 import datetime as dt
 import hashlib
+import ipaddress
 import json
 from pathlib import Path
 import re
@@ -32,7 +33,7 @@ def sanitize_snapshot(root):
         try:text=path.read_text()
         except UnicodeDecodeError:raise RuntimeError('Opaque file cannot be publicly exported: '+str(path.relative_to(root)))
         for name,value in sorted(values.items(),key=lambda item:len(item[1]),reverse=True):
-            text=text.replace(value,'<'+name+'>')
+            text=re.sub(re.escape(value),lambda _: '<'+name+'>',text,flags=re.I)
         path.write_text(text)
     (root/'deployment-values.example.json').write_text(json.dumps({name:'' for name in values},indent=2)+'\n')
 
@@ -85,9 +86,15 @@ def verify(root):
             continue
         data = path.read_bytes()
         network_data=re.sub(rb'(?i)(targetAbi[\x22\x27]?\s*:\s*[\x22\x27]?)(?:10\.11\.0\.0|10\.11\.11\.0)',rb'\1<SOFTWARE_ABI>',data)
+        endpoints=re.findall(rb'(?:https?|tcp|udp)://((?:[0-9]{1,3}\.){3}[0-9]{1,3})|[\x22\x27]((?:[0-9]{1,3}\.){3}[0-9]{1,3}):[0-9]',data)
+        unsafe_endpoint=False
+        for matches in endpoints:
+            try:address=ipaddress.ip_address(next(value for value in matches if value).decode())
+            except ValueError:continue
+            if not address.is_loopback and not address.is_unspecified:unsafe_endpoint=True
         if (any(value in data or value.decode(errors='ignore').encode('utf-16le') in data for value in secrets)
-                or any(value.encode() in data for value in identifiers)
-                or forbidden.search(data) or private_network.search(network_data)):
+                or any(value.lower().encode() in data.lower() for value in identifiers)
+                or forbidden.search(data) or private_network.search(network_data) or unsafe_endpoint):
             failures.append(str(path.relative_to(root)))
         if any(part in {'secrets', '__pycache__', 'obj', 'bin'} for part in path.relative_to(root).parts):
             failures.append(str(path.relative_to(root)))

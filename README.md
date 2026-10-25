@@ -20,6 +20,11 @@ python3 backup/render_deployment.py --values /private/deployment-values.json
 
 See `RESTORE.md` for the staged setup order. Keep credentials in private runtime
 secret files. Never commit rendered, machine-specific deployment files.
+For later sanitized exports, keep the private deployment-value mapping at
+`/opt/media-stack/secrets/export-redactions.json` with mode `0600`. The exporter
+uses it only to replace values in the public copy; it never changes live files.
+Public upstream software/API URLs and generic localhost bindings remain so the
+source can be rebuilt. Authentication keys are supplied through runtime files.
 
 ## Current features
 
