@@ -31,6 +31,7 @@ class Features:
         conn.execute('CREATE TABLE IF NOT EXISTS aliases (imdb TEXT PRIMARY KEY, hebrew TEXT, english TEXT)')
         conn.execute('CREATE TABLE IF NOT EXISTS downloads (key TEXT PRIMARY KEY, value TEXT)')
         conn.execute("CREATE TABLE IF NOT EXISTS validation (key TEXT PRIMARY KEY, state TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, next_check REAL NOT NULL DEFAULT 0, checked REAL NOT NULL DEFAULT 0, proof TEXT, reason TEXT, priority INTEGER NOT NULL DEFAULT 0)")
+        conn.execute('CREATE TABLE IF NOT EXISTS audio_recheck (key TEXT PRIMARY KEY, completed REAL NOT NULL DEFAULT 0)')
         conn.execute('CREATE INDEX IF NOT EXISTS validation_due ON validation(state,next_check,priority)')
         conn.execute("CREATE INDEX IF NOT EXISTS validation_work ON validation(priority DESC,next_check) WHERE state!='verified'")
         return conn
@@ -99,6 +100,7 @@ class Features:
             delay=min(30*86400,21600*2**min(max(0,attempts-1),7))
             conn.execute('UPDATE validation SET state=?,attempts=?,next_check=?,checked=?,proof=COALESCE(?,proof),reason=? WHERE key=?',
                 ('verified' if ok else 'unavailable',attempts,0 if ok else now+delay,now,json.dumps(proof) if proof else None,reason[:160],key))
+            conn.execute('UPDATE audio_recheck SET completed=? WHERE key=?',(now,key))
             if not ok:conn.execute("DELETE FROM cache WHERE key IN (?,?)",('prepared:'+key,'resolved:'+key))
         with self.count_lock:self.count_cache.clear()
 
@@ -122,6 +124,20 @@ class Features:
 
     def ready_titles(self):
         return {':'.join(key.split(':')[:2]) for key in self.ready_keys()}
+
+    def schedule_audio_resync(self):
+        # One migration only. Keep verified titles visible until their audit
+        # actually fails; retain negative metadata, attempt counts and proofs.
+        marker='audio-policy-resync-v1'
+        with self.db() as conn:
+            if conn.execute('SELECT 1 FROM cache WHERE key=?',(marker,)).fetchone():return
+            now=time.time()
+            failed=conn.execute("SELECT COUNT(*) FROM validation WHERE state='unavailable'").fetchone()[0]
+            passed=conn.execute("SELECT COUNT(*) FROM validation WHERE state='verified'").fetchone()[0]
+            conn.execute("UPDATE validation SET next_check=MIN(next_check,?) WHERE state='unavailable'",(now,))
+            conn.execute("INSERT OR IGNORE INTO audio_recheck(key) SELECT key FROM validation WHERE state='verified'")
+            conn.execute('DELETE FROM cache WHERE key LIKE ?',('prepared:%',))
+            conn.execute('INSERT OR REPLACE INTO cache VALUES (?,?,?)',(marker,json.dumps({'scheduled_at':now,'failed_scheduled':failed,'verified_audits':passed}),now+10*365*86400))
 
     def seed_validation(self):
         # Keep the queue separate from the replaceable bulk metadata index.
@@ -604,6 +620,7 @@ class Features:
                 self.remember('validation-worker',{'message':'Source provider cooldown; resumes automatically','started':time.time()},180)
                 return
             self.seed_validation()
+            self.schedule_audio_resync()
             started=time.monotonic();checked=0
             while checked<limit and time.monotonic()-started<480:
                 blocked=busy()
@@ -612,6 +629,10 @@ class Features:
                     break
                 with self.db() as conn:
                     row=None
+                    # Audit saved successful sources without resetting the
+                    # visible catalogue. One in ten slots until completed.
+                    if checked%10==9:
+                        row=conn.execute("SELECT a.key FROM audio_recheck a JOIN validation v ON v.key=a.key WHERE a.completed=0 AND v.state='verified' ORDER BY a.rowid LIMIT 1").fetchone()
                     # Reserve one in five probes for due failures so a large
                     # discovery backlog cannot starve the saved retry list.
                     if checked%5==0:

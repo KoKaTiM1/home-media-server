@@ -26,6 +26,9 @@ class MonitorTests(unittest.TestCase):
             with sqlite3.connect(data/'catalogue.sqlite') as c:
                 c.execute('CREATE TABLE validation(key TEXT PRIMARY KEY,state TEXT,next_check REAL,checked REAL,proof TEXT)')
                 c.execute('CREATE TABLE cache(key TEXT PRIMARY KEY,value TEXT,expires REAL)')
+                c.execute('CREATE TABLE audio_recheck(key TEXT PRIMARY KEY,completed REAL)')
+                c.execute("INSERT INTO audio_recheck VALUES ('movie:tt1000001',0)")
+                c.execute('INSERT INTO cache VALUES (?,?,?)',('audio-policy-resync-v1',json.dumps({'scheduled_at':1,'failed_scheduled':3}),9999999999))
                 c.executemany('INSERT INTO validation VALUES (?,?,?,?,?)',[
                     ('movie:tt1000001','verified',0,1,None),
                     ('series:tt1000002:1:1','verified',0,1,None),
@@ -42,4 +45,6 @@ class MonitorTests(unittest.TestCase):
             self.assertEqual(values['Verified indexed movies'],'1')
             self.assertEqual(values['Failed checks due for retry now'],'1')
             self.assertEqual(values['Indexed titles outside the queue'],'1')
+            self.assertEqual(values['Passed sources awaiting new audio-policy audit'],'1')
+            self.assertEqual(values['Previously failed entries scheduled for audio resync'],'3')
 if __name__=='__main__':unittest.main()

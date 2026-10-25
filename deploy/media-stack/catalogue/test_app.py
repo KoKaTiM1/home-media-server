@@ -105,13 +105,30 @@ class CatalogueTests(unittest.TestCase):
                 a.import_item('movie',meta,'Recent Releases')
                 self.assertEqual(file.read_text(),'existing-stream')
 
-    def test_aac_main_opt_in_is_limited_to_the_requested_movie(self):
-        with tempfile.TemporaryDirectory() as directory,patch.object(a,'DATA',Path(directory)):
-            key='movie:tt16155872'
-            self.assertFalse(a.aac_main_test(key))
-            (a.DATA/'aac-main-tv-test.json').write_text('{"keys":["movie:tt16155872"]}')
-            self.assertTrue(a.aac_main_test(key))
-            self.assertFalse(a.aac_main_test('movie:tt1234567'))
+    def test_audio_policy_omits_main_and_prefers_lc_without_changing_indexes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            selected={'filename':'movie.mkv','hash':'a'*40,'index':1}
+            info={'streams':[
+                {'index':0,'codec_type':'video','codec_name':'h264','pix_fmt':'yuv420p'},
+                {'index':1,'codec_type':'audio','codec_name':'aac','profile':'Main','tags':{'language':'eng'}},
+                {'index':3,'codec_type':'audio','codec_name':'ac3','tags':{'language':'eng'}},
+                {'index':2,'codec_type':'audio','codec_name':'aac','profile':'LC','tags':{'language':'eng'}}],
+                'format':{'duration':'60'}}
+            with patch.object(a,'DATA',Path(directory)),patch.object(a,'resolve',return_value=selected),patch.object(a,'probe',return_value=info),patch.object(a,'external_subtitles',return_value=[]):
+                result=a.prepared('movie:tt1234567')
+            audio=[s for s in result['MediaStreams'] if s['Type']=='Audio']
+            self.assertEqual([s['Index'] for s in audio],[2,3])
+            self.assertEqual(audio[0]['Profile'],'LC')
+            self.assertEqual(result['audio_policy'],1)
+
+    def test_main_only_audio_remains_unavailable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            selected={'filename':'movie.mkv','hash':'a'*40,'index':1}
+            info={'streams':[{'index':0,'codec_type':'video','codec_name':'h264','pix_fmt':'yuv420p'},
+                {'index':1,'codec_type':'audio','codec_name':'aac','profile':'Main'}],'format':{'duration':'60'}}
+            with patch.object(a,'DATA',Path(directory)),patch.object(a,'resolve',return_value=selected),patch.object(a,'probe',return_value=info),patch.object(a,'stream_candidates',return_value=[]),patch.object(a,'torr',return_value={}):
+                with self.assertRaises(RuntimeError):a.prepared('movie:tt1234567')
+                self.assertEqual(a.F.source_state('movie:tt1234567'),'unavailable')
 
     def test_trailer_links_only_accept_youtube_identities_and_deduplicate(self):
         meta={'trailerStreams':[{'ytId':'FVI84Dfx2-I'},{'ytId':'invalid'}],

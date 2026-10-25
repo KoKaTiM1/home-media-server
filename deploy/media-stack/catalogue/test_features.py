@@ -26,6 +26,23 @@ class FeatureTests(unittest.TestCase):
         with a.F.db() as conn:
             conn.executemany("INSERT INTO validation(key,state,checked,proof) VALUES (?,'verified',?,?)",((kind+':'+imdb,time.time(),json.dumps({'version':2})) for kind,imdb in rows))
 
+    def test_audio_resync_retains_verified_visibility_and_only_migrates_once(self):
+        good='movie:tt1234567';failed='movie:tt2345678'
+        a.F.validation_result(good,True,proof={'version':2})
+        a.F.validation_result(failed,False)
+        a.F.schedule_audio_resync()
+        self.assertEqual(a.F.source_state(good),'verified')
+        with a.F.db() as conn:
+            self.assertEqual(conn.execute('SELECT completed FROM audio_recheck WHERE key=?',(good,)).fetchone()[0],0)
+            retry=conn.execute('SELECT next_check,attempts FROM validation WHERE key=?',(failed,)).fetchone()
+            self.assertLessEqual(retry[0],time.time());self.assertEqual(retry[1],1)
+        a.F.validation_result(failed,False)
+        with a.F.db() as conn:later=conn.execute('SELECT next_check FROM validation WHERE key=?',(failed,)).fetchone()[0]
+        a.F.schedule_audio_resync()
+        with a.F.db() as conn:self.assertEqual(conn.execute('SELECT next_check FROM validation WHERE key=?',(failed,)).fetchone()[0],later)
+        a.F.validation_result(good,True,proof={'audio_policy':1})
+        with a.F.db() as conn:self.assertGreater(conn.execute('SELECT completed FROM audio_recheck WHERE key=?',(good,)).fetchone()[0],0)
+
     def test_first_pass_prefers_new_titles_over_more_episodes(self):
         self.make_search_index()
         movie='movie:tt1234567';episode='series:tt2345678:7:18'

@@ -110,6 +110,16 @@ def counts(data=DATA):
         due=conn.execute("SELECT COUNT(*) FROM validation WHERE state='unavailable' AND next_check<=?",(now,)).fetchone()[0]
         add('Failed checks due for retry now',due,'One in five probes is reserved for due failures')
         add('Passed source / episode checks',grouped.get('verified',0),'Several episode checks can belong to one visible show')
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE name='audio_recheck'").fetchone():
+            audits=conn.execute('SELECT COUNT(*) FROM audio_recheck WHERE completed=0').fetchone()[0]
+            add('Passed sources awaiting new audio-policy audit',audits,'Audited gradually without clearing the verified catalogue')
+        marker=conn.execute("SELECT value FROM cache WHERE key='audio-policy-resync-v1'").fetchone()
+        if marker:
+            migration=json.loads(marker[0])
+            if isinstance(migration,dict):
+                add('Previously failed entries scheduled for audio resync',migration.get('failed_scheduled',0),'One-time resync; later failures keep normal increasing retry waits')
+                add('Audio resync scheduled at',stamp(migration.get('scheduled_at',0)))
+
         pending=dict(conn.execute("SELECT CASE WHEN key LIKE 'movie:%' THEN 'Movies' WHEN key LIKE '%:1:1' THEN 'Shows' ELSE 'Episodes' END,COUNT(*) FROM validation WHERE state='pending' GROUP BY 1"))
         for kind in ('Movies','Shows','Episodes'):add(kind+' awaiting first check',pending.get(kind,0),'Shows use S1E1 as the initial check; other episodes counted separately')
         distinct=conn.execute("SELECT COUNT(DISTINCT CASE WHEN key LIKE 'movie:%' THEN key END),COUNT(DISTINCT CASE WHEN key LIKE 'series:%' THEN substr(key,1,instr(substr(key,8),':')+6) END) FROM validation WHERE state='verified'").fetchone()

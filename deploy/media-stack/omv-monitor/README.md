@@ -31,3 +31,8 @@ Main test, the TV session reported video transcoding with IsAudioDirect=true;
 the AAC audio was passed unchanged. Keep AAC Main-only filtering enabled.
 The exact encoder-versus-TV-decoder cause is unproven. The private persisted
 aac-main-tv-result.json supplies the reported result to the progress page.
+
+The audio-policy resync counters show how many prior failures were scheduled
+once and how many existing successful sources still await an audio audit.
+Verified entries remain visible pending an actual failed recheck; restarting
+the worker never resets the resync marker or the increasing retry waits.

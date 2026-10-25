@@ -667,17 +667,11 @@ def probe(selected,key,deadline=None):
     return json.loads(result.stdout)
 
 
-def aac_main_test(key):
-    # Only the explicit owner-requested title bypasses AAC Main filtering.
-    try:return key in json.loads((DATA/'aac-main-tv-test.json').read_text()).get('keys',[])
-    except (OSError,ValueError,TypeError):return False
-
-
 def prepared(key,background=False):
     with LOCKS_LOCK: lock=LOCKS.setdefault(key,threading.Lock())
     with lock:
         saved=cached('prepared:'+key)
-        if saved and F.source_state(key) in ('verified','downloaded'): return saved
+        if saved and saved.get('audio_policy')==1 and F.source_state(key) in ('verified','downloaded'): return saved
         with LIVE_LOCK:
             if LIVE['key'] not in (None,key) and LIVE['active']>0:
                 raise RuntimeError('Another title is currently streaming; this server supports one stream')
@@ -696,7 +690,7 @@ def prepared(key,background=False):
                 if video.get('codec_name') not in ('h264','mpeg4','vp8','vp9'):
                     raise RuntimeError('Source requires unsupported video decoding')
                 audio=[t for t in info.get('streams',[]) if t.get('codec_type')=='audio']
-                if audio and all(t.get('codec_name')=='aac' and t.get('profile')=='Main' for t in audio) and not aac_main_test(key):
+                if audio and all(t.get('codec_name')=='aac' and t.get('profile')=='Main' for t in audio):
                     raise RuntimeError('AAC Main audio is incompatible with this TV')
                 if background:
                     remaining=max(.1,deadline-time.monotonic())
@@ -720,15 +714,19 @@ def prepared(key,background=False):
         for stream in info.get('streams',[]):
             typ=stream.get('codec_type')
             if typ not in ('video','audio','subtitle'): continue
+            if typ=='audio' and stream.get('codec_name')=='aac' and stream.get('profile')=='Main':continue
             if typ=='video' and stream.get('disposition',{}).get('attached_pic'): continue
             lang=stream.get('tags',{}).get('language','und')
             lang={'he':'heb','iw':'heb','en':'eng'}.get(lang,lang)
             if typ=='subtitle': languages.add(lang)
-            tracks.append({'Index':stream['index'],'Type':typ.title(),'Codec':stream.get('codec_name'),
+            tracks.append({'Index':stream['index'],'Type':typ.title(),'Codec':stream.get('codec_name'),'Profile':stream.get('profile'),
                 'Language':lang,'Channels':stream.get('channels'), 'Width':stream.get('width'),
                 'Height':stream.get('height'),'IsExternal':False,
                 'IsDefault':bool(stream.get('disposition',{}).get('default')),
                 'IsForced':bool(stream.get('disposition',{}).get('forced'))})
+        # Keep actual stream indexes, but offer AAC-LC before other safe
+        # audio choices in each language. AAC Main is not offered online.
+        tracks.sort(key=lambda t:(0 if t['Type']=='Video' else 1 if t['Type']=='Audio' else 2,0 if t.get('Codec')=='aac' and t.get('Profile')=='LC' else 1))
         if not any(t['Type']=='Video' for t in tracks): raise RuntimeError('No video in selected source')
         # External search/download has a bounded deadline. A timeout never blocks video.
         if not background and 'heb' not in languages:
@@ -748,10 +746,10 @@ def prepared(key,background=False):
             'Container':Path(selected['filename']).suffix[1:].lower(),
             'RunTimeTicks':int(float(info.get('format',{}).get('duration',0))*10000000),
             'Bitrate':int(info.get('format',{}).get('bit_rate',5000000)),
-            'languages':sorted(languages),'checked_at':time.time()}
+            'languages':sorted(languages),'checked_at':time.time(),'audio_policy':1}
         with db() as conn:
             conn.execute('INSERT OR REPLACE INTO playback VALUES (?,?,?)',(key,json.dumps(output),time.time()))
-        F.validation_result(key,True,proof={'version':2,'checked_at':output['checked_at'],'source_hash':selected['hash'],'filename':selected['filename'],'Container':output['Container'],'aac_main_test':aac_main_test(key) and any(t.get('codec_name')=='aac' and t.get('profile')=='Main' for t in info.get('streams',[]))})
+        F.validation_result(key,True,proof={'version':3,'audio_policy':1,'audio_profiles':[{'codec':t.get('Codec'),'profile':t.get('Profile'),'language':t.get('Language')} for t in tracks if t['Type']=='Audio'],'checked_at':output['checked_at'],'source_hash':selected['hash'],'filename':selected['filename'],'Container':output['Container']})
         kind,imdb,*_=key.split(':')
         with db() as conn: row=conn.execute('SELECT meta FROM items WHERE key=?',(kind+':'+imdb,)).fetchone()
         if row:

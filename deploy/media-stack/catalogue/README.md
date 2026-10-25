@@ -331,3 +331,20 @@ Dynamic Library 1.4.0.10 lets actual existing local video files use Jellyfin's
 native PlaybackInfo handler. Upstream's persisted-item branch previously
 returned an empty response even for ordinary local MP4/MKV files. Catalogue
 .strm files retain their verified bridge source handling and explicit errors.
+
+## Audio-policy resync
+
+AAC-LC sounded better than the AAC Main test on the owner's Chromecast. Online
+preparation now excludes AAC Main tracks and offers AAC-LC first among compatible
+choices, preserving original stream indexes and profiles. AAC Main-only sources
+remain unavailable; actual local diagnostic samples use native Jellyfin playback.
+Prepared results include audio_policy1 and old prepared caches are not reused.
+
+A one-time audio-policy-resync-v1 marker moves prior failures to due for a fresh
+source lookup and queues existing successful sources in a durable audio_recheck
+table. Existing verified titles stay visible during the audit. A new failed
+check removes only that source's readiness. One in ten probes audits a saved
+success until those audits finish, alongside new-title checks, episodes and due
+retries. The migration does not reset metadata, attempts or later retry backoff.
+Source proofs retain the observed audio codecs/profiles and policy version.
+The OMV progress tab shows failed entries scheduled and remaining audio audits.
