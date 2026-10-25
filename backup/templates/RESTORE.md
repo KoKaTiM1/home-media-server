@@ -85,7 +85,7 @@ manifests; do not simulate watched flags to test cleanup on real files.
    docker build -t home-media-catalogue:1 /opt/media-stack/catalogue
    ```
 
-5. Build the modified Dynamic Library version 1.4.0.18 from the configured
+5. Build the modified Dynamic Library version 1.4.0.19 from the configured
    source, then install its DLL and the public `meta.json` into
    `appdata/jellyfin/config/plugins/DynamicLibrary/` while Jellyfin is stopped.
    It was tested with Jellyfin 10.11.11. Install Wizdom from its publisher or
@@ -180,7 +180,7 @@ This downloads metadata, not movie files; allow time/storage for the initial bui
   reboot separately if appropriate; a healthy service alone is not reboot proof.
 
 The source-server deployment was checked on 2026-10-25 with Dynamic Library
-1.4.0.18: a zero-warning plugin build, Python feature and playback-deadline/stream
+1.4.0.19: a zero-warning plugin build, Python feature and playback-deadline/stream
 regression suites, .NET favorites/audio/indexing checks, native
 Favorites queries retaining unavailable titles, explicit failed-source responses,
 local HTTP206 playback and unchanged existing watched/favorite records. The
@@ -278,7 +278,7 @@ backup on the same disk does not protect against losing that disk.
 
 ## Favorites and timeout verification
 
-Dynamic Library 1.4.0.18 preserves unavailable titles in explicit Favorites
+Dynamic Library 1.4.0.19 preserves unavailable titles in explicit Favorites
 queries without exposing them in normal online browse/search. Verify an existing
 unavailable favorite remains visible and that Play still returns a compatible
 source or explicit failure. Preserve user hearts/watch history during recovery.
@@ -353,3 +353,24 @@ DELETE after restore, verify the authenticated read-only
 and current plugin version. Never test deletion against a local movie. Confirm
 virtual metadata/native records and watch/favorite state remain unchanged, then
 verify the reported key becomes pending/priority1000 with no retry delay.
+
+
+## Verification v5 recovery
+
+The bridge image must include `catalogue/reliability.py` alongside `app.py` and
+`features.py`; build with the supplied Dockerfile. Dynamic Library 1.4.0.19
+requires the bridge's signed exact-source `PlaybackUrl` in prepared responses.
+Restore these together. No new external credentials or inbound ports are needed.
+
+The software backup recreates the audit/progress/source-choice schema. When
+runtime state is lost, the discovery queue is rebuilt and sources are verified
+again. When the existing media-partition runtime database is retained, completed
+v5 results, failed retries, source winners/backups and work checkpoints resume.
+The initial migration preserves existing visible entries until fresh failures;
+it never formats storage or deletes downloaded media or watch/favorite data.
+
+Review the Media workers page for initial-audit pending/passed/failed counts,
+v5 direct/converted counts, daily audits and live useful-data progress. The
+worker runs serially in eight-minute slices and defers during active/paused
+viewing, navigation or unavailable session status. Do not equate an eight-minute
+checkpoint or a reported peer count with a failed or successful playable source.

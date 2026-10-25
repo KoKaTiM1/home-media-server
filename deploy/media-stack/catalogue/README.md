@@ -1,7 +1,7 @@
 # Home media catalogue
 
-Current deployed behavior, reviewed 2026-10-25 against Dynamic Library
-**1.4.0.18**, Jellyfin **10.11.11**, the bridge and systemd units. This is the
+Current deployed behavior, reviewed 2026-10-26 against Dynamic Library
+**1.4.0.19**, Jellyfin **10.11.11**, the bridge and systemd units. This is the
 current operating guide, rather than a chronological list of old features.
 The installed WizdomSubs Downloader version is **0.2.0.0**.
 
@@ -130,8 +130,8 @@ Temporary HLS files use the existing media-partition Jellyfin cache.
 | --- | --- |
 | Foreground preparation | Shared 27-second budget for lock waits, provider calls, resolution, probing, conversion checks and subtitle wait |
 | Plugin request for preparation | 30-second HTTP timeout; failure returns `NoCompatibleStream`, never a successful empty source list |
-| Initial stream resolution and first video byte | Separate shared 15-second budget; do not send successful video headers before receiving data |
-| Background validation preparation | 60-second preparation budget per probe |
+| Initial stream data | Separate 15-second first-byte budget after preparation; successful video headers require actual data |
+| Background validation | Eight-minute resumable batch slice; 90 seconds for metadata, then fallback only after 45 seconds without useful selected-file progress |
 
 These are per-request limits, not a promise about total TV app time if it retries.
 Alternate compatible sources are tried within the preparation budget; the server
@@ -231,18 +231,55 @@ Bulk IMDb refresh is approximately daily, not four full downloads per day;
 index replacement is atomic. Four daily syncs update recent metadata, release
 dates and indexed/opened shows without resetting existing validation results.
 
-Validation runs serially, starting at most 20 probes per batch or running for
-up to eight minutes before starting another probe. It reads bounded video samples
-and decodes two seconds rather than saving full films. It pauses between probes
-during viewing and defers when session information is unavailable. Queue slots
-cover new movies/first show episodes, extra episodes, due failures and older
-audio-proof audits. A passed episode count is not a count of distinct shows.
+Validation runs serially, at most 20 entries or an eight-minute work slice.
+Verification v5 requires actual decoded video frames and timestamps, plus the
+selected audio stream, over six seconds at the beginning and two seconds later.
+The later sample rotates between approximately 25%, 50% and 75% on successive
+successful audits. Non-LC audio uses fresh video-copy/AAC-LC stereo samples that
+are decoded again; old probe/conversion caches cannot count as fresh evidence.
+Exit zero with zero frames, incomplete samples and decoding errors fail.
+
+Initial audits cover existing successful sources and failed sources retaining
+older positive proof. Older proofs and reported problem titles run first;
+user Delete/recheck reports have highest priority. Existing catalogue entries
+remain visible until a fresh failed check. Afterwards, one in five ordinary
+slots audits successful sources older than 24 hours. New discovery, additional
+episodes and due failed retries continue through the durable queue. A passed
+episode count is not a count of distinct shows.
+
+Every sample and playback URL binds the exact torrent hash, file ID, path and
+length. The last working source is preferred; verified backups precede new
+sources. New releases must match title/year or the requested episode, exclude
+samples/trailers and fit the existing video policy. Within eligible sources,
+reported seeder counts (or peers where seeders are absent) rank first, with
+quality/audio preferences breaking ties. Counts are availability hints and
+never verification proof. Ambiguous multi-movie packs require a matching file
+name; provider file indices cannot safely identify TorrServer's sorted files.
+
+Progress is checked about every two seconds. Unique delivered sample ranges,
+decoded frames and the current required reader pieces count as useful progress.
+Piece attribution requires an exclusive sample lease and a sole newly-created
+reader. Existing/unrelated readers disable that attribution. Global torrent
+bytes, peer counts, activity in another episode and repeated ranges do not reset
+the 45-second stall timer. Slow sources keep their chance while useful data
+arrives. The eight-minute slice and foreground request limit checkpoint work
+rather than creating negative proof; partial beginning samples are reusable
+for at most one hour for the identical source/track/audit. Retry Play later
+when preparation has to continue in the background.
+
+Workers yield during active or paused playback and navigation, including during
+a probe. Missing session information defers work. Cancelling a sample closes
+its own blocked upstream reader; it does not drop a shared torrent or stop the
+viewer's connection. Per-title and per-torrent process locks avoid competing
+CLI/HTTP preparations. Work, winners, alternatives and audit results persist
+across reboot; this does not pre-download full movies or enable every torrent
+on startup. A two-window sample is not a guarantee of complete-film playback.
 
 Failures retry after 6 hours, 12 hours, 1 day, 2 days and increasing delays capped
 at 30 days. Prior successful proof remains saved for diagnosis; newer failed
 evidence determines current readiness. Provider HTTP429 triggers 15 minutes
-cooldown; provider server errors trigger five minutes. Audio-policy v2 resync
-rechecks older proofs without resetting metadata, attempts or future backoff.
+cooldown; provider server errors trigger five minutes. Initial v5 audits replace the one-time audio-policy audit without resetting
+metadata, attempts, failed-entry retry dates, watch history or saved files.
 
 Collections maintenance reads native titles/members in pages of 100, requests
 totals once and uses a 60-second maintenance timeout. It traverses empty filtered
@@ -369,9 +406,9 @@ accessible under the existing unavailable-favorite rule.
 
 Reports bypass the title's current retry delay and receive the next eligible
 worker slot ahead of discovery. Provider cooldowns, active/paused playback and
-navigation priority still apply. Source listings and prepared/resolved caches
-are cleared before that worker attempt, so an old successful preparation cannot
-count as a new pass. Old proof is retained for diagnosis; failures stay hidden
+navigation priority still apply. Prepared-response caches are cleared before
+that worker attempt; the saved torrent may be retried first but must pass fresh
+v5 decoding. A cached resolution, header or old conversion is not a new pass. Old proof is retained for diagnosis; failures stay hidden
 and return to normal retry backoff. An in-flight check begun before the report
 cannot undo it. Requests and results survive process restarts.
 
@@ -390,3 +427,14 @@ event under `processed`. No public reporting mutation endpoint or new credential
 is introduced. OMV Media workers > Counts includes reports waiting, failed and
 passed. A past sample or a successful recheck still cannot guarantee future
 torrent availability or compatibility with every TV.
+
+
+## Stronger-verifier dashboard
+
+OMV **Diagnostics → Media workers** displays the current verification phase,
+useful received/downloaded bytes, speed, available required-piece buffer, time
+since useful progress and direct/converting audio. Queue counters include initial
+audit awaiting/passed/failed, passed v5 direct/conversion sources, daily audits
+due, resumable preparation checkpoints, failed titles and the existing complete
+discovery queue. A paused worker may retain its last saved phase; the worker's
+health/message explains whether it is currently running or waiting.

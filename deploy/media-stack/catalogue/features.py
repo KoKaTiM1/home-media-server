@@ -276,7 +276,10 @@ class Features:
                 ('verified' if ok else 'unavailable',attempts,0 if ok else now+delay,now,json.dumps(proof) if proof else None,reason[:160],key))
             conn.execute('UPDATE audio_recheck SET completed=? WHERE key=?',(now,key))
             if not ok:conn.execute("DELETE FROM cache WHERE key IN (?,?)",('prepared:'+key,'resolved:'+key))
+        reliability=self.g.get('REL')
+        if reliability:reliability.audit_result(key,ok)
         with self.count_lock:self.count_cache.clear()
+        return True
 
     def source_state(self,key):
         self.consume_rechecks()
@@ -786,7 +789,10 @@ class Features:
             # Defer all torrent probes while the owner is playing anything.
             def busy():
                 if self.foreground_busy():return 'Yielding briefly to Jellyfin navigation'
-                try:return 'Paused while Jellyfin is playing' if any(s.get('NowPlayingItem') for s in self.jf('/Sessions')) else ''
+                try:
+                    deadline=min(time.monotonic()+1,getattr(self.g['BUDGET'],'deadline',None) or float('inf'))
+                    with self.g['request_budget'](deadline,None):
+                        return 'Paused while Jellyfin is playing' if any(s.get('NowPlayingItem') for s in self.jf('/Sessions',timeout=1)) else ''
                 except Exception:return 'Waiting for Jellyfin startup or session status'
             blocked=busy()
             if blocked:
@@ -796,8 +802,10 @@ class Features:
                 self.remember('validation-worker',{'message':'Source provider cooldown; resumes automatically','started':time.time()},180)
                 return
             self.seed_validation()
-            self.schedule_audio_resync()
+            self.g['REL'].schedule()
             started=time.monotonic();checked=0
+            self.g['BUDGET'].worker_deadline=started+480
+            slot=int((self.cached('verification-v5-slot') or {}).get('slot',0))
             while checked<limit and time.monotonic()-started<480:
                 blocked=busy()
                 if blocked:
@@ -805,10 +813,12 @@ class Features:
                     break
                 with self.db() as conn:
                     row=conn.execute("SELECT v.key FROM manual_rechecks m JOIN validation v ON v.key=m.key WHERE m.status='pending' AND v.next_check<=? ORDER BY m.requested LIMIT 1",(time.time(),)).fetchone()
-                    # Audit saved successful sources without resetting the
-                    # visible catalogue. One in ten slots until completed.
-                    if not row and checked%10==9:
-                        row=conn.execute("SELECT a.key FROM audio_recheck a JOIN validation v ON v.key=a.key WHERE a.completed=0 AND v.state='verified' ORDER BY a.rowid LIMIT 1").fetchone()
+                    # Initial audits precede discovery; one in five ordinary
+                    # slots subsequently rechecks a success older than 24 hours.
+                    if not row:row=self.g['REL'].next_audit(recurring=slot%5==4)
+                    if not row:
+                        work=conn.execute("SELECT w.key,w.value FROM preparation_work w JOIN validation v ON v.key=w.key WHERE v.state='verified' OR v.next_check<=? ORDER BY w.updated LIMIT 1",(time.time(),)).fetchone()
+                        if work:row=(work[0],)
                     # Reserve one in five probes for due failures so a large
                     # discovery backlog cannot starve the saved retry list.
                     if not row and checked%5==0:
@@ -825,12 +835,21 @@ class Features:
                 key=row[0]
                 self.remember('validation-worker',{'key':key,'started':time.time(),'position':checked+1,'message':'Video sample validation running'},180)
                 attempt_started=time.time()
+                slot+=1;self.remember('verification-v5-slot',{'slot':slot},10*365*86400)
                 try:
                     # Retry only when due, with fresh source listings. A cached
                     # negative listing must not poison its own next retry.
                     with self.db() as conn:
-                        conn.execute('DELETE FROM cache WHERE key IN (?,?,?)',('streams:'+key,'prepared:'+key,'resolved:'+key))
-                    self.g['prepared'](key,background=True,cancel=self.foreground_busy)
+                        conn.execute("DELETE FROM cache WHERE key=? OR key LIKE ?",('prepared:'+key,'prepared:'+key+':%'))
+                    with self.g['REL'].db() as conn:work=conn.execute('SELECT value FROM preparation_work WHERE key=?',(key,)).fetchone()
+                    audio_index=json.loads(work[0]).get('audio_index') if work else None
+                    last_session_check=[0,False]
+                    def interrupted():
+                        if self.foreground_busy():return True
+                        if time.monotonic()-last_session_check[0]>=2:
+                            last_session_check[:]=[time.monotonic(),bool(busy())]
+                        return last_session_check[1]
+                    self.g['prepared'](key,background=True,**({'audio_index':audio_index} if audio_index is not None else {}),cancel=interrupted)
                     if key.startswith('series:'):
                         try:
                             meta=self.g['metadata']('series',key.split(':')[1])
@@ -842,9 +861,9 @@ class Features:
                             self.enqueue_many(aired,30)
                         except Exception:self.log('Episode verification queue expansion deferred')
                 except Exception as error:
-                    transient=tuple(self.g[name] for name in ('ClientCancelled','PlaybackBusy') if isinstance(self.g.get(name),type))
+                    transient=tuple(self.g[name] for name in ('ClientCancelled','PlaybackBusy','Checkpoint') if isinstance(self.g.get(name),type))
                     if transient and isinstance(error,transient):
-                        self.remember('validation-worker',{'message':'Yielding briefly to Jellyfin navigation','started':time.time()},180)
+                        self.remember('validation-worker',{'message':'Work checkpointed; resumes after foreground activity or next batch','started':time.time()},180)
                         break
                     if isinstance(error,urllib.error.HTTPError) and (error.code==429 or error.code>=500):
                         self.remember('validation-provider-backoff',True,900 if error.code==429 else 300)

@@ -4,4 +4,5 @@ RUN pip install --no-cache-dir Pillow==12.2.0
 WORKDIR /app
 COPY app.py /app/app.py
 COPY features.py /app/features.py
+COPY reliability.py /app/reliability.py
 ENTRYPOINT ["python", "-u", "/app/app.py"]

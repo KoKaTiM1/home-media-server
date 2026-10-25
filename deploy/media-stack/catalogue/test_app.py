@@ -12,6 +12,15 @@ spec.loader.exec_module(a)
 
 
 class CatalogueTests(unittest.TestCase):
+    def setUp(self):
+        # Policy/metadata tests isolate the costly verifier. Real decoding,
+        # corrupted media and source-binding integration live in test_reliability.
+        self.secret_dir=tempfile.TemporaryDirectory();self.addCleanup(self.secret_dir.cleanup)
+        secret=Path(self.secret_dir.name)/'secret';secret.write_text('fixture-secret')
+        handle=patch.object(a,'SECRET',secret);handle.start();self.addCleanup(handle.stop)
+        for target,name,value in [(a.REL,'verify',{'version':5})]:
+            handle=patch.object(target,name,return_value=value);handle.start();self.addCleanup(handle.stop)
+
     def test_collection_pages_visit_empty_filtered_pages_and_titles_beyond_2000(self):
         offsets=[]
         def page(path,timeout):
@@ -97,7 +106,7 @@ class CatalogueTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):a.prepared('movie:tt1234567')
             self.assertEqual(a.cached('source-status:movie:tt1234567')['state'],'unavailable')
 
-    def test_source_selection_excludes_zero_seeds_and_prefers_healthy_swarms(self):
+    def test_source_selection_ranks_counts_without_treating_them_as_proof(self):
         streams=[{'infoHash':'a'*40,'name':'1080p H264','title':'Movie 👤 0'},
                  {'infoHash':'b'*40,'name':'1080p H264','title':'Movie 👤 1'},
                  {'infoHash':'c'*40,'name':'720p H264','title':'Movie 👤 1000'}]
@@ -105,7 +114,7 @@ class CatalogueTests(unittest.TestCase):
              patch.object(a,'fetch',return_value={'streams':streams}):
             result=a.stream_candidates('movie:tt1234567')
             self.assertEqual(result[0]['infoHash'],'c'*40)
-            self.assertNotIn('a'*40,[s['infoHash'] for s in result])
+            self.assertEqual(result[-1]['infoHash'],'a'*40)
 
     def test_identity_rejects_invalid_input(self):
         self.assertEqual(a.identity('series','tt1234567',2,3),'series:tt1234567:2:3')
@@ -119,7 +128,7 @@ class CatalogueTests(unittest.TestCase):
         self.assertEqual(a.choose_file(files,'series:tt1234567:1:2',0)['id'],2)
         with self.assertRaises(ValueError): a.choose_file(files,'series:tt1234567:2:1',0)
         with self.assertRaises(ValueError): a.choose_file(files,'movie:tt1234567')
-        self.assertEqual(a.choose_file(files,'movie:tt1234567',0)['id'],1)
+        self.assertEqual(a.choose_file(files,'movie:tt1234567',0,'Show.S01E01.mkv')['id'],1)
 
     def test_signature_is_bound_to_one_item(self):
         with tempfile.TemporaryDirectory() as d:
@@ -163,7 +172,7 @@ class CatalogueTests(unittest.TestCase):
             selected={'filename':'movie.mkv','hash':'a'*40,'index':1}
             info={'streams':[{'index':0,'codec_type':'video','codec_name':'h264','pix_fmt':'yuv420p'},
                 {'index':1,'codec_type':'audio','codec_name':'aac','profile':'Main'}],'format':{'duration':'60'}}
-            with patch.object(a,'DATA',Path(directory)),patch.object(a,'resolve',return_value=selected),patch.object(a,'probe',return_value=info),patch.object(a,'conversion_preflight') as convert,patch.object(a,'external_subtitles',return_value=[]):
+            with patch.object(a,'DATA',Path(directory)),patch.object(a,'resolve',return_value=selected),patch.object(a,'probe',return_value=info),patch.object(a.REL,'verify',return_value={'version':5}) as convert,patch.object(a,'external_subtitles',return_value=[]):
                 result=a.prepared('movie:tt1234567')
                 self.assertTrue(result['AudioConversionRequired'])
                 self.assertEqual(result['DefaultAudioStreamIndex'],1)
@@ -175,7 +184,7 @@ class CatalogueTests(unittest.TestCase):
             selected={'filename':'movie.mkv','hash':'a'*40,'index':1}
             info={'streams':[{'index':0,'codec_type':'video','codec_name':'h264','pix_fmt':'yuv420p'},
                 {'index':1,'codec_type':'audio','codec_name':'aac','profile':'Main'}],'format':{'duration':'60'}}
-            with patch.object(a,'DATA',Path(directory)),patch.object(a,'resolve',return_value=selected),patch.object(a,'probe',return_value=info),patch.object(a,'conversion_preflight',side_effect=RuntimeError('Conversion failed')),patch.object(a,'stream_candidates',return_value=[]),patch.object(a,'torr',return_value={}):
+            with patch.object(a,'DATA',Path(directory)),patch.object(a,'resolve',return_value=selected),patch.object(a,'probe',return_value=info),patch.object(a.REL,'verify',side_effect=RuntimeError('Conversion failed')),patch.object(a,'stream_candidates',return_value=[]),patch.object(a,'torr',return_value={}):
                 with self.assertRaises(RuntimeError):a.prepared('movie:tt1234567')
                 self.assertEqual(a.F.source_state('movie:tt1234567'),'unavailable')
 
@@ -196,7 +205,7 @@ class CatalogueTests(unittest.TestCase):
             selected={'filename':'movie.mkv','hash':'a'*40,'index':1}
             info={'streams':[{'index':0,'codec_type':'video','codec_name':'h264','pix_fmt':'yuv420p'},
                 {'index':1,'codec_type':'audio','codec_name':'aac','profile':'Main'}],'format':{'duration':'0'}}
-            with patch.object(a,'DATA',Path(directory)),patch.object(a,'resolve',return_value=selected),patch.object(a,'probe',return_value=info),patch.object(a,'conversion_preflight') as convert,patch.object(a,'stream_candidates',return_value=[]),patch.object(a,'torr',return_value={}):
+            with patch.object(a,'DATA',Path(directory)),patch.object(a,'resolve',return_value=selected),patch.object(a,'probe',return_value=info),patch.object(a.REL,'verify',return_value={'version':5}) as convert,patch.object(a,'stream_candidates',return_value=[]),patch.object(a,'torr',return_value={}):
                 with self.assertRaises(RuntimeError):a.prepared('movie:tt1234567')
                 convert.assert_not_called()
                 self.assertEqual(a.F.source_state('movie:tt1234567'),'unavailable')

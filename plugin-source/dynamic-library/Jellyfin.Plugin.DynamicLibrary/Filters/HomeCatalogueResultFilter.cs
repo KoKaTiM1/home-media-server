@@ -45,9 +45,24 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
         await next();
     }
 
+    public static string VerifiedPlaybackPath(Uri original, string? value)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var bound)
+            || bound.Scheme != original.Scheme || bound.Host != original.Host || bound.Port != original.Port
+            || bound.AbsolutePath != original.AbsolutePath)
+            throw new InvalidOperationException("Missing verified playback binding");
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(bound.Query);
+        if (!query.TryGetValue("source", out var source) || !query.TryGetValue("sig", out var sig)
+            || !System.Text.RegularExpressions.Regex.IsMatch(source.ToString(), "^[a-f0-9]{64}$")
+            || !System.Text.RegularExpressions.Regex.IsMatch(sig.ToString(), "^[a-f0-9]{64}$"))
+            throw new InvalidOperationException("Missing verified playback binding");
+        return bound.AbsoluteUri;
+    }
+
     private sealed class Prepared
     {
         public List<MediaStream> MediaStreams { get; set; } = new();
+        public string? PlaybackUrl { get; set; }
         public string Container { get; set; } = "mkv";
         public long RunTimeTicks { get; set; }
         public int Bitrate { get; set; }
@@ -329,6 +344,9 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
                         using var queued = await client.PostAsync(downloadUri, new StringContent("{}"), context.HttpContext.RequestAborted);
                         queued.EnsureSuccessStatusCode();
                     }
+                    // Use the same immutable torrent/file binding that passed
+                    // preparation; native HLS and subsequent seeks retain it.
+                    source.Path = VerifiedPlaybackPath(uri, info.PlaybackUrl);
                     source.MediaStreams = info.MediaStreams;
                     foreach (var stream in source.MediaStreams.Where(s => s.Type == MediaStreamType.Subtitle))
                     {

@@ -22,6 +22,17 @@ static MediaSourceInfo Source(string profile) => new()
         new() { Index = 2, Type = MediaStreamType.Subtitle, Codec = "srt", Language = "heb" }
     }
 };
+var originalPlayback = new Uri("http://example.invalid:8092/play/movie:tt00000000?sig=old");
+var verifiedPlayback = "http://example.invalid:8092/play/movie:tt00000000?source=" + new string('a',64) + "&sig=" + new string('b',64);
+Check(Jellyfin.Plugin.DynamicLibrary.Filters.HomeCatalogueResultFilter.VerifiedPlaybackPath(originalPlayback,verifiedPlayback)==verifiedPlayback, "Exact source URL retained");
+foreach (var invalid in new[] { null, originalPlayback.AbsoluteUri, verifiedPlayback.Replace("example.invalid","other.invalid"), verifiedPlayback.Replace("tt00000000","tt00000001"), verifiedPlayback.Replace("source=", "untrusted=") })
+{
+    var rejected=false;
+    try { Jellyfin.Plugin.DynamicLibrary.Filters.HomeCatalogueResultFilter.VerifiedPlaybackPath(originalPlayback,invalid); }
+    catch (InvalidOperationException) { rejected=true; }
+    Check(rejected,"Unbound or cross-title source rejected");
+}
+Console.WriteLine("PASS: exact verified playback binding and native HLS source identity");
 var seriesProgress = new BaseItemDto
 {
     Type = Jellyfin.Data.Enums.BaseItemKind.Series, RecursiveItemCount = 2,

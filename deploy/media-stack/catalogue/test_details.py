@@ -13,7 +13,10 @@ INFO={'streams':[{'index':0,'codec_type':'video','codec_name':'h264','pix_fmt':'
       'format':{'duration':'60'}}
 
 class DetailTests(unittest.TestCase):
-    setUp=fixtures.FeatureTests.setUp
+    def setUp(self):
+        fixtures.FeatureTests.setUp(self)
+        for obj,name,value in [(a.REL,'verify',{'version':5}),(a,'signature','fixture')]:
+            handle=patch.object(obj,name,return_value=value);handle.start();self.addCleanup(handle.stop)
 
     def setup_warm(self):
         self.limit=threading.Semaphore(1)
@@ -86,7 +89,10 @@ class DetailTests(unittest.TestCase):
 if __name__=='__main__':unittest.main()
 
 class DetailRouteTests(unittest.TestCase):
-    setUp=fixtures.FeatureTests.setUp
+    def setUp(self):
+        fixtures.FeatureTests.setUp(self)
+        for obj,name,value in [(a.REL,'verify',{'version':5}),(a,'signature','fixture')]:
+            handle=patch.object(obj,name,return_value=value);handle.start();self.addCleanup(handle.stop)
     def test_only_playable_details_get_starts_preparation(self):
         from http.server import ThreadingHTTPServer
         import urllib.request,json
@@ -106,7 +112,10 @@ class DetailRouteTests(unittest.TestCase):
         finally:server.shutdown();server.server_close();thread.join()
 
 class SessionCancellationTests(unittest.TestCase):
-    setUp=fixtures.FeatureTests.setUp
+    def setUp(self):
+        fixtures.FeatureTests.setUp(self)
+        for obj,name,value in [(a.REL,'verify',{'version':5}),(a,'signature','fixture')]:
+            handle=patch.object(obj,name,return_value=value);handle.start();self.addCleanup(handle.stop)
     def test_real_session_request_inside_cancel_callback_has_no_recursion(self):
         from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
         import json

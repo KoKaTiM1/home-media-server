@@ -57,10 +57,10 @@ class DeadlineTests(unittest.TestCase):
         bridge=ThreadingHTTPServer(('127.0.0.1',0),a.Handler)
         thread=threading.Thread(target=bridge.serve_forever,daemon=True);thread.start()
         try:
-            with patch.object(a,'signature',return_value='fixture'),patch.object(a,'resolve',return_value=SELECTED) as resolve,patch.object(a,'upstream',return_value=self.url+'/empty'),patch.object(a,'torr_headers',return_value={}),patch.object(a,'FIRST_DATA_SECONDS',.15),patch.object(a.F,'validation_result') as invalidated:
+            with patch.object(a,'signature',return_value='fixture'),patch.object(a.REL,'lookup',return_value=SELECTED) as resolve,patch.object(a,'upstream',return_value=self.url+'/empty'),patch.object(a,'torr_headers',return_value={}),patch.object(a,'FIRST_DATA_SECONDS',.15),patch.object(a.F,'validation_result') as invalidated:
                 started=time.monotonic()
                 with self.assertRaises(a.urllib.error.HTTPError) as error:
-                    a.R.urlopen('http://127.0.0.1:'+str(bridge.server_port)+'/play/'+KEY+'?sig=fixture',timeout=2)
+                    a.R.urlopen('http://127.0.0.1:'+str(bridge.server_port)+'/play/'+KEY+'?sig=fixture&source='+('a'*64),timeout=2)
                 self.assertEqual(error.exception.code,503)
                 self.assertLess(time.monotonic()-started,.7)
                 resolve.assert_called_once()
@@ -71,8 +71,8 @@ class DeadlineTests(unittest.TestCase):
         bridge=ThreadingHTTPServer(('127.0.0.1',0),a.Handler)
         thread=threading.Thread(target=bridge.serve_forever,daemon=True);thread.start()
         try:
-            with patch.object(a,'signature',return_value='fixture'),patch.object(a,'resolve',return_value=SELECTED),patch.object(a,'upstream',return_value=self.url+'/range'),patch.object(a,'torr_headers',return_value={}):
-                request=a.R.Request('http://127.0.0.1:'+str(bridge.server_port)+'/play/'+KEY+'?sig=fixture',headers={'Range':'bytes=10-13'})
+            with patch.object(a,'signature',return_value='fixture'),patch.object(a.REL,'lookup',return_value=SELECTED),patch.object(a,'upstream',return_value=self.url+'/range'),patch.object(a,'torr_headers',return_value={}):
+                request=a.R.Request('http://127.0.0.1:'+str(bridge.server_port)+'/play/'+KEY+'?sig=fixture&source='+('a'*64),headers={'Range':'bytes=10-13'})
                 with a.R.urlopen(request,timeout=2) as response:
                     self.assertEqual(response.status,206)
                     self.assertEqual(response.headers['Content-Range'],'bytes 10-13/100')
@@ -84,8 +84,8 @@ class DeadlineTests(unittest.TestCase):
         bridge=ThreadingHTTPServer(('127.0.0.1',0),a.Handler)
         thread=threading.Thread(target=bridge.serve_forever,daemon=True);thread.start()
         try:
-            with patch.object(a,'signature',return_value='fixture'),patch.object(a,'resolve',return_value=SELECTED) as resolve,patch.object(a,'upstream',return_value=self.url+'/short'),patch.object(a,'torr_headers',return_value={}),patch.object(a.F,'validation_result') as invalidated:
-                with a.R.urlopen('http://127.0.0.1:'+str(bridge.server_port)+'/play/'+KEY+'?sig=fixture',timeout=2) as response:
+            with patch.object(a,'signature',return_value='fixture'),patch.object(a.REL,'lookup',return_value=SELECTED) as resolve,patch.object(a,'upstream',return_value=self.url+'/short'),patch.object(a,'torr_headers',return_value={}),patch.object(a.F,'validation_result') as invalidated:
+                with a.R.urlopen('http://127.0.0.1:'+str(bridge.server_port)+'/play/'+KEY+'?sig=fixture&source='+('a'*64),timeout=2) as response:
                     with self.assertRaises(http.client.IncompleteRead):response.read()
                 resolve.assert_called_once()
                 invalidated.assert_called_once_with(KEY,False,reason='Stream read failure')
@@ -125,7 +125,7 @@ class DeadlineTests(unittest.TestCase):
         other={**SELECTED,'hash':'b'*40}
         deadlines=[]
         def resolve(key,deadline):deadlines.append(deadline);return SELECTED if len(deadlines)==1 else other
-        with tempfile.TemporaryDirectory() as directory,patch.object(a,'DATA',Path(directory)),patch.object(a,'resolve',side_effect=resolve),patch.object(a,'probe',side_effect=[RuntimeError('bad source'),INFO]),patch.object(a,'stream_candidates',return_value=[{'infoHash':other['hash']}]),patch.object(a,'torr',return_value={}),patch.object(a,'external_subtitles',return_value=[]):
+        with tempfile.TemporaryDirectory() as directory,patch.object(a,'DATA',Path(directory)),patch.object(a,'resolve',side_effect=resolve),patch.object(a,'probe',side_effect=[RuntimeError('bad source'),INFO]),patch.object(a.REL,'verify',return_value={'version':5}),patch.object(a,'signature',return_value='fixture'),patch.object(a,'stream_candidates',return_value=[{'infoHash':other['hash']}]),patch.object(a,'torr',return_value={}),patch.object(a,'external_subtitles',return_value=[]):
             result=a.prepared(KEY)
             self.assertEqual(result['selected']['hash'],other['hash'])
             self.assertEqual(deadlines[0],deadlines[1])
@@ -138,9 +138,9 @@ class DeadlineTests(unittest.TestCase):
             def resolve(key,deadline):
                 with a.request_budget(time.monotonic()-.1):a.remaining(1)
             with patch.object(a,'resolve',side_effect=resolve):
-                with self.assertRaises(TimeoutError):a.prepared(KEY)
-            self.assertEqual(a.F.source_state(KEY),'unavailable')
-            self.assertIsNone(a.cached('prepared:'+KEY))
+                with self.assertRaises(a.Checkpoint):a.prepared(KEY)
+            self.assertEqual(a.F.source_state(KEY),'verified')
+            self.assertEqual(a.cached('prepared:'+KEY),{'audio_policy':1})
             with a.F.db() as connection:proof=connection.execute('SELECT proof FROM validation WHERE key=?',(KEY,)).fetchone()[0]
             self.assertEqual(json.loads(proof)['fixture'],'previous proof')
 

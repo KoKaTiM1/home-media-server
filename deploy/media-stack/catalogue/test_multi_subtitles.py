@@ -60,7 +60,7 @@ class MultiSubtitlesTests(unittest.TestCase):
                 native += [{'index':i+2,'codec_type':'subtitle','codec_name':'subrip','tags':{'language':'heb'}} for i in range(embedded)]
                 selected={'filename':'fixture.mp4','hash':'a'*40,'index':1}
                 externals=[{'lang':'heb','variant':'a'*16},{'lang':'heb','variant':'b'*16}]
-                with patch.object(a,'resolve',return_value=selected),patch.object(a,'probe',return_value={'streams':native,'format':{'duration':'60'}}),patch.object(a,'external_subtitles',return_value=externals) as external,patch.object(a,'signed_path',return_value='http://example.invalid/sub?sig=fixture'):
+                with patch.object(a,'signature',return_value='fixture'),patch.object(a.REL,'verify',return_value={'version':5}),patch.object(a,'resolve',return_value=selected),patch.object(a,'probe',return_value={'streams':native,'format':{'duration':'60'}}),patch.object(a,'external_subtitles',return_value=externals) as external,patch.object(a,'signed_path',return_value='http://example.invalid/sub?sig=fixture'):
                     info=a.prepared(key)
                 he=[t for t in info['MediaStreams'] if t['Type']=='Subtitle' and t['Language']=='heb']
                 self.assertEqual([t['Title'] for t in he],['עברית 1','עברית 2'])

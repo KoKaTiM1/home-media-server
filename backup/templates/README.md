@@ -52,7 +52,7 @@ initial verification of the large metadata pool takes time.
 No disk serial numbers, network addresses or machine identifiers are included
 in this hardware overview.
 
-## Current features — deployed 2026-10-25 (Dynamic Library 1.4.0.18)
+## Current features — deployed 2026-10-26 (Dynamic Library 1.4.0.19)
 
 - Separate online movies/shows and local downloaded Movies/Shows libraries.
   The owner's order puts online movies/shows first, then local Movies/Shows.
@@ -72,6 +72,16 @@ in this hardware overview.
 - Direct AAC-LC playback or native audio-only HLS conversion with unchanged
   video, for supported torrent streams and saved files. Verified conversion
   sources are eligible; missing torrents remain hidden for retry.
+- Stronger v5 verification decodes six beginning seconds and a rotating two-second
+  later sample, including the selected audio. Supported other audio is tested
+  through AAC-LC stereo conversion with video copy. Zero-frame successes fail.
+- Saved working torrents stay first. Relevant new sources rank by reported
+  seeders/peers; actual file progress and decoded samples determine success.
+  Exact torrent/file bindings carry through native playback and HLS.
+- Slow useful downloads continue; 45 seconds without useful progress triggers
+  fallback. Request/work limits save checkpoints for background continuation.
+  Initial audits preserve visibility until fresh failures; daily successful-source
+  audits follow. OMV shows progress, audit outcomes and direct/converted counts.
 - Torrent streaming and an explicit download-to-server option. Completed owned
   downloads move into the existing movies/shows storage and are preferred on
   the original title page; managed retention removes them after viewing or age.
@@ -88,7 +98,7 @@ in this hardware overview.
   Normal online browsing continues to hide unavailable sources.
 - Shared 27-second foreground preparation budget, a 30-second plugin HTTP
   timeout and a separate 15-second initial stream-data budget. Failed playback
-  returns an explicit error; the TV app can still retry its own requests.
+  returns an explicit error; unfinished preparation resumes in background and the viewer can retry Play.
 - Details-page source preparation: one job, up to 12 seconds, suppressed during
   viewing, with successful results reused for five minutes. Failed speculative
   preparation keeps existing verification. Slow sources can still delay Play.
@@ -104,7 +114,7 @@ in this hardware overview.
 - Persistent video validation and retained failed-title retry queue. Ordinary
   online browsing/search shows validated sources or saved copies; Favorites
   preserves saved titles even when unavailable. Failures retry with backoff
-  from six hours up to 30 days; checks pause between probes during viewing.
+  from six hours up to 30 days; checks yield during probes when playback or navigation starts.
 
 Torrent listings, metadata and subtitle matches are not guarantees of successful
 playback or exact subtitle timing. Native TV uses its existing search controls;
@@ -134,7 +144,7 @@ The [worker-monitor guide](deploy/media-stack/omv-monitor/README.md) and
 [phone-layout guide](deploy/media-stack/omv-mobile/README.md) describe the installed
 OMV extensions. `RESTORE.md` includes all seven worker schedules and startup steps.
 
-Jellyfin is pinned to 10.11.11; the modified Dynamic Library is 1.4.0.18.
+Jellyfin is pinned to 10.11.11; the modified Dynamic Library is 1.4.0.19.
 The modified plugin must be built from this repository's configured source;
 installing an upstream release does not include these server-specific features.
 Its [plugin README](plugin-source/dynamic-library/README.md) describes this fork;

@@ -27,6 +27,7 @@ import urllib.request as R
 import xml.etree.ElementTree as ET
 import zipfile
 from features import Features
+from reliability import Reliability, Checkpoint, VERSION, rank, METADATA_SECONDS, WORK_SECONDS
 
 DATA = Path(os.getenv('CATALOGUE_DATA', '/data'))
 LIBRARY = Path(os.getenv('CATALOGUE_LIBRARY', '/catalogue'))
@@ -545,7 +546,7 @@ def stream_candidates(key):
             remember('source-status:'+key,{'state':'listed' if saved else 'unavailable','checked_at':time.time()},21600)
         if key=='movie:tt1254207' and not cached('open-film-failed') and not any(s['infoHash']==open_film['infoHash'] for s in saved):
             return [open_film]+saved
-        return saved
+        return sorted(saved,key=rank,reverse=True)
     kind,imdb,*parts=key.split(':')
     ident=imdb+(':'+':'.join(parts) if parts else '')
     response=fetch(f'{PROVIDER}/stream/{kind}/{ident}.json',timeout=15)
@@ -560,18 +561,18 @@ def stream_candidates(key):
         hinted_filename=stream.get('behaviorHints',{}).get('filename','')
         if Path(hinted_filename).suffix.lower() in ('.iso','.rar','.zip'): continue
         seeds=re.search(r'(?:👤|seeders?[: ]*)\s*(\d+)',title,re.I)
-        if seeds and int(seeds[1])==0:continue
+        # Counts are hints; even a reported zero can be stale.
         candidate['_score']=(2000 if '1080' in title else 1000)+(500 if re.search('x264|h[ .]?264',title,re.I) else 0)+(200 if 'AAC' in title.upper() else 0)+min(int(seeds[1]) if seeds else 0,3000)*3
         candidates.append(candidate)
-    candidates.sort(key=lambda x:x['_score'],reverse=True)
+    candidates.sort(key=rank,reverse=True)
     if key=='movie:tt1254207' and not cached('open-film-failed'): candidates.insert(0,open_film)
     if not getattr(BUDGET,'speculative',False):
         remember('source-status:'+key,{'state':'listed' if candidates else 'unavailable','checked_at':time.time()},21600)
-    return remember('streams:'+key,candidates[:5],21600 if not candidates else 1800)
+    return remember('streams:'+key,candidates[:20],21600 if not candidates else 1800)
 
 
-def choose_file(files,key,preferred=None):
-    videos=[f for f in files if Path(f.get('path','')).suffix.lower() in VIDEO and not re.search(r'\bsample\b',f.get('path',''),re.I)]
+def choose_file(files,key,preferred=None,expected=None):
+    videos=[f for f in files if Path(f.get('path','')).suffix.lower() in VIDEO and not re.search(r'\b(sample|trailer|preview)\b',f.get('path',''),re.I)]
     if key.startswith('series:'):
         _,_,season,episode=key.split(':')
         pattern=rf'(?:S0*{int(season)}[ ._-]*E0*{int(episode)}(?!\d)|(?<!\d)0*{int(season)}x0*{int(episode)}(?!\d))'
@@ -581,67 +582,105 @@ def choose_file(files,key,preferred=None):
         if not matches and preferred is not None:
             matches=[f for f in videos if f.get('id')==int(preferred)+1
                      and not re.search(r'(?:S\d+E\d+|\d+x\d+)',f['path'],re.I)]
-        if not matches: raise ValueError('No matching episode in torrent')
+        if len(matches)!=1: raise ValueError('Missing or ambiguous matching episode in torrent')
         return max(matches,key=lambda f:f.get('length',0))
-    if preferred is not None:
-        matching=[f for f in videos if f.get('id')==int(preferred)+1]
-        if matching: return matching[0]
+    if len(videos)>1 and expected:
+        matching=[f for f in videos if f.get('path')==expected or Path(f.get('path','')).name==Path(expected).name]
+        if len(matching)==1:return matching[0]
     if not videos: raise ValueError('No playable video')
     if len(videos)>1: raise ValueError('Ambiguous multi-movie torrent without an explicit file index')
     return max(videos,key=lambda f:f.get('length',0))
 
 
+def candidate_matches(candidate,key):
+    filename=candidate.get('behaviorHints',{}).get('filename','')
+    title=filename or candidate.get('title','').split('\n')[0]
+    if key=='movie:tt1254207' and candidate.get('infoHash')=='dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c':return True
+    if re.search(r'\b(sample|trailer|preview)\b',title,re.I):return False
+    if key.startswith('series:'):
+        _,_,season,episode=key.split(':')
+        return bool(re.search(rf'(?:S0*{int(season)}[ ._-]*E0*{int(episode)}(?!\d)|(?<!\d)0*{int(season)}x0*{int(episode)}(?!\d))',title,re.I)) or candidate.get('fileIdx') is not None
+    with db() as conn:row=conn.execute('SELECT meta FROM items WHERE key=?',(key,)).fetchone()
+    if not row:
+        # Resolve the provider identity once, never guess a movie from a release.
+        meta=metadata('movie',key.split(':')[1])
+    else:meta=json.loads(row[0])
+    def normalized(value):return re.sub(r'[^\w]+',' ',value.casefold()).strip()
+    names=[meta.get(n,'') for n in ('name','original_title','originalName')]
+    text=normalized(title)
+    if not any(n and (' '+normalized(n)+' ') in (' '+text+' ') for n in names):return False
+    year=str(meta.get('year') or meta.get('releaseInfo') or meta.get('released') or '')[:4]
+    return bool(re.fullmatch(r'\d{4}',year) and re.search(r'(?<!\d)'+year+r'(?!\d)',title))
+
+
 def resolve(key,deadline=None):
     local=F.local_download(key)
     if local:return local
-    selected=cached('resolved:'+key)
-    if selected:
-        try:
-            status=torr({'action':'get','hash':selected['hash']},timeout=3)
-            if status.get('file_stats'): return selected
-        except (ClientCancelled,PlaybackBusy):raise
-        except Exception: pass
-    for candidate in stream_candidates(key):
+    # Persisted sources precede discovery, including previously verified
+    # alternatives. A healthy preferred source never triggers a provider search.
+    def candidates():
+        seen=set()
+        for selected in REL.choices(key):
+            if selected.get('local'):continue
+            seen.add(selected['hash'])
+            yield {'infoHash':selected['hash'],'torrentUrl':selected.get('torrent_url'),'_exact':selected}
+        selected=cached('resolved:'+key)
+        if selected and selected.get('hash') not in seen and not REL.excluded(key,selected):
+            seen.add(selected['hash']);yield {'infoHash':selected['hash'],'torrentUrl':selected.get('torrent_url'),'_exact':selected}
+        for candidate in stream_candidates(key):
+            if candidate['infoHash'].lower() not in seen and candidate_matches(candidate,key):yield candidate
+    for candidate in candidates():
         remaining(1)
-        if deadline is not None and time.monotonic()>=deadline:break
         infohash=candidate['infoHash'].lower()
+        if cached('source-excluded:'+key+':'+infohash):continue
+        exact=candidate.get('_exact')
         trackers=['udp://tracker.opentrackr.org:1337/announce']
         trackers += [s[len('tracker:'):] for s in candidate.get('sources',[]) if s.startswith('tracker:')]
         magnet='magnet:?xt=urn:btih:'+infohash+''.join('&tr='+U.quote(t,safe='') for t in trackers)
         try:
             status={}
-            # Add waits for magnet metadata on TorrServer. A short socket
-            # timeout does not mean the background metadata lookup failed.
-            # Leave time for probing within the overall preparation budget.
-            end=min(time.monotonic()+27,deadline-5 if deadline is not None else float('inf'))
-            try:
-                status=torr({'action':'get','hash':infohash},timeout=2)
+            work=REL.checkpoint(key)
+            metadata_started=work.get('metadata_started',time.time()) if work.get('metadata_hash')==infohash else time.time()
+            end=min(time.monotonic()+max(0,METADATA_SECONDS-(time.time()-metadata_started)),deadline or float('inf'))
+            REL.checkpoint(key,phase='metadata',state='preparing',source_hash=infohash,metadata_hash=infohash,metadata_started=metadata_started)
+            try:status=torr({'action':'get','hash':infohash},timeout=2)
+            except (ClientCancelled,PlaybackBusy,Checkpoint):raise
             except Exception:pass
             if not status.get('file_stats'):
-                try:
-                    status=torr({'action':'add','link':candidate.get('torrentUrl') or magnet,'save_to_db':False},
-                        timeout=max(.1,min(20,end-time.monotonic())))
-                except (TimeoutError,urllib.error.URLError):
-                    # The API request can outlive our socket; poll for its
-                    # completed torrent instead of dropping it immediately.
-                    pass
-            while not status.get('file_stats') and time.monotonic()<end:
-                try:status=torr({'action':'get','hash':infohash},timeout=max(.1,min(2,end-time.monotonic())))
-                except (ClientCancelled,PlaybackBusy):raise
+                try:status=torr({'action':'add','link':(exact or {}).get('link') or candidate.get('torrentUrl') or magnet,'save_to_db':False},timeout=min(2,remaining(2)))
+                except (ClientCancelled,PlaybackBusy,Checkpoint):raise
                 except Exception:pass
-                if not status.get('file_stats'):time.sleep(min(.5,remaining(.5)))
-            selected_file=choose_file(status.get('file_stats',[]),key,candidate.get('fileIdx'))
-            return remember('resolved:'+key,{'hash':infohash,'index':selected_file['id'],
-                'filename':selected_file['path'],'length':selected_file['length'],
-                'source_name':candidate.get('title',''),'file_count':len(status.get('file_stats',[])),
-                'torrent_url':candidate.get('torrentUrl')},900)
-        except (ClientCancelled,PlaybackBusy):raise
+            while not status.get('file_stats') and time.monotonic()<end:
+                remaining(1)
+                try:status=torr({'action':'get','hash':infohash},timeout=min(2,remaining(2)))
+                except (ClientCancelled,PlaybackBusy,Checkpoint):raise
+                except Exception:pass
+                if not status.get('file_stats'):time.sleep(min(2,remaining(2)))
+            if not status.get('file_stats'):
+                if deadline and time.monotonic()>=deadline:raise Checkpoint('Metadata checkpoint')
+                raise RuntimeError('Metadata unavailable')
+            if status.get('hash',infohash).lower()!=infohash:raise ValueError('Torrent identity changed')
+            if exact:
+                matches=[f for f in status['file_stats'] if f.get('id')==exact['index'] and f.get('path')==exact['filename'] and f.get('length')==exact['length']]
+                if len(matches)!=1:raise ValueError('Exact source file changed')
+                selected=exact
+            else:
+                f=choose_file(status['file_stats'],key,candidate.get('fileIdx'),candidate.get('behaviorHints',{}).get('filename'))
+                if key.startswith('movie:') and not candidate_matches({**candidate,'behaviorHints':{'filename':f['path']}},key):raise ValueError('Movie filename does not match requested title/year')
+                selected={'hash':infohash,'index':f['id'],'filename':f['path'],'length':f['length'],
+                    'source_name':candidate.get('title',''),'file_count':len(status['file_stats']),'torrent_url':candidate.get('torrentUrl'),'link':candidate.get('torrentUrl') or magnet}
+            if REL.excluded(key,selected):continue
+            REL.bind(key,selected)
+            return remember('resolved:'+key,selected,900)
+        except (ClientCancelled,PlaybackBusy,Checkpoint):raise
         except Exception:
+            remaining(1)
+            if deadline and deadline-time.monotonic()<.5:raise Checkpoint('Source checkpoint') from None
             if getattr(BUDGET,'speculative',False):raise
+            if exact:REL.exclude(key,exact)
+            remember('source-excluded:'+key+':'+infohash,True,900)
             log('Trying next source for '+key)
-            try: torr({'action':'drop','hash':infohash},timeout=2)
-            except Exception: pass
-    raise RuntimeError('No working 1080p/720p torrent source available')
+    raise RuntimeError('No working compatible torrent source available')
 
 
 def upstream(selected):
@@ -715,7 +754,7 @@ def wizdom_subtitles(key,filename,limit=2):
             sub.update(provider='WizdomSubs',release=item.get('versioname',''),
                 release_match=normalize(item.get('versioname') or '')==stem)
             output.append(sub)
-        except (ClientCancelled,PlaybackBusy):raise
+        except (ClientCancelled,PlaybackBusy,Checkpoint):raise
         except (ValueError,UnicodeError,zipfile.BadZipFile,urllib.error.URLError,TimeoutError):continue
     return remember(cachekey,output,86400 if output else 3600)
 
@@ -785,16 +824,11 @@ def run_preflight(command,**kwargs):
 
 
 def probe(selected,key,deadline=None):
-    raw_url=selected.get('local') or signed_path('raw',key)
-    available=remaining(18) if deadline is None else min(remaining(18),max(.001,deadline-time.monotonic()))
-    result=run_preflight(['ffprobe','-v','error','-rw_timeout','6000000','-analyzeduration','4000000','-probesize','4000000','-show_streams','-show_format','-of','json',raw_url],capture_output=True,timeout=available)
-    if result.returncode: raise RuntimeError('Source probe failed')
-    if selected.get('local'):return json.loads(result.stdout)
-    start=min(1048576,max(0,selected['length']-2097152))
-    req=R.Request(raw_url,headers={'Range':f'bytes={start}-{start+2097151}'})
-    available=remaining(12) if deadline is None else min(remaining(12),max(.001,deadline-time.monotonic()))
-    with R.urlopen(req,timeout=available) as response:
-        if len(read_bounded(response,min(2097152,selected['length']-start),deadline))<min(2097152,selected['length']-start): raise RuntimeError('Source stalled during data preflight')
+    token=hashlib.sha256(os.urandom(32)).hexdigest()[:32]
+    raw_url=selected.get('local') or REL.source_url('raw',key,selected,token)
+    result=REL.run(['ffprobe','-v','error','-analyzeduration','4000000','-probesize','4000000',
+        '-show_streams','-show_format','-of','json',raw_url],key,'video probe',selected,token,deadline or time.monotonic()+WORK_SECONDS)
+    if result.stderr:raise RuntimeError('Source probe decoding error')
     return json.loads(result.stdout)
 
 
@@ -821,7 +855,7 @@ def conversion_preflight(key,selected,info,audio_index,deadline):
     cachekey='audio-convert-v2:'+selected['hash']+':'+str(audio_index)+':'+str(selected.get('length',0))
     if cached(cachekey):return
     folder=DATA/'audio-preflight';folder.mkdir(parents=True,exist_ok=True)
-    source=selected.get('local') or signed_path('raw',key)
+    source=selected.get('local') or REL.source_url('raw',key,selected)
     def available(maximum):return min(remaining(maximum),max(.001,deadline-time.monotonic()))
     with tempfile.TemporaryDirectory(dir=folder,prefix='sample-') as directory:
         output=Path(directory)/'sample.ts'
@@ -904,7 +938,8 @@ def validation_attempt(background):
 
 def prepared(key,background=False,audio_index=None,cancel=None):
     speculative=getattr(BUDGET,'speculative',False)
-    deadline=time.monotonic()+(DETAIL_SECONDS if speculative else 60 if background else PREPARATION_SECONDS)
+    deadline=time.monotonic()+(DETAIL_SECONDS if speculative else WORK_SECONDS if background else PREPARATION_SECONDS)
+    if background:deadline=min(deadline,getattr(BUDGET,'worker_deadline',deadline))
     F.consume_rechecks()
     with validation_attempt(background),request_budget(deadline,cancel),playback_phase(key,'preparation'):
         with LOCKS_LOCK:lock=LOCKS.setdefault(key,threading.Lock())
@@ -915,7 +950,14 @@ def prepared(key,background=False,audio_index=None,cancel=None):
         else:
             while not lock.acquire(timeout=min(.1,remaining(.1))):
                 if deadline-time.monotonic()<.1:raise PlaybackBusy('Preparation already in progress')
-        try:return prepare_locked(key,background,audio_index,deadline)
+        try:
+            with REL.lock(key):return prepare_locked(key,background,audio_index,deadline)
+        except (Checkpoint,TimeoutError,subprocess.TimeoutExpired,ClientCancelled) as error:
+            if not speculative:
+                F.enqueue(key,200)
+                REL.checkpoint(key,state='checkpoint',message='Preparation continues in background; retry Play later',audio_index=audio_index)
+            if isinstance(error,ClientCancelled) or (cancel and cancel()):raise ClientCancelled('Client disconnected') from None
+            raise Checkpoint('Preparation continues in background') from None
         finally:lock.release()
 
 
@@ -925,23 +967,27 @@ def prepare_locked(key,background,audio_index,deadline):
         if LIVE['key'] not in (None,key) and LIVE['active']>0:
             raise PlaybackBusy('Another title is currently streaming; this server supports one stream')
     saved=cached(prepared_key)
-    if saved and saved.get('audio_policy')==2 and saved.get('subtitle_policy')==2 and F.source_state(key) in ('verified','downloaded'):
+    if not background and saved and saved.get('verification_version')==VERSION and saved.get('audio_policy')==2 and saved.get('subtitle_policy')==2 and F.source_state(key) in ('verified','downloaded'):
         playback_event(key,'prepared_cache',time.monotonic(),'hit')
         return saved
+    verified=cached('verified-'+prepared_key) if not background else None
+    if verified and (verified.get('proof',{}).get('version')!=VERSION or F.source_state(key) not in ('verified','downloaded')
+                     or REL.excluded(key,verified['selected']) or bool(F.local_download(key))!=bool(verified['selected'].get('local'))):verified=None
     for attempt in range(3):
         try:
-            with playback_phase(key,'torrent_resolution'):selected=resolve(key,deadline=deadline)
-        except (ClientCancelled,PlaybackBusy):raise
+            with playback_phase(key,'torrent_resolution'):selected=verified['selected'] if verified else resolve(key,deadline=deadline)
+        except (ClientCancelled,PlaybackBusy,Checkpoint,TimeoutError,subprocess.TimeoutExpired):raise
         except Exception as error:
             cancel=getattr(BUDGET,'cancel',None)
             if cancel and cancel():raise ClientCancelled('Client disconnected') from None
             if getattr(BUDGET,'speculative',False):raise
+            remaining(1)
             remember('source-status:'+key,{'state':'unavailable','checked_at':time.time()},900)
             F.validation_result(key,False,reason='Source preparation failed ('+type(error).__name__+')')
             raise
         try:
-            with playback_phase(key,'video_probe'):info=probe(selected,key,deadline=deadline)
-            video=next((s for s in info.get('streams',[]) if s.get('codec_type')=='video'),{})
+            with playback_phase(key,'video_probe'):info=verified['info'] if verified else probe(selected,key,deadline=deadline)
+            video=next((s for s in info.get('streams',[]) if s.get('codec_type')=='video' and not s.get('disposition',{}).get('attached_pic')),{})
             if video.get('codec_name')=='h264' and video.get('pix_fmt') not in ('yuv420p','yuvj420p'):
                 raise RuntimeError('Unsupported H264 pixel format')
             if video.get('codec_name') not in ('h264','mpeg4','vp8','vp9'):
@@ -951,29 +997,23 @@ def prepare_locked(key,background,audio_index,deadline):
             selected_audio=next((t for t in ordered if t['index']==audio_index),None) if audio_index is not None else next((t for lang in ('eng','en','heb','he') for t in ordered if t.get('tags',{}).get('language')==lang),ordered[0] if ordered else None)
             if audio_index is not None and selected_audio is None:raise ValueError('Audio track not found')
             needs_conversion=selected_audio is not None and (selected_audio.get('codec_name')!='aac' or selected_audio.get('profile')!='LC')
-            if needs_conversion:
-                if float(info.get('format',{}).get('duration') or 0)<=0:raise RuntimeError('Converted VOD requires a known duration')
-                with playback_phase(key,'audio_conversion'):conversion_preflight(key,selected,info,selected_audio['index'],deadline)
-            if background:
-                available=remaining(15)
-                sample=run_preflight(['ffmpeg','-v','error','-rw_timeout','6000000','-i',selected.get('local') or signed_path('raw',key),'-t','2','-map','0:v:0','-map','0:a:0?','-f','null','-'],capture_output=True,timeout=available)
-                if sample.returncode:raise RuntimeError('Video decode sample failed')
+            if needs_conversion and float(info.get('format',{}).get('duration') or 0)<=0:raise RuntimeError('Converted VOD requires known duration')
+            proof=verified['proof'] if verified else REL.verify(key,selected,info,selected_audio['index'] if selected_audio else None,needs_conversion,deadline)
             break
-        except (ClientCancelled,PlaybackBusy):raise
+        except (ClientCancelled,PlaybackBusy,Checkpoint,TimeoutError,subprocess.TimeoutExpired):raise
         except Exception as error:
             cancel=getattr(BUDGET,'cancel',None)
             if cancel and cancel():raise ClientCancelled('Client disconnected') from None
             if getattr(BUDGET,'speculative',False):raise
-            if selected['hash']=='dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c':
-                remember('open-film-failed',True,900)
-            with db() as conn: conn.execute('DELETE FROM cache WHERE key=?',('resolved:'+key,))
-            try:alternatives=[s for s in stream_candidates(key) if s['infoHash'].lower()!=selected['hash']]
-            except (ClientCancelled,PlaybackBusy):raise
-            except Exception:alternatives=[]
-            remember('streams:'+key,alternatives,900)
-            try: torr({'action':'drop','hash':selected['hash']})
-            except Exception: pass
-            if attempt==2 or not alternatives or time.monotonic()>=deadline:
+            remaining(1)
+            playback_event(key,'source_rejected',time.monotonic(),'failed',error)
+            verified=None
+            REL.exclude(key,selected)
+            remember('source-excluded:'+key+':'+selected['hash'],True,900)
+            with db() as conn:conn.execute('DELETE FROM cache WHERE key=?',('resolved:'+key,))
+            # Retain torrents/readers: another request may still be playing an
+            # older bound source. Only this preparation advances to a fallback.
+            if attempt==2:
                 remember('source-status:'+key,{'state':'unavailable','checked_at':time.time()},900)
                 F.validation_result(key,False,reason='Video preflight failed ('+type(error).__name__+')')
                 raise
@@ -1032,13 +1072,17 @@ def prepare_locked(key,background,audio_index,deadline):
         'Container':Path(selected['filename']).suffix[1:].lower(),
         'RunTimeTicks':int(float(info.get('format',{}).get('duration',0))*10000000),
         'Bitrate':int(info.get('format',{}).get('bit_rate',5000000)),
-        'languages':sorted(languages),'checked_at':time.time(),'audio_policy':2,'subtitle_policy':2,
+        'languages':sorted(languages),'checked_at':proof.get('checked_at',time.time()),'audio_policy':2,'subtitle_policy':2,
+        'verification_version':VERSION,'PlaybackUrl':REL.source_url('play',key,selected),
         'DefaultAudioStreamIndex':selected_audio['index'] if selected_audio else None,'AudioConversionRequired':needs_conversion}
     if getattr(BUDGET,'speculative',False):remaining(1)
     with db() as conn:
         conn.execute('INSERT OR REPLACE INTO playback VALUES (?,?,?)',(key,json.dumps(output),time.time()))
-    F.validation_result(key,True,proof={'version':4,'audio_policy':2,'audio_conversion':needs_conversion,'selected_audio_index':selected_audio['index'] if selected_audio else None,'audio_profiles':[{'codec':t.get('Codec'),'profile':t.get('Profile'),'language':t.get('Language')} for t in tracks if t['Type']=='Audio'],'checked_at':output['checked_at'],'source_hash':selected['hash'],'filename':selected['filename'],'Container':output['Container']})
-    return output if background else remember(prepared_key,output,300)
+    accepted=True if verified else F.validation_result(key,True,proof=proof)
+    if accepted is not False:
+        REL.success(key,selected)
+        remember('verified-'+prepared_key,{'selected':selected,'info':info,'proof':proof},max(1,300-(time.time()-proof.get('checked_at',time.time()))))
+    return output if background else remember(prepared_key,output,max(1,300-(time.time()-output['checked_at'])))
 
 
 def collection_items(**filters):
@@ -1279,7 +1323,12 @@ class Handler(BaseHTTPRequestHandler):
             key=U.unquote(parts[1]); tokens=key.split(':')
             identity(tokens[0],*tokens[1:])
             sig=U.parse_qs(parsed.query).get('sig',[''])[0]
-            if not hmac.compare_digest(sig,signature(key)): return self.reply({'error':'Unauthorized'},401)
+            query=U.parse_qs(parsed.query)
+            source_id=query.get('source',[''])[0]
+            if not hmac.compare_digest(sig,signature(key+':'+source_id if source_id else key)): return self.reply({'error':'Unauthorized'},401)
+            progress=query.get('progress',[''])[0]
+            if progress and (not re.fullmatch('[a-f0-9]{32}',progress) or not hmac.compare_digest(query.get('progress_sig',[''])[0],signature(key+':'+source_id+':'+progress))):
+                return self.reply({'error':'Unauthorized'},401)
             if parts[0]=='info':
                 audio=U.parse_qs(parsed.query).get('audio',[None])[0]
                 info=prepared(key,audio_index=int(audio) if audio is not None else None,cancel=self.disconnected)
@@ -1295,7 +1344,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(target.read_bytes(),ctype='application/x-subrip; charset=utf-8')
             # Initial source resolution and first data share one 15s budget.
             data_deadline=time.monotonic()+FIRST_DATA_SECONDS
-            with request_budget(data_deadline):selected=resolve(key,deadline=data_deadline)
+            if source_id:selected=REL.lookup(key,source_id)
+            elif parts[0]=='raw':return self.reply({'error':'Exact source required'},409)
+            else:
+                selected=prepared(key,cancel=self.disconnected)['selected']
+                data_deadline=time.monotonic()+FIRST_DATA_SECONDS
+            # Internal sample requests may wait through a useful slow source.
+            # Preparation owns the 45-second stall and eight-minute work clocks.
+            if progress:data_deadline=time.monotonic()+WORK_SECONDS
             if parts[0]=='play':
                 with LIVE_LOCK:
                     if LIVE['key'] not in (None,key) and LIVE['active']>0:
@@ -1310,8 +1366,11 @@ class Handler(BaseHTTPRequestHandler):
             if self.headers.get('Range'): headers['Range']=self.headers['Range']
             upstream_request=R.Request(upstream(selected),headers=headers,method=self.command)
             with playback_phase(key,'upstream_open'):
-                upstream_response=R.urlopen(upstream_request,timeout=max(.001,data_deadline-time.monotonic()))
+                upstream_response=(REL.open_sample(self,upstream_request,max(.001,data_deadline-time.monotonic())) if progress else R.urlopen(upstream_request,timeout=max(.001,data_deadline-time.monotonic())))
             with upstream_response as response:
+                byte_start=0
+                match=re.match(r'bytes (\d+)-',response.headers.get('Content-Range',''))
+                if match:byte_start=int(match[1])
                 # Read an initial block BEFORE committing a successful response.
                 # A header-only upstream must fail promptly instead of leaving
                 # the TV waiting on an already successful empty video stream.
@@ -1329,6 +1388,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 if self.command!='HEAD':
                     transferred=len(initial)
+                    if progress:REL.delivered(progress,byte_start,byte_start+transferred)
+                    last_progress=time.monotonic()
                     if initial:self.wfile.write(initial)
                     expected=int(response.headers.get('Content-Length','0'))
                     while True:
@@ -1338,11 +1399,16 @@ class Handler(BaseHTTPRequestHandler):
                             break
                         transferred+=len(chunk)
                         self.wfile.write(chunk)
+                        if progress and time.monotonic()-last_progress>=2:
+                            REL.delivered(progress,byte_start,byte_start+transferred);last_progress=time.monotonic()
                         if parts[0]=='play':
                             with LIVE_LOCK: LIVE.update(key=key,touched=time.monotonic())
+                if progress and self.command!='HEAD':REL.delivered(progress,byte_start,byte_start+transferred)
                 self.close_connection=True
         except (BrokenPipeError,ConnectionResetError,ClientCancelled):
             if key:playback_event(key,'request',stream_started,'cancelled')
+        except Checkpoint:
+            if not response_started:self.reply({'error':'Preparing source in background; retry Play shortly.'},503)
         except PlaybackBusy:
             if not response_started:self.reply({'error':'Another playback preparation is in progress; retry shortly.'},409)
         except urllib.error.HTTPError as error:
@@ -1395,4 +1461,5 @@ def main():
 
 
 F=Features(globals())
+REL=Reliability(globals())
 if __name__=='__main__': main()

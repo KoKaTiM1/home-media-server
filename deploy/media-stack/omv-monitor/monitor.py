@@ -46,6 +46,9 @@ def context(data=DATA):
         with closing(sqlite3.connect('file:'+str(data/'catalogue.sqlite')+'?mode=ro',uri=True,timeout=2)) as conn:
             row=conn.execute("SELECT value FROM cache WHERE key='validation-worker' AND expires>?",(time.time(),)).fetchone()
             value=json.loads(row[0]) if row else {}
+            if value.get('key') and conn.execute("SELECT 1 FROM sqlite_master WHERE name='preparation_work'").fetchone():
+                work=conn.execute('SELECT value,updated FROM preparation_work WHERE key=?',(value['key'],)).fetchone()
+                if work and time.time()-work[1]<600:value['preparation']=json.loads(work[0])
         if value.get('key'):
             tokens=value['key'].split(':')
             try:
@@ -71,7 +74,15 @@ def workers():
         if base=='media-source-availability':
             if running and current.get('key'):
                 detail=f"Checking {current.get('name',current['key'])} · {span(time.time()-current.get('started',time.time()))} elapsed · batch {current.get('position',0)}"
-            else:detail=current.get('message','Progress is saved on disk; successful checks are skipped')
+                work=current.get('preparation',{})
+                if work:
+                    detail+=' · '+work.get('phase',work.get('state','preparing'))
+                    if 'received_bytes' in work:
+                        detail+=f" · {work['received_bytes']:,} useful bytes · {work.get('speed',0):,} B/s · {work.get('buffer_bytes',0):,} buffered"
+                    if work.get('last_useful_progress'):
+                        detail+=' · last progress '+span(time.time()-work['last_useful_progress'])+' ago'
+                    if work.get('audio'):detail+=' · '+work['audio']
+            else:detail=current.get('message','Progress is saved on disk; initial and daily audits run automatically')
         next_run=timer.get('NextElapseUSecRealtime') or ''
         countdown=''
         if next_run:
@@ -124,7 +135,19 @@ def counts(data=DATA,refresh=False):
         add('Passed source / episode checks',grouped.get('verified',0),'Several episode checks can belong to one visible show')
         converted=conn.execute("SELECT COUNT(*) FROM validation WHERE state='verified' AND json_extract(proof,'$.audio_policy')=2 AND json_extract(proof,'$.audio_conversion')=1").fetchone()[0]
         add('Passed sources using verified AAC-LC conversion',converted,'Video stays unchanged; sources with direct AAC-LC do not need conversion')
-        if conn.execute("SELECT 1 FROM sqlite_master WHERE name='audio_recheck'").fetchone():
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE name='verification_audit'").fetchone():
+            audit=dict(conn.execute("SELECT CASE WHEN completed=0 THEN 'pending' ELSE result END,COUNT(*) FROM verification_audit GROUP BY 1"))
+            for status,label in [('pending','awaiting check'),('passed','passed'),('failed','failed')]:
+                add('Initial stronger-verification audit — '+label,audit.get(status,0),'Existing titles remain visible until a fresh failure; reports run first')
+            v5=conn.execute("SELECT COUNT(*),SUM(CASE WHEN json_extract(proof,'$.audio_conversion')=1 THEN 1 ELSE 0 END) FROM validation WHERE state='verified' AND json_extract(proof,'$.version')=5").fetchone()
+            add('Passed stronger video/audio checks',v5[0],'Decoded beginning and later samples from the exact selected torrent/file')
+            add('Stronger checks — direct audio',v5[0]-(v5[1] or 0))
+            add('Stronger checks — AAC-LC conversion',v5[1] or 0,'Video copied; conversion samples actually decoded')
+            due_audits=conn.execute("SELECT COUNT(*) FROM validation WHERE state='verified' AND checked<=?",(now-86400,)).fetchone()[0]
+            add('Successful sources due for daily audit',due_audits,'One in five ordinary slots after the initial audit')
+            preparing=conn.execute('SELECT COUNT(*) FROM preparation_work').fetchone()[0]
+            add('Preparation checkpoints waiting to resume',preparing,'Progress is saved across request limits, viewing pauses and reboot')
+        elif conn.execute("SELECT 1 FROM sqlite_master WHERE name='audio_recheck'").fetchone():
             audits=conn.execute('SELECT COUNT(*) FROM audio_recheck WHERE completed=0').fetchone()[0]
             add('Passed sources awaiting new audio-policy audit',audits,'Audited gradually without clearing the verified catalogue')
         marker=conn.execute("SELECT value FROM cache WHERE key IN ('audio-policy-resync-v1','audio-policy-resync-v2') ORDER BY key DESC LIMIT 1").fetchone()

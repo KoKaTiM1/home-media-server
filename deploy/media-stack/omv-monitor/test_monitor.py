@@ -57,4 +57,15 @@ class MonitorTests(unittest.TestCase):
             self.assertEqual(values['User reports awaiting fresh check'],'1')
             self.assertEqual(values['User reports failed latest check'],'1')
             self.assertEqual(values['User reports passed fresh check'],'1')
+    def test_running_progress_shows_useful_data_and_audio_mode(self):
+        units={}
+        for base,_,_ in m.JOBS:
+            units[base+'.service']={'ActiveState':'activating','Result':'success'}
+            units[base+'.timer']={'UnitFileState':'enabled','ActiveState':'active'}
+        current={'key':'movie:tt00000000','position':1,'preparation':{'phase':'later sample','received_bytes':12345,'buffer_bytes':4096,'speed':1234,'audio':'AAC-LC conversion'}}
+        with patch.object(m,'systemd',return_value=units),patch.object(m,'context',return_value=current):rows=m.workers()
+        row=next(r for r in rows if r['id']=='media-source-availability')
+        text=str(row)
+        for word in ('later sample','12,345','4,096','AAC-LC conversion'):self.assertIn(word,text)
+
 if __name__=='__main__':unittest.main()
