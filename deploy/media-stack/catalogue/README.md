@@ -1,7 +1,7 @@
 # Home media catalogue
 
 Current deployed behavior, reviewed 2026-10-25 against Dynamic Library
-**1.4.0.14**, Jellyfin **10.11.11**, the bridge and systemd units. This is the
+**1.4.0.15**, Jellyfin **10.11.11**, the bridge and systemd units. This is the
 current operating guide, rather than a chronological list of old features.
 The installed WizdomSubs Downloader version is **0.2.0.0**.
 
@@ -221,6 +221,53 @@ repeat storage/network/client checks on replacement hardware. GitHub contains
 software and recovery templates, not private runtime databases or media. No
 automated encrypted off-server runtime backup is configured.
 
+## Shared initial loading
+
+Home and online-library pages share startup work. Browsing now uses primary-key
+lookups of the verified set and a compact persistent `home_titles` metadata cache
+on the existing media partition, instead of scanning the bulk discovery index.
+The cache survives service restarts, refreshes when the bulk index changes, and
+is warmed by discovery sync. Compact `home_ready` and `home_source_status`
+projections are maintained atomically by SQLite triggers across worker processes.
+New failures affect readiness immediately; these tables do not replace proof,
+retry or watched history. User-specific DTOs are not cached across accounts.
+
+Unchanged discovery pages avoid writer transactions. Badge lookups read only
+requested titles, and locally known episode-count calculations are reused while
+the metadata and current day remain unchanged. Existing style/badge-matched
+posters are served directly without database/provider work. Bridge and Jellyfin
+poster responses use ETags and private 60-second caching; the plugin shares
+concurrent fetches in a 16 MiB bounded artwork cache. Changed badge/style URLs
+receive separate image identities.
+
+Real client navigation writes a small shared 30-second lease, throttled to one
+write per five seconds. Further qualifying metadata navigation can renew it;
+images and maintenance API calls cannot. Source checks yield without recording
+negative proof, and running preparation subprocesses can stop promptly. Heavy
+counter queries yield and preserve the previous timestamped snapshot. Timers
+keep their existing schedules and work resumes after the lease expires.
+
+This gives foreground reads priority on the current hard drive; it does not
+promise a fixed phone/TV rendering time or make every internet image/source
+available. A fresh metadata-index generation can need cache rebuilding. Logs
+separate native request time from bridge browse time and artwork delivery.
+
+Measured on the source server on 2026-10-25 (not physical client screen time):
+
+| Request / workload | Before | After |
+| --- | ---: | ---: |
+| First Movies page, 100 entries | 15.7 s | 3.5 s |
+| First Shows page, 100 entries | 9.4 s | 3.5 s |
+| Parallel home metadata requests | 44 s | 11 s |
+| Repeated Movies page | 5.0 s | 0.17 s |
+| Repeated Shows page | 2.2 s | 0.37 s |
+| First batch of 16 poster images | 5.7 s | 1.0 s |
+
+These observations include the machine's actual workload and caches; they are
+not a hardware-independent benchmark or a guarantee for phone/TV rendering.
+The after test includes the correct Continue Watching endpoint as well as the
+home rows measured before. No Linux page-cache clearing was forced.
+
 ## Logs, verification and recovery
 
 ```sh
@@ -229,6 +276,10 @@ journalctl -u media-source-availability.service --no-pager -n 40
 systemctl list-timers 'media-*'
 systemctl --failed
 ```
+
+`[HomeTiming]` entries in Jellyfin logs record controller/action, elapsed
+milliseconds and response status for metadata requests and slower image requests.
+Arguments, query strings, user IDs, credentials and URLs are not logged.
 
 Structured `Playback` events record the title/episode key, phase, duration,
 outcome and exception class for preparation, torrent resolution, video probing,
@@ -240,7 +291,7 @@ Background preparation events also appear in the source worker's journal.
 Run isolated unit tests from this folder:
 
 ```sh
-python3 -m unittest test_app test_features test_playback_deadlines
+python3 -m unittest test_app test_features test_playback_deadlines test_startup
 ```
 
 `check_show_counts.py --all` is read-only and checks native/preview counts.

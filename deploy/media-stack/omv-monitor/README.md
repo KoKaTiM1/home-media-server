@@ -13,7 +13,10 @@ Worker rows refresh every 10 seconds. A separate worker prepares counters two
 minutes after boot and then one minute after each completed snapshot. The page
 reads the saved snapshot without launching heavy database queries. Metadata
 pool/outside-queue counters cache up to five minutes; values include snapshot
-timestamps. A cold database can take longer than a minute to count.
+timestamps. A cold database can take longer than a minute to count. During real Jellyfin
+navigation, the snapshot job yields to the shared 30-second navigation lease;
+running queries can abort safely, leaving the previous snapshot and timestamp
+intact. Images and maintenance API calls do not extend that lease.
 
 Waiting between successful oneshot runs is healthy. Failed jobs and disabled
 timers are reported separately. Counter generation uses limited CPU/IO and a

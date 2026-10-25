@@ -3,7 +3,7 @@
 Debian 13 / OpenMediaVault 8 runs Jellyfin, the custom catalogue bridge,
 Transmission and TorrServer through `/opt/media-stack/compose.yaml`.
 Jellyfin is pinned to 10.11.11, the modified Dynamic Library plugin is
-1.4.0.14, and the installed Wizdom subtitle provider is 0.2.0.0.
+1.4.0.15, and the installed Wizdom subtitle provider is 0.2.0.0.
 The initial Jellyfin wizard and catalogue integration are complete on the
 source server. A fresh recovery still needs its own accounts, keys and setup.
 
@@ -105,7 +105,10 @@ quota and maintenance issues were repaired and checked.
 | `media-cleanup` | Hourly; legacy Downloads retention |
 | `media-worker-status` | Two minutes after boot, then one minute after completion; cached OMV counters |
 
-Source verification pauses between probes during playback. Its batch starts
+Source verification pauses during playback and yields to real client navigation.
+A 30-second metadata-navigation lease gives initial foreground reads priority;
+counter scans also yield, keeping their previous snapshot. Images/maintenance
+requests do not renew the lease. The seven timer schedules remain unchanged. Its batch starts
 at most 20 probes or runs up to eight minutes before starting another probe.
 Failed titles are retained and retry with backoff, not rediscovered from scratch.
 

@@ -42,6 +42,8 @@ public class ServiceRegistrator : IPluginServiceRegistrator
         // Register caches and services
         services.AddSingleton<DynamicItemCache>();
         services.AddSingleton<HomeAudioService>();
+        services.AddSingleton<HomeImageService>();
+        services.AddSingleton<HomeForegroundService>();
         services.AddSingleton<IMediaSourceProvider, HomeMediaSourceProvider>();
         services.AddSingleton<SearchResultFactory>();
         services.AddSingleton<DynamicLibraryService>();

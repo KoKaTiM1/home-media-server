@@ -52,7 +52,7 @@ initial verification of the large metadata pool takes time.
 No disk serial numbers, network addresses or machine identifiers are included
 in this hardware overview.
 
-## Current features — deployed 2026-10-25 (Dynamic Library 1.4.0.14)
+## Current features — deployed 2026-10-25 (Dynamic Library 1.4.0.15)
 
 - Separate online movies/shows and local downloaded Movies/Shows libraries.
   The owner's order puts online movies/shows first, then local Movies/Shows.
@@ -84,6 +84,11 @@ in this hardware overview.
   returns an explicit error; the TV app can still retry its own requests.
 - Local playback diagnostics identify phase, elapsed time and exception type;
   private links, magnets and credentials are excluded.
+- Faster shared initial loading: a compact persistent cache of verified-title
+  metadata, direct indexed lookups and reusable local posters with image cache
+  validation. Watched/favorite data remains specific to the current user.
+- Heavy validation and counter scans yield during navigation, using a 30-second
+  lease renewed by metadata requests. Images and maintenance calls do not renew it.
 - Four catalogue syncs per day, mount-aware startup and enabled background timers.
 - OMV Diagnostics > Media workers: live schedules, health, current check and queue counters.
 - Persistent video validation and retained failed-title retry queue. Ordinary
@@ -119,7 +124,7 @@ The [worker-monitor guide](deploy/media-stack/omv-monitor/README.md) and
 [phone-layout guide](deploy/media-stack/omv-mobile/README.md) describe the installed
 OMV extensions. `RESTORE.md` includes all seven worker schedules and startup steps.
 
-Jellyfin is pinned to 10.11.11; the modified Dynamic Library is 1.4.0.14.
+Jellyfin is pinned to 10.11.11; the modified Dynamic Library is 1.4.0.15.
 The modified plugin must be built from this repository's configured source;
 installing an upstream release does not include these server-specific features.
 Its [plugin README](plugin-source/dynamic-library/README.md) describes this fork;

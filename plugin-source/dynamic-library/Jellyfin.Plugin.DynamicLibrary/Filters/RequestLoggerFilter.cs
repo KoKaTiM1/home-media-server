@@ -1,62 +1,43 @@
-using System.Linq;
+using System.Diagnostics;
+using Jellyfin.Plugin.DynamicLibrary.Services;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.DynamicLibrary.Filters;
 
-/// <summary>
-/// Debug filter that logs ALL incoming requests to help diagnose
-/// Android TV vs web client differences.
-/// </summary>
-public class RequestLoggerFilter : IAsyncActionFilter, IOrderedFilter
+// Cover action processing, result enrichment and serialization. Query strings,
+// action arguments, user identities and authorization are never logged.
+public sealed class RequestLoggerFilter(ILogger<RequestLoggerFilter> logger, HomeForegroundService foreground)
+    : IAsyncActionFilter, IAsyncAlwaysRunResultFilter, IOrderedFilter
 {
-    private readonly ILogger<RequestLoggerFilter> _logger;
-
-    // Controllers we care about for debugging playback
-    private static readonly HashSet<string> InterestingControllers = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "MediaInfo",
-        "Videos",
-        "Items",
-        "UserLibrary",
-        "TvShows",
-        "Playstate",
-        "Sessions",
-        "Universal"
-    };
-
-    public RequestLoggerFilter(ILogger<RequestLoggerFilter> logger)
-    {
-        _logger = logger;
-    }
-
-    // Run very early to log before any interception
     public int Order => -100;
+    private const string Started = "HomeTimingStarted";
+    private static readonly HashSet<string> Controllers = new(StringComparer.OrdinalIgnoreCase)
+        { "Items", "UserLibrary", "TvShows", "UserViews", "Image", "Images", "Library" };
 
     public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
     {
-        var controllerName = (context.ActionDescriptor as ControllerActionDescriptor)?.ControllerName;
-        var actionName = (context.ActionDescriptor as ControllerActionDescriptor)?.ActionName;
-
-        // Only log interesting controllers
-        if (controllerName != null && InterestingControllers.Contains(controllerName))
-        {
-            var args = string.Join(", ", context.ActionArguments.Select(kv =>
-            {
-                var value = kv.Value?.ToString() ?? "null";
-                // Truncate long values
-                if (value.Length > 100) value = value.Substring(0, 100) + "...";
-                return $"{kv.Key}={value}";
-            }));
-
-            _logger.LogDebug("[DynamicLibrary:Request] {Controller}/{Action} Args=[{Args}] Path={Path}",
-                controllerName,
-                actionName,
-                args,
-                context.HttpContext.Request.Path);
-        }
-
+        context.HttpContext.Items[Started] = Stopwatch.GetTimestamp();
+        if (context.ActionDescriptor is ControllerActionDescriptor action)
+            foreground.Touch(context.HttpContext.Request, action.ControllerName, action.ActionName);
         await next();
+    }
+
+    public async Task OnResultExecutionAsync(ResultExecutingContext context, ResultExecutionDelegate next)
+    {
+        try { await next(); }
+        finally
+        {
+            if (context.ActionDescriptor is ControllerActionDescriptor action && Controllers.Contains(action.ControllerName)
+                && context.HttpContext.Items[Started] is long started)
+            {
+                var elapsed = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+                var image = action.ControllerName is "Image" or "Images";
+                if (!image || elapsed >= 250)
+                    logger.LogInformation("[HomeTiming] {Controller}/{Action} {Milliseconds}ms status={Status}",
+                        action.ControllerName, action.ActionName, (int)elapsed, context.HttpContext.Response.StatusCode);
+            }
+        }
     }
 }

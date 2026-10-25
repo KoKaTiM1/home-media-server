@@ -34,6 +34,37 @@ Check(Jellyfin.Plugin.DynamicLibrary.Filters.HomeCatalogueResultFilter.KeepInRes
 Check(!Jellyfin.Plugin.DynamicLibrary.Filters.HomeCatalogueResultFilter.KeepInResults(false, "movie:tt00000000", noSources), "Unavailable ordinary titles stay hidden");
 Check(Jellyfin.Plugin.DynamicLibrary.Filters.HomeCatalogueResultFilter.KeepInResults(false, null, noSources), "Local media stays visible");
 Console.WriteLine("PASS: favorites query variants, unavailable favorites preserved, normal ready-only filtering");
+var imageFactory = new ImageFactory();
+using (var imageCache = new HomeImageService(imageFactory))
+{
+    var poster = "http://catalogue-bridge:8092/poster/movie/tt00000000.jpg?style=4&badge=HE";
+    Check(HomeImageService.IsLocalPoster(poster), "Identify local poster route");
+    Check(!HomeImageService.IsLocalPoster("https://example.invalid/picture.jpg"), "Leave external images unchanged");
+    var images = await Task.WhenAll(Enumerable.Range(0, 12).Select(_ => imageCache.GetAsync(poster, CancellationToken.None)));
+    Check(imageFactory.Handler.Requests == 1, "Simultaneous poster requests share one fetch");
+    Check(images.All(i => i.ETag == images[0].ETag), "Stable image content tags");
+    var changed = await imageCache.GetAsync(poster.Replace("badge=HE", "badge=EN"), CancellationToken.None);
+    Check(imageFactory.Handler.Requests == 2 && changed.ETag != images[0].ETag, "Changed badge fetches fresh image bytes");
+    using var cancelled = new CancellationTokenSource();cancelled.Cancel();
+    try { await imageCache.GetAsync(poster, cancelled.Token);throw new Exception("Cancelled poster request accepted"); }
+    catch (OperationCanceledException) { }
+}
+Console.WriteLine("PASS: bounded artwork cache, shared concurrent fetch, changed image identity, cancellation");
+Directory.CreateDirectory("/catalogue");
+var foreground = new HomeForegroundService();
+var navigation = new DefaultHttpContext();
+navigation.Request.Method = "GET";
+navigation.User = new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity(new[] { new System.Security.Claims.Claim("role", "test") }, "fixture"));
+foreground.Touch(navigation.Request, "Items", "GetItems");
+Check(!File.Exists("/catalogue/.foreground-read-until"), "Maintenance API calls must not pause validation");
+navigation.Request.Headers["X-Emby-Authorization"] = "MediaBrowser Client=\"Fixture\"";
+foreground.Touch(navigation.Request, "Items", "GetItems");
+var lease = long.Parse(File.ReadAllText("/catalogue/.foreground-read-until"));
+Check(lease > DateTimeOffset.UtcNow.ToUnixTimeSeconds() && lease <= DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 30, "Navigation lease is bounded to 30 seconds");
+File.Delete("/catalogue/.foreground-read-until");
+foreground.Touch(navigation.Request, "Image", "GetItemImage");
+Check(!File.Exists("/catalogue/.foreground-read-until"), "Image requests must not extend navigation lease");
+Console.WriteLine("PASS: bounded navigation priority, maintenance and images do not pause workers");
 var context = new DefaultHttpContext();
 context.Request.Headers["Authorization"] = "MediaBrowser Client=\"Fixture\", DeviceId=\"test-device\", Token=\"test-playback-token\"";
 var id = Guid.NewGuid();
@@ -98,5 +129,23 @@ public class LibraryProxy : DispatchProxy
             item.ParentId=parent?.Id ?? Guid.Empty;Items.Add(item.Id,item);return null;
         }
         throw new NotSupportedException(targetMethod.Name);
+    }
+}
+
+public sealed class ImageFactory : IHttpClientFactory
+{
+    public readonly ImageHandler Handler = new();
+    public HttpClient CreateClient(string name) => new(Handler, disposeHandler: false);
+}
+public sealed class ImageHandler : HttpMessageHandler
+{
+    public int Requests;
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellation)
+    {
+        Interlocked.Increment(ref Requests);await Task.Delay(25, cancellation);
+        return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes(request.RequestUri!.Query))
+        };
     }
 }

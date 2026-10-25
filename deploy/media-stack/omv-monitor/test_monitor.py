@@ -20,6 +20,11 @@ class MonitorTests(unittest.TestCase):
         self.assertIn('Running',rows[0]['health']);self.assertIn('Healthy',rows[1]['health'])
         self.assertIn('stopped',next(row for row in rows if row['id']=='media-cleanup')['health'])
 
+    def test_navigation_reuses_snapshot_without_opening_database(self):
+        expected=[{'name':'Fixture snapshot','value':'42'}]
+        with patch.object(m,'foreground_busy',return_value=True),patch.object(m.Path,'read_text',return_value=json.dumps({'rows':expected})),patch.object(m.sqlite3,'connect',side_effect=AssertionError('Navigation must not start heavy counter reads')):
+            self.assertEqual(m.counts(refresh=True),expected)
+
     def test_counts_separate_episodes_titles_failures_and_unqueued_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
             data=Path(directory);(data/'imdb').mkdir()

@@ -13,15 +13,18 @@ namespace Jellyfin.Plugin.DynamicLibrary.Filters;
 /// </summary>
 public class ImageFilter : IAsyncActionFilter, IOrderedFilter
 {
+    private readonly HomeImageService _images;
     private readonly DynamicItemCache _itemCache;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<ImageFilter> _logger;
 
     public ImageFilter(
+        HomeImageService images,
         DynamicItemCache itemCache,
         IHttpClientFactory httpClientFactory,
         ILogger<ImageFilter> logger)
     {
+        _images = images;
         _itemCache = itemCache;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
@@ -77,6 +80,16 @@ public class ImageFilter : IAsyncActionFilter, IOrderedFilter
 
         try
         {
+            if (HomeImageService.IsLocalPoster(imageUrl))
+            {
+                var image = await _images.GetAsync(imageUrl, context.HttpContext.RequestAborted);
+                context.HttpContext.Response.Headers.CacheControl = "private, max-age=60";
+                context.Result = new FileContentResult(image.Bytes, image.ContentType)
+                {
+                    EntityTag = new Microsoft.Net.Http.Headers.EntityTagHeaderValue(image.ETag)
+                };
+                return;
+            }
             var client = _httpClientFactory.CreateClient();
             var response = await client.GetAsync(imageUrl, context.HttpContext.RequestAborted);
 
@@ -92,9 +105,10 @@ public class ImageFilter : IAsyncActionFilter, IOrderedFilter
 
             context.Result = new FileContentResult(imageData, contentType);
         }
+        catch (OperationCanceledException) when (context.HttpContext.RequestAborted.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[DynamicLibrary] Error fetching image from {Url}", imageUrl);
+            _logger.LogWarning("Image delivery failed ({Reason})", ex.GetType().Name);
             // Let Jellyfin try to handle it (will probably 404)
             await next();
         }

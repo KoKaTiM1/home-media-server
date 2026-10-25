@@ -23,6 +23,9 @@ class Features:
         self.download_lock=threading.Lock()
         self.count_lock=threading.Lock()
         self.count_cache={}
+        self.episode_count_lock=threading.Lock()
+        self.episode_count_cache={}
+        self.read_model_lock=threading.Lock()
 
     def db(self):
         conn=self.g['db']()
@@ -34,7 +37,64 @@ class Features:
         conn.execute('CREATE TABLE IF NOT EXISTS audio_recheck (key TEXT PRIMARY KEY, completed REAL NOT NULL DEFAULT 0)')
         conn.execute('CREATE INDEX IF NOT EXISTS validation_due ON validation(state,next_check,priority)')
         conn.execute("CREATE INDEX IF NOT EXISTS validation_work ON validation(priority DESC,next_check) WHERE state!='verified'")
+        self.ensure_read_model(conn)
         return conn
+
+    def ensure_read_model(self,conn):
+        # Compact projections keep first-load reads away from the million-row
+        # validation queue and large metadata/cache payload pages. SQLite
+        # triggers keep them atomic even across separate worker processes.
+        with self.read_model_lock:
+            if conn.execute("SELECT 1 FROM cache WHERE key='home-read-model-v1'").fetchone():return
+            conn.executescript("""
+                BEGIN IMMEDIATE;
+                CREATE TABLE IF NOT EXISTS home_ready(key TEXT PRIMARY KEY,checked REAL NOT NULL);
+                CREATE TABLE IF NOT EXISTS home_titles(imdb TEXT PRIMARY KEY,kind TEXT,name TEXT,original TEXT,year INTEGER,genres TEXT,votes INTEGER,rating REAL,runtime INTEGER,released TEXT,official_rating TEXT,critic_rating REAL,generation TEXT);
+                CREATE TABLE IF NOT EXISTS home_source_status(key TEXT PRIMARY KEY,state TEXT,checked REAL,expires REAL);
+                CREATE TRIGGER IF NOT EXISTS home_ready_insert AFTER INSERT ON validation WHEN NEW.state='verified' BEGIN
+                    INSERT OR REPLACE INTO home_ready VALUES(NEW.key,NEW.checked);
+                END;
+                CREATE TRIGGER IF NOT EXISTS home_ready_update AFTER UPDATE OF state,checked ON validation BEGIN
+                    DELETE FROM home_ready WHERE key=OLD.key;
+                    INSERT OR REPLACE INTO home_ready SELECT NEW.key,NEW.checked WHERE NEW.state='verified';
+                END;
+                CREATE TRIGGER IF NOT EXISTS home_ready_delete AFTER DELETE ON validation BEGIN
+                    DELETE FROM home_ready WHERE key=OLD.key;
+                END;
+                CREATE TRIGGER IF NOT EXISTS home_status_insert AFTER INSERT ON cache WHEN NEW.key GLOB 'source-status:*' AND json_valid(NEW.value) BEGIN
+                    INSERT OR REPLACE INTO home_source_status VALUES(substr(NEW.key,15),json_extract(NEW.value,'$.state'),COALESCE(json_extract(NEW.value,'$.checked_at'),0),NEW.expires);
+                END;
+                CREATE TRIGGER IF NOT EXISTS home_status_update AFTER UPDATE OF value,expires ON cache WHEN NEW.key GLOB 'source-status:*' AND json_valid(NEW.value) BEGIN
+                    INSERT OR REPLACE INTO home_source_status VALUES(substr(NEW.key,15),json_extract(NEW.value,'$.state'),COALESCE(json_extract(NEW.value,'$.checked_at'),0),NEW.expires);
+                END;
+                CREATE TRIGGER IF NOT EXISTS home_status_delete AFTER DELETE ON cache WHEN OLD.key GLOB 'source-status:*' BEGIN
+                    DELETE FROM home_source_status WHERE key=substr(OLD.key,15);
+                END;
+                INSERT OR REPLACE INTO home_ready SELECT key,checked FROM validation WHERE state='verified';
+                INSERT OR REPLACE INTO home_source_status SELECT substr(key,15),json_extract(value,'$.state'),COALESCE(json_extract(value,'$.checked_at'),0),expires FROM cache WHERE key GLOB 'source-status:*' AND json_valid(value);
+                INSERT OR REPLACE INTO cache VALUES('home-read-model-v1','true',4102444800);
+                COMMIT;
+            """)
+
+    def cache_ready_metadata(self,conn,index,columns):
+        identity=index.stat()
+        generation=f'{identity.st_dev}:{identity.st_ino}:{identity.st_mtime_ns}:{identity.st_size}'
+        missing=conn.execute('SELECT r.imdb FROM ready_titles r LEFT JOIN state.home_titles h ON h.imdb=r.imdb WHERE h.imdb IS NULL OR h.generation!=?',(generation,)).fetchall()
+        if missing:
+            fields=['imdb','kind','name','original','year','genres','votes','rating','runtime','released','official_rating','critic_rating']
+            selected=','.join(field if field in columns else 'NULL' for field in fields)
+            fresh=[]
+            for start in range(0,len(missing),400):
+                batch=[r[0] for r in missing[start:start+400]]
+                fresh+=conn.execute('SELECT '+selected+' FROM titles WHERE imdb IN ('+','.join('?' for _ in batch)+')',batch).fetchall()
+            if fresh:
+                conn.executemany('INSERT OR REPLACE INTO state.home_titles VALUES ('+','.join('?' for _ in range(13))+')',((*row,generation) for row in fresh))
+                conn.commit()
+        return identity
+
+    def foreground_busy(self):
+        try:return float((self.g['LIBRARY']/'.foreground-read-until').read_text())>time.time()
+        except (OSError,ValueError):return False
 
     @property
     def media(self):return Path(self.g.get('MEDIA_ROOT','/media'))
@@ -66,7 +126,7 @@ class Features:
         imdbs=list(dict.fromkeys(i for i in imdbs if re.fullmatch(r'tt\d{5,12}',i)))
         if not imdbs:return {}
         counts={};today=dt.date.today().isoformat()
-        def count(raw):
+        def count_document(raw):
             try:videos=json.loads(raw).get('videos')
             except (ValueError,TypeError,AttributeError):return None
             if not isinstance(videos,list):return None
@@ -79,6 +139,13 @@ class Features:
                 except (KeyError,TypeError,ValueError):continue
                 if season>=0 and episode>0:episodes.add((season,episode))
             return len(episodes)
+        def count(raw):
+            key=(today,hashlib.sha256(raw.encode()).digest())
+            with self.episode_count_lock:
+                if key not in self.episode_count_cache:
+                    if len(self.episode_count_cache)>=512:self.episode_count_cache.clear()
+                    self.episode_count_cache[key]=count_document(raw)
+                return self.episode_count_cache[key]
         with self.db() as conn:
             # Stream one metadata document at a time to bound memory usage.
             slots=','.join('?' for _ in imdbs)
@@ -92,14 +159,25 @@ class Features:
 
     def decorate_posters(self,metas):
         # Keep provider artwork in storage; expose only the local badged artwork.
+        pending={}
+        for meta in metas:
+            kind=meta.get('type');imdb=meta.get('id','')
+            if kind not in ('movie','series') or not re.fullmatch(r'tt\d{5,12}',imdb):continue
+            original=dict(meta)
+            if not str(original.get('poster','')).startswith('https://'):
+                original['poster']=f'https://images.metahub.space/poster/medium/{imdb}/img'
+            pending[(kind,imdb)]=json.dumps(original)
         with self.db() as conn:
-            for meta in metas:
-                kind=meta.get('type');imdb=meta.get('id','')
-                if kind not in ('movie','series') or not re.fullmatch(r'tt\d{5,12}',imdb):continue
-                original=dict(meta)
-                if not str(original.get('poster','')).startswith('https://'):
-                    original['poster']=f'https://images.metahub.space/poster/medium/{imdb}/img'
-                conn.execute('INSERT INTO discovery VALUES (?,?,?) ON CONFLICT(kind,imdb) DO UPDATE SET meta=excluded.meta WHERE discovery.meta!=excluded.meta',(kind,imdb,json.dumps(original)))
+            # Opening an unchanged page must not take SQLite's writer lock.
+            existing={}
+            for kind in ('movie','series'):
+                ids=[imdb for k,imdb in pending if k==kind]
+                for start in range(0,len(ids),400):
+                    batch=ids[start:start+400]
+                    for imdb,raw in conn.execute('SELECT imdb,meta FROM discovery WHERE kind=? AND imdb IN ('+','.join('?' for _ in batch)+')',(kind,*batch)):
+                        existing[(kind,imdb)]=raw
+            changed=[(kind,imdb,raw) for (kind,imdb),raw in pending.items() if existing.get((kind,imdb))!=raw]
+            if changed:conn.executemany('INSERT INTO discovery VALUES (?,?,?) ON CONFLICT(kind,imdb) DO UPDATE SET meta=excluded.meta',changed)
         badges=self.g['poster_badges'](metas)
         episodes=self.series_episode_counts([m.get('id','') for m in metas if m.get('type')=='series'])
         for meta in metas:
@@ -147,7 +225,7 @@ class Features:
 
     def ready_keys(self):
         with self.db() as conn:
-            rows=conn.execute("SELECT v.key FROM validation v LEFT JOIN cache c ON c.key='source-status:'||v.key AND c.expires>? WHERE v.state='verified' AND (c.key IS NULL OR json_extract(c.value,'$.state')!='unavailable' OR COALESCE(json_extract(c.value,'$.checked_at'),0)<=v.checked)",(time.time(),)).fetchall()
+            rows=conn.execute("SELECT v.key FROM home_ready v LEFT JOIN home_source_status c ON c.key=v.key AND c.expires>? WHERE c.key IS NULL OR c.state!='unavailable' OR c.checked<=v.checked",(time.time(),)).fetchall()
             downloads=conn.execute('SELECT key FROM downloads').fetchall()
         ready={key for (key,) in rows}
         for (key,) in downloads:
@@ -324,17 +402,17 @@ class Features:
                     params.extend([dt.date.today().year,dt.date.today().isoformat()])
                 ready=sorted(self.ready_titles())
                 # Temp table avoids SQLite variable limits as the library grows.
-                conn.execute('CREATE TEMP TABLE ready_titles(identity TEXT PRIMARY KEY)')
-                conn.executemany('INSERT INTO ready_titles VALUES (?)',((v,) for v in ready))
-                where+=" AND (t.kind||':'||t.imdb) IN (SELECT identity FROM ready_titles)"
+                conn.execute('CREATE TEMP TABLE ready_titles(kind TEXT,imdb TEXT,PRIMARY KEY(kind,imdb))')
+                conn.executemany('INSERT INTO ready_titles VALUES (?,?)',(v.split(':',1) for v in ready))
+                where+=' AND t.imdb=ready.imdb AND t.kind=ready.kind'
                 unavailable=[row[0] for row in conn.execute("SELECT kind||':'||imdb FROM state.release_dates WHERE released>?",(dt.date.today().isoformat(),))]
                 if unavailable:
                     where+=" AND (t.kind||':'||t.imdb) NOT IN ("+','.join('?' for _ in unavailable)+')'
                     params.extend(unavailable)
-                indexes={row[1] for row in conn.execute('PRAGMA index_list(titles)')}
-                count_source='titles t INDEXED BY browse_titles' if 'browse_titles' in indexes else 'titles t'
-                if month_bounds and 'browse_release_lookup' in indexes:count_source='titles t INDEXED BY browse_release_lookup'
-                identity=index.stat()
+                # Iterate the small verified set, then seek each IMDb primary
+                # key. Scanning a million ordered rows is costly on this HDD.
+                identity=self.cache_ready_metadata(conn,index,columns)
+                count_source='ready_titles ready CROSS JOIN state.home_titles t INDEXED BY sqlite_autoindex_home_titles_1'
                 count_key=(kind,tuple(years_filter),month_bounds,identity.st_ino,identity.st_mtime_ns,
                     hashlib.sha256(json.dumps((ready,sorted(unavailable))).encode()).digest())
                 with self.count_lock:
@@ -351,19 +429,14 @@ class Features:
                 field=expression.split('.')[-1].split()[0]
                 if field not in columns:expression='NULL'
                 order='ASC' if str(sort_order).lower() in ('ascending','asc') else 'DESC'
-                preferred={'t.votes':'browse_titles','t.rating':'browse_score','t.name COLLATE NOCASE':'browse_name'}.get(expression)
-                covering={'t.votes':'browse_titles','t.rating':'browse_score_cover','t.name COLLATE NOCASE':'browse_name_cover','t.runtime':'browse_runtime_cover'}.get(expression)
-                if expression=='t.released':covering='browse_release_cover'
-                if month_bounds:covering='browse_release_lookup'
-                if covering in indexes:preferred=covering
-                rank_source='titles t'+(' INDEXED BY '+preferred if preferred in indexes else '')
+                rank_source=count_source
                 ordering=f't.year DESC,{expression} {order} NULLS LAST,t.imdb'
                 # Rank compact index entries first; fetch full rows/aliases only
                 # for this page, rather than sorting thousands of poster previews.
                 rows=conn.execute('WITH ranked AS (SELECT t.imdb FROM '+rank_source+' WHERE '+where+
                     ' ORDER BY '+ordering+' LIMIT ? OFFSET ?) SELECT t.imdb,t.name,t.original,t.year,t.genres,a.hebrew,'+
                     ('t.rating' if 'rating' in columns else 'NULL')+','+('t.runtime' if 'runtime' in columns else 'NULL')+
-                    ',t.kind,'+('t.released' if 'released' in columns else 'NULL')+' FROM ranked r JOIN titles t ON t.imdb=r.imdb LEFT JOIN state.aliases a ON a.imdb=t.imdb ORDER BY '+ordering,
+                    ',t.kind,'+('t.released' if 'released' in columns else 'NULL')+' FROM ranked r JOIN state.home_titles t ON t.imdb=r.imdb LEFT JOIN state.aliases a ON a.imdb=t.imdb ORDER BY '+ordering,
                     (*params,limit,offset)).fetchall()
             metas=[{'id':imdb,'type':actual_kind,'name':hebrew+' / '+name if hebrew else name,'originalName':original,
                 'releaseInfo':str(release_year),'genres':genres.split(',') if genres else [],
@@ -642,6 +715,7 @@ class Features:
             except BlockingIOError:return
             # Defer all torrent probes while the owner is playing anything.
             def busy():
+                if self.foreground_busy():return 'Yielding briefly to Jellyfin navigation'
                 try:return 'Paused while Jellyfin is playing' if any(s.get('NowPlayingItem') for s in self.jf('/Sessions')) else ''
                 except Exception:return 'Waiting for Jellyfin startup or session status'
             blocked=busy()
@@ -685,7 +759,7 @@ class Features:
                     # negative listing must not poison its own next retry.
                     with self.db() as conn:
                         conn.execute('DELETE FROM cache WHERE key IN (?,?,?)',('streams:'+key,'prepared:'+key,'resolved:'+key))
-                    self.g['prepared'](key,background=True)
+                    self.g['prepared'](key,background=True,cancel=self.foreground_busy)
                     if key.startswith('series:'):
                         try:
                             meta=self.g['metadata']('series',key.split(':')[1])
@@ -697,6 +771,10 @@ class Features:
                             self.enqueue_many(aired,30)
                         except Exception:self.log('Episode verification queue expansion deferred')
                 except Exception as error:
+                    transient=tuple(self.g[name] for name in ('ClientCancelled','PlaybackBusy') if isinstance(self.g.get(name),type))
+                    if transient and isinstance(error,transient):
+                        self.remember('validation-worker',{'message':'Yielding briefly to Jellyfin navigation','started':time.time()},180)
+                        break
                     if isinstance(error,urllib.error.HTTPError) and (error.code==429 or error.code>=500):
                         self.remember('validation-provider-backoff',True,900 if error.code==429 else 300)
                         self.log('Validation paused for source provider cooldown')
@@ -741,6 +819,9 @@ class Features:
                 time.sleep(.15)
             except Exception:self.log('Episode refresh deferred for '+imdb)
         if changed:self.jf('/Library/Refresh',{},method='POST')
+        if not self.foreground_busy():
+            try:self.browse('all',limit=1)
+            except Exception:self.log('Compact catalogue warm-up deferred')
         self.log(f'Discovery pages refreshed; {changed} shows gained updated episode metadata')
 
     def records(self):

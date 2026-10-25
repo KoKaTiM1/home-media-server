@@ -85,7 +85,7 @@ manifests; do not simulate watched flags to test cleanup on real files.
    docker build -t home-media-catalogue:1 /opt/media-stack/catalogue
    ```
 
-5. Build the modified Dynamic Library version 1.4.0.14 from the configured
+5. Build the modified Dynamic Library version 1.4.0.15 from the configured
    source, then install its DLL and the public `meta.json` into
    `appdata/jellyfin/config/plugins/DynamicLibrary/` while Jellyfin is stopped.
    It was tested with Jellyfin 10.11.11. Install Wizdom from its publisher or
@@ -180,7 +180,7 @@ This downloads metadata, not movie files; allow time/storage for the initial bui
   reboot separately if appropriate; a healthy service alone is not reboot proof.
 
 The source-server deployment was checked on 2026-10-25 with Dynamic Library
-1.4.0.14: a zero-warning plugin build, Python feature and playback-deadline/stream
+1.4.0.15: a zero-warning plugin build, Python feature and playback-deadline/stream
 regression suites, .NET favorites/audio/indexing checks, native
 Favorites queries retaining unavailable titles, explicit failed-source responses,
 local HTTP206 playback and unchanged existing watched/favorite records. The
@@ -278,7 +278,7 @@ backup on the same disk does not protect against losing that disk.
 
 ## Favorites and timeout verification
 
-Dynamic Library 1.4.0.14 preserves unavailable titles in explicit Favorites
+Dynamic Library 1.4.0.15 preserves unavailable titles in explicit Favorites
 queries without exposing them in normal online browse/search. Verify an existing
 unavailable favorite remains visible and that Play still returns a compatible
 source or explicit failure. Preserve user hearts/watch history during recovery.
@@ -286,3 +286,20 @@ The bridge shares a 27-second preparation budget; the plugin waits at most 30
 seconds for that request. First stream data has a separate 15-second budget.
 Use sanitized Playback phase events in bridge logs to distinguish preparation,
 probe/conversion and initial-data failures. TV app retries may add client time.
+
+## Restore startup-performance behavior
+
+The plugin/bridge source includes compact verified-title metadata/readiness
+caches, conditional poster responses, a bounded image cache and sanitized
+`[HomeTiming]` request measurements. Private runtime cache tables are created
+and rebuilt automatically; restore original queue/proof/download state if it
+exists, rather than trying to manufacture ready flags. Do not drop native
+Jellyfin tables or manually copy unrelated SQLite indexes to reproduce this.
+
+Keep Jellyfin's `/catalogue` bind writable by its configured user/group: real
+client navigation writes `.foreground-read-until` there. The bridge and host
+counter helper read this bounded lease so disk-heavy work yields during startup.
+Timers retain their normal schedules. Install the matching monitor helper too;
+its previous counter snapshot remains available when a scan yields. Client
+image caches are optional: metadata lists and local posters still work without
+internet artwork access when the images are already stored.

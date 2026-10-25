@@ -1,12 +1,14 @@
 # Home media server — modified Dynamic Library plugin
 
 This is the modified plugin used by **home-media-server**, currently
-**1.4.0.14**, tested with **Jellyfin 10.11.11**. Its active configuration uses
+**1.4.0.15**, tested with **Jellyfin 10.11.11**. Its active configuration uses
 the project's local catalogue bridge. The generic upstream feature list does
 not describe which providers or services this deployment uses.
 
 ## Features provided by this fork
 
+- Shared-startup request timings, bounded reusable artwork caching and a
+  30-second navigation lease that lets heavy background reads yield.
 - Ready-only online movie/show browsing, paging, Hebrew alias/franchise search,
   release-year/range/month queries and within-year secondary sorting.
 - Stable posters with Hebrew/English subtitle markers, native per-user show

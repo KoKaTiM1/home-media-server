@@ -218,7 +218,8 @@ def metadata(kind,imdb):
 
 def poster_status(kind,imdb):
     with db() as conn:
-        rows=conn.execute('SELECT value FROM playback WHERE key LIKE ?', (f'{kind}:{imdb}%',)).fetchall()
+        prefix=f'{kind}:{imdb}'
+        rows=conn.execute('SELECT value FROM playback WHERE key=? OR (key>=? AND key<?)', (prefix,prefix+':',prefix+':'+chr(0x10ffff))).fetchall()
     langs=set()
     availability=cached('availability:'+kind+':'+imdb)
     if availability: langs.update(availability.get('languages',[]))
@@ -233,9 +234,21 @@ def poster_status(kind,imdb):
 
 def poster_badges(metas):
     languages={(m.get('type'),m.get('id')):set() for m in metas}
+    cached_rows=[];playback_rows=[]
     with db() as conn:
-        cached_rows=conn.execute("SELECT key,value FROM cache WHERE expires>? AND (key LIKE 'availability:%' OR key LIKE 'wizdom-search:movie:%')",(time.time(),)).fetchall()
-        playback_rows=conn.execute('SELECT key,value FROM playback WHERE updated>?',(time.time()-86400,)).fetchall()
+        keys=['availability:'+kind+':'+imdb for kind,imdb in languages if kind and imdb]
+        keys+=['wizdom-search:movie:'+imdb for kind,imdb in languages if kind=='movie']
+        for start in range(0,len(keys),400):
+            batch=keys[start:start+400]
+            cached_rows+=conn.execute('SELECT key,value FROM cache WHERE key IN ('+','.join('?' for _ in batch)+') AND expires>?',(*batch,time.time())).fetchall()
+        movies=['movie:'+imdb for kind,imdb in languages if kind=='movie']
+        for start in range(0,len(movies),400):
+            batch=movies[start:start+400]
+            playback_rows+=conn.execute('SELECT key,value FROM playback WHERE key IN ('+','.join('?' for _ in batch)+') AND updated>?',(*batch,time.time()-86400)).fetchall()
+        for kind,imdb in languages:
+            if kind=='series':
+                prefix='series:'+imdb+':'
+                playback_rows+=conn.execute('SELECT key,value FROM playback WHERE key>=? AND key<? AND updated>?',(prefix,prefix+chr(0x10ffff),time.time()-86400)).fetchall()
     for key,raw in cached_rows:
         parts=key.split(':');identity=(parts[1],parts[2])
         if identity not in languages:continue
@@ -729,10 +742,29 @@ def external_subtitles(key,filename,have_english=False):
     return remember(cachekey,output,86400)
 
 
+def run_preflight(command,**kwargs):
+    cancel=getattr(BUDGET,'cancel',None)
+    if cancel is None:return subprocess.run(command,**kwargs)
+    timeout=kwargs.pop('timeout');end=time.monotonic()+timeout
+    kwargs.pop('capture_output',None)
+    with subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.PIPE,**kwargs) as process:
+        try:
+            while True:
+                remaining(1)
+                left=end-time.monotonic()
+                if left<=0:raise subprocess.TimeoutExpired(command,timeout)
+                try:
+                    out,err=process.communicate(timeout=min(.25,left))
+                    return subprocess.CompletedProcess(command,process.returncode,out,err)
+                except subprocess.TimeoutExpired:continue
+        except BaseException:
+            process.kill();process.communicate();raise
+
+
 def probe(selected,key,deadline=None):
     raw_url=selected.get('local') or signed_path('raw',key)
     available=remaining(18) if deadline is None else min(remaining(18),max(.001,deadline-time.monotonic()))
-    result=subprocess.run(['ffprobe','-v','error','-rw_timeout','6000000','-analyzeduration','4000000','-probesize','4000000','-show_streams','-show_format','-of','json',raw_url],capture_output=True,timeout=available)
+    result=run_preflight(['ffprobe','-v','error','-rw_timeout','6000000','-analyzeduration','4000000','-probesize','4000000','-show_streams','-show_format','-of','json',raw_url],capture_output=True,timeout=available)
     if result.returncode: raise RuntimeError('Source probe failed')
     if selected.get('local'):return json.loads(result.stdout)
     start=min(1048576,max(0,selected['length']-2097152))
@@ -741,6 +773,17 @@ def probe(selected,key,deadline=None):
     with R.urlopen(req,timeout=available) as response:
         if len(read_bounded(response,min(2097152,selected['length']-start),deadline))<min(2097152,selected['length']-start): raise RuntimeError('Source stalled during data preflight')
     return json.loads(result.stdout)
+
+
+def cached_poster(folder,query):
+    try:
+        if query.get('style',[''])[0]!=POSTER_STYLE:return None
+        if (folder/'badge-style.txt').read_text()!=POSTER_STYLE:return None
+        if query.get('badge',[''])[0]!=(folder/'badge.txt').read_text():return None
+        missing=folder/'poster-unavailable-at'
+        if missing.exists() and time.time()-missing.stat().st_mtime>=6*3600:return None
+        return (folder/'poster.jpg').read_bytes()
+    except OSError:return None
 
 
 def frame_rate(value):
@@ -762,9 +805,9 @@ def conversion_preflight(key,selected,info,audio_index,deadline):
         command=['ffmpeg','-v','error','-threads','1','-rw_timeout','6000000','-i',source,'-t','3',
             '-map','0:v:0','-map',f'0:{audio_index}','-c:v','copy','-c:a','aac','-profile:a','aac_low',
             '-b:a','192k','-ac','2','-ar','48000','-sn','-f','mpegts',str(output)]
-        converted=subprocess.run(command,capture_output=True,timeout=available(15))
+        converted=run_preflight(command,capture_output=True,timeout=available(15))
         if converted.returncode:raise RuntimeError('Audio conversion failed')
-        result=subprocess.run(['ffprobe','-v','error','-show_streams','-of','json',str(output)],capture_output=True,timeout=available(5))
+        result=run_preflight(['ffprobe','-v','error','-show_streams','-of','json',str(output)],capture_output=True,timeout=available(5))
         if result.returncode:raise RuntimeError('Converted sample probe failed')
         streams=json.loads(result.stdout).get('streams',[])
         original=next((s for s in info.get('streams',[]) if s.get('codec_type')=='video'),{})
@@ -772,7 +815,7 @@ def conversion_preflight(key,selected,info,audio_index,deadline):
             raise RuntimeError('Converted sample video missing')
         if not any(s.get('codec_type')=='audio' and s.get('codec_name')=='aac' and s.get('profile')=='LC' for s in streams):
             raise RuntimeError('Converted sample is not AAC-LC')
-        decoded=subprocess.run(['ffmpeg','-v','error','-threads','1','-i',str(output),'-t','1','-f','null','-'],capture_output=True,timeout=available(8))
+        decoded=run_preflight(['ffmpeg','-v','error','-threads','1','-i',str(output),'-t','1','-f','null','-'],capture_output=True,timeout=available(8))
         if decoded.returncode:raise RuntimeError('Converted sample decode failed')
     remember(cachekey,{'video_copy':True,'audio':'aac','profile':'LC','checked_at':time.time()},7*86400)
 
@@ -823,7 +866,7 @@ def prepare_locked(key,background,audio_index,deadline):
                 with playback_phase(key,'audio_conversion'):conversion_preflight(key,selected,info,selected_audio['index'],deadline)
             if background:
                 available=remaining(15)
-                sample=subprocess.run(['ffmpeg','-v','error','-rw_timeout','6000000','-i',selected.get('local') or signed_path('raw',key),'-t','2','-map','0:v:0','-map','0:a:0?','-f','null','-'],capture_output=True,timeout=available)
+                sample=run_preflight(['ffmpeg','-v','error','-rw_timeout','6000000','-i',selected.get('local') or signed_path('raw',key),'-t','2','-map','0:v:0','-map','0:a:0?','-f','null','-'],capture_output=True,timeout=available)
                 if sample.returncode:raise RuntimeError('Video decode sample failed')
             break
         except (ClientCancelled,PlaybackBusy):raise
@@ -989,6 +1032,18 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         if self.command!='HEAD': self.wfile.write(content)
 
+    def poster_reply(self,content):
+        etag='"'+hashlib.sha256(content).hexdigest()+'"'
+        matched=any(tag.strip().removeprefix('W/') in (etag,'*') for tag in self.headers.get('If-None-Match','').split(','))
+        self.send_response(304 if matched else 200)
+        self.send_header('ETag',etag)
+        self.send_header('Cache-Control','private, max-age=60')
+        if not matched:
+            self.send_header('Content-Type','image/jpeg')
+            self.send_header('Content-Length',str(len(content)))
+        self.end_headers()
+        if not matched and self.command!='HEAD':self.wfile.write(content)
+
     def disconnected(self):
         try:
             if not select.select([self.connection],[],[],0)[0]:return False
@@ -1025,10 +1080,13 @@ class Handler(BaseHTTPRequestHandler):
                 if kind not in ('movie','series') or not re.fullmatch(r'tt\d{5,12}',imdb):
                     return self.reply({'error':'Not found'},404)
                 folder=LIBRARY/('movies' if kind=='movie' else 'shows')/imdb
+                query=U.parse_qs(parsed.query)
+                content=cached_poster(folder,query)
+                if content is not None:return self.poster_reply(content)
                 folder.mkdir(parents=True,exist_ok=True)
                 with POSTER_LIMIT, POSTER_LOCKS[int(imdb[2:])%len(POSTER_LOCKS)]:
                     with F.db() as conn:
-                        row=conn.execute('SELECT meta FROM items WHERE kind=? AND imdb=?',(kind,imdb)).fetchone()
+                        row=conn.execute('SELECT meta FROM items WHERE key=?',(kind+':'+imdb,)).fetchone()
                         if not row:row=conn.execute('SELECT meta FROM discovery WHERE kind=? AND imdb=?',(kind,imdb)).fetchone()
                     meta=json.loads(row[0]) if row else {'poster':f'https://images.metahub.space/poster/medium/{imdb}/img'}
                     if not str(meta.get('poster','')).startswith('https://'):
@@ -1036,7 +1094,7 @@ class Handler(BaseHTTPRequestHandler):
                     make_poster(folder,meta,kind,imdb)
                     if not (folder/'poster.jpg').exists():return self.reply({'error':'Artwork unavailable'},404)
                     content=(folder/'poster.jpg').read_bytes()
-                return self.reply(content,ctype='image/jpeg')
+                return self.poster_reply(content)
             # Stremio metadata/search proxy, used by the Jellyfin plugin.
             if parts[0]=='label' and len(parts)==2:
                 imdb=parts[1]

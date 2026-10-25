@@ -96,7 +96,14 @@ def workers():
             'next_run':next_run,'countdown':countdown,'detail':detail})
     return rows
 
+def foreground_busy(data=DATA):
+    try:return float((data.parent.parent/'catalogue/.foreground-read-until').read_text())>time.time()
+    except (OSError,ValueError):return False
+
 def counts(data=DATA,refresh=False):
+    if foreground_busy(data):
+        try:return json.loads(Path('/run/media-worker-counts.json').read_text())['rows']
+        except (OSError,ValueError,KeyError):return []
     now=time.time();cache=Path('/run/media-worker-counts.json')
     if data==DATA and cache.exists():
         try:
@@ -108,6 +115,7 @@ def counts(data=DATA,refresh=False):
     rows=[]
     def add(name,value,detail=''):rows.append({'id':str(len(rows)),'name':name,'value':f'{value:,}' if isinstance(value,int) else str(value),'detail':detail,'updated':stamp(now)})
     with closing(sqlite3.connect('file:'+str(data/'catalogue.sqlite')+'?mode=ro',uri=True,timeout=3)) as conn:
+        conn.set_progress_handler(lambda:int(foreground_busy(data)),10000)
         grouped=dict(conn.execute('SELECT state,COUNT(*) FROM validation GROUP BY state'))
         add('Awaiting first check',grouped.get('pending',0),'Movie, first-episode and additional-episode source keys')
         add('Failed / not passed — retained for retry',grouped.get('unavailable',0),'Not deleted; retry waits increase up to 30 days')
@@ -182,5 +190,10 @@ def counts(data=DATA,refresh=False):
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('section',choices=('workers','counts','snapshot'));args=parser.parse_args()
-    rows=workers() if args.section=='workers' else counts(refresh=args.section=='snapshot')
+    try:rows=workers() if args.section=='workers' else counts(refresh=args.section=='snapshot')
+    except sqlite3.OperationalError:
+        if args.section=='snapshot' and foreground_busy():
+            print('Counter snapshot yielded to navigation; previous snapshot retained')
+            raise SystemExit(0)
+        raise
     print('Worker counter snapshot updated: '+str(len(rows))+' metrics' if args.section=='snapshot' else json.dumps(rows,ensure_ascii=False))

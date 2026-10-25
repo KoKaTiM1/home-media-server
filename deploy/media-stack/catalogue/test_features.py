@@ -81,7 +81,7 @@ class FeatureTests(unittest.TestCase):
         a.F.enqueue(movie,20);a.F.enqueue(episode,100)
         with patch.object(a.F,'jf',return_value=[]),patch.object(a,'prepared',return_value={}) as prepare,patch('features.time.sleep'):
             a.F.warm_availability(1)
-            prepare.assert_called_once_with(movie,background=True)
+            prepare.assert_called_once_with(movie,background=True,cancel=unittest.mock.ANY)
 
     def test_due_failure_gets_a_retry_ahead_of_large_pending_backlog(self):
         self.make_search_index()
@@ -91,7 +91,7 @@ class FeatureTests(unittest.TestCase):
         with a.F.db() as conn:conn.execute('UPDATE validation SET next_check=0 WHERE key=?',(failed,))
         with patch.object(a.F,'jf',return_value=[]),patch.object(a,'prepared',return_value={}) as prepare,patch('features.time.sleep'):
             a.F.warm_availability(1)
-            prepare.assert_called_once_with(failed,background=True)
+            prepare.assert_called_once_with(failed,background=True,cancel=unittest.mock.ANY)
 
     def test_provider_rate_limit_pauses_the_queue(self):
         import urllib.error
