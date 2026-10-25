@@ -1,7 +1,7 @@
 # Home media catalogue
 
 Current deployed behavior, reviewed 2026-10-25 against Dynamic Library
-**1.4.0.15**, Jellyfin **10.11.11**, the bridge and systemd units. This is the
+**1.4.0.17**, Jellyfin **10.11.11**, the bridge and systemd units. This is the
 current operating guide, rather than a chronological list of old features.
 The installed WizdomSubs Downloader version is **0.2.0.0**.
 
@@ -61,12 +61,21 @@ Hebrew, confirmed English, or unknown subtitle availability. Show markers sit
 bottom-left; movie markers sit top-left. A show's subtitle badge does not promise
 subtitles for every episode or exact timing for every release.
 
-Indexed shows use native per-user unwatched episode counts, including watched
-and favorite state. Previews without native indexing use locally saved distinct
-released-episode metadata, then switch to native counts when indexed. Preview
-counts include released specials and exclude future, duplicate and invalid
-entries. Unknown counts stay unknown. Browsing does not fetch provider episode
-metadata merely to populate the badge.
+Movies and episodes retain native per-user watched status. For online series,
+known released-episode totals also include episodes awaiting verification or
+indexing: watching all currently indexed episodes does not complete a larger
+show. The response's remaining count includes those missing episodes; a whole
+show gets a watched check only when all known released episodes are watched.
+A new released episode removes completion. Released specials count; future,
+duplicate and invalid entries do not. Saved metadata can be incomplete or stale;
+unknown totals fall back to native state. No inferred progress is written to
+watch history and no provider lookup runs merely to draw the indicator.
+
+In the Android TV app, enable **Settings > Customization > Watched indicator >
+Always** to retain both watched checks and unwatched counts. Some app versions
+place it under Display. This is a TV-local preference; server configuration
+cannot turn it on remotely. **Hide unwatched count** retains checks only; avoid
+Episodes only / Never if you want checks on movies and whole shows.
 
 Browse, details, search and Back navigation preserve the same poster identity.
 Missing artwork gets a generated title/badge image; it is not proof of a missing
@@ -87,6 +96,19 @@ Actual video/audio are probed. Episodes must match season/episode or an explicit
 unambiguous file index; movie packs require an explicit index. Selected video
 must be compatible with the client: this catalogue does not encode or scale it.
 One distinct video stream is supported at a time on the current PC.
+
+Opening a playable movie/episode's details asks the bridge to prepare its source
+in advance. One speculative job runs at a time, without a queue, for at most
+12 seconds, with a 60-second per-title cooldown. Active or paused playback and
+unavailable session status suppress the job; playback beginning cancels it.
+A successful preparation, including subtitle lookup, is reused for five minutes.
+It may fetch torrent metadata and small video/audio probe samples; it does not
+request a managed full-film download. Failed speculative attempts do not revoke
+existing verification or drop torrents. Immediate Play still has its ordinary
+27-second preparation budget and may need to finish work. Slow peers and client
+buffering can still delay startup. Sanitized `details_warm`, `prepared_cache`,
+`subtitle_lookup`, `upstream_open` and `stream_ready` events separate preparation,
+cache reuse and the initial video-data wait from long-running transfer logs.
 
 AAC-LC audio can play directly. Selected AAC Main, AC3/EAC3, MP3 or other non-LC
 tracks can use Jellyfin native HLS with **video copy and AAC-LC stereo audio at
@@ -122,6 +144,21 @@ preparation and hides it from normal browse while retaining it for retry.
 Wizdom is the default free Hebrew provider and needs no account/key. Movie IMDb
 IDs or series IMDb plus exact season/episode identify matches; release names
 help rank candidates. Hebrew is preferred, with English where available.
+The player offers up to two Hebrew tracks named **עברית 1** and **עברית 2**.
+Existing embedded Hebrew counts toward that pair; missing slots use up to two
+Wizdom releases, best filename match first. Identical normalized cue content is
+deduplicated, including copies that differ only in cue numbering/newlines.
+A second version appears only when available. This offers an alternative for a
+poorly timed track; it does not automatically prove or correct synchronization.
+
+The first Hebrew choice is the default. Tracks have distinct original indexes
+and content-specific files/URLs; choosing the second does not reuse the first
+file. Provider failures on one release can fall through to another within the
+existing preparation budget. Signed variant IDs survive the native VTT relay.
+Legacy single-file subtitle links remain readable. Native language identifiers
+stay `heb`, while titles/display names begin in Hebrew. English and explicit
+None retain their existing behavior. Prepared metadata uses subtitle-policy2,
+so the next preparation rebuilds older cached single-choice track lists.
 OpenSubtitles is optional additional coverage, configured privately through
 `configure-subtitles.py`. Missing subtitles cannot be fabricated, and matching
 a release name does not guarantee synchronization.

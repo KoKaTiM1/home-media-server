@@ -13,14 +13,16 @@ namespace Jellyfin.Plugin.DynamicLibrary.Api;
 public sealed class HomeCatalogueSubtitleController(IHttpClientFactory clients) : ControllerBase
 {
     [HttpGet("{key}/{language}.{format}")]
-    public async Task<IActionResult> Get(string key, string language, string format, [FromQuery] string sig)
+    public async Task<IActionResult> Get(string key, string language, string format, [FromQuery] string sig, [FromQuery] string? variant = null)
     {
         if (!Regex.IsMatch(key, @"^(movie:tt\d{5,12}|series:tt\d{5,12}:\d{1,3}:\d{1,4})$")
             || !Regex.IsMatch(sig, "^[a-f0-9]{64}$")
+            || (variant is not null && !Regex.IsMatch(variant, "^[a-f0-9]{16}$"))
             || language is not ("heb" or "eng") || format is not ("srt" or "vtt")) return BadRequest();
         var client = clients.CreateClient();
         client.Timeout = TimeSpan.FromSeconds(10);
         var url = $"http://catalogue-bridge:8092/sub/{Uri.EscapeDataString(key)}?sig={sig}&lang={language}";
+        if (variant is not null) url += "&variant=" + variant;
         using var response = await client.GetAsync(url, HttpContext.RequestAborted);
         if (!response.IsSuccessStatusCode) return StatusCode((int)response.StatusCode);
         var bytes = await response.Content.ReadAsByteArrayAsync(HttpContext.RequestAborted);

@@ -49,6 +49,11 @@ POSTER_LIMIT = threading.Semaphore(3)
 POSTER_LOCKS = [threading.Lock() for _ in range(64)]
 LIVE_LOCK = threading.Lock()
 LIVE = {'key': None, 'touched': 0, 'active': 0}
+DETAIL_LIMIT = threading.Semaphore(1)
+DETAIL_SECONDS = 12
+DETAIL_LOCK = threading.Lock()
+DETAIL_RECENT = {}
+
 
 
 # One request budget follows nested network/probe operations. It is thread-local
@@ -536,7 +541,7 @@ def stream_candidates(key):
         'behaviorHints':{'filename':'Big Buck Bunny.mp4'},'_score':999999}
     saved=cached('streams:'+key)
     if saved is not None:
-        if not cached('source-status:'+key):
+        if not getattr(BUDGET,'speculative',False) and not cached('source-status:'+key):
             remember('source-status:'+key,{'state':'listed' if saved else 'unavailable','checked_at':time.time()},21600)
         if key=='movie:tt1254207' and not cached('open-film-failed') and not any(s['infoHash']==open_film['infoHash'] for s in saved):
             return [open_film]+saved
@@ -560,7 +565,8 @@ def stream_candidates(key):
         candidates.append(candidate)
     candidates.sort(key=lambda x:x['_score'],reverse=True)
     if key=='movie:tt1254207' and not cached('open-film-failed'): candidates.insert(0,open_film)
-    remember('source-status:'+key,{'state':'listed' if candidates else 'unavailable','checked_at':time.time()},21600)
+    if not getattr(BUDGET,'speculative',False):
+        remember('source-status:'+key,{'state':'listed' if candidates else 'unavailable','checked_at':time.time()},21600)
     return remember('streams:'+key,candidates[:5],21600 if not candidates else 1800)
 
 
@@ -631,6 +637,7 @@ def resolve(key,deadline=None):
                 'torrent_url':candidate.get('torrentUrl')},900)
         except (ClientCancelled,PlaybackBusy):raise
         except Exception:
+            if getattr(BUDGET,'speculative',False):raise
             log('Trying next source for '+key)
             try: torr({'action':'drop','hash':infohash},timeout=2)
             except Exception: pass
@@ -660,52 +667,68 @@ def wizdom_search(key):
     return remember(cachekey,[r for r in result if isinstance(r,dict) and isinstance(r.get('id'),int)],86400)
 
 
-def wizdom_subtitles(key,filename):
-    cachekey='wizdom-subtitles:'+key+':'+hashlib.sha256(filename.encode()).hexdigest()[:12]
+def store_subtitle(key,content,lang):
+    if content.startswith((b'\xff\xfe',b'\xfe\xff')):text=content.decode('utf-16')
+    else:
+        try:text=content.decode('utf-8-sig')
+        except UnicodeDecodeError:text=content.decode('cp1255')
+    text=text.replace('\r\n','\n').replace('\r','\n')
+    if not re.search(r'\d{2}:\d{2}:\d{2}[,.]\d{3}\s*-->',text):raise ValueError('Not an SRT subtitle')
+    # Cue numbering and newline encoding do not make a different translation.
+    canonical=re.sub(r'(?m)^\d+\s*\n(?=\d{2}:\d{2}:\d{2}[,.])','',text).strip()
+    variant=hashlib.sha256(canonical.encode()).hexdigest()[:16]
+    folder=DATA/'subtitles'/hashlib.sha256(key.encode()).hexdigest()[:24]
+    folder.mkdir(parents=True,exist_ok=True)
+    target=folder/(( 'he' if lang=='heb' else 'en')+'-'+variant+'.srt')
+    if not target.is_file():
+        with tempfile.NamedTemporaryFile(dir=folder,delete=False) as temporary:
+            temporary.write(text.encode('utf-8'));name=temporary.name
+        try:Path(name).replace(target)
+        finally:Path(name).unlink(missing_ok=True)
+    return {'lang':lang,'path':str(target),'variant':variant}
+
+
+def wizdom_subtitles(key,filename,limit=2):
+    limit=max(1,min(2,limit))
+    cachekey='wizdom-subtitles-v2:'+key+':'+hashlib.sha256(filename.encode()).hexdigest()[:12]+':'+str(limit)
     saved=cached(cachekey)
-    if saved is not None and all(Path(s['path']).is_file() for s in saved): return saved
-    matches=wizdom_search(key)
-    if not matches: return remember(cachekey,[],3600)
+    if saved is not None and all(Path(sub['path']).is_file() for sub in saved):return saved
+    matches=list(wizdom_search(key))
+    if not matches:return remember(cachekey,[],3600)
     normalize=lambda text: re.sub(r'[^a-z0-9]+',' ',re.sub(
         r'\.(?:mkv|mp4|avi|webm|m4v|ts|srt)$','',Path(text).name.lower())).strip()
     stem=normalize(filename)
     matches.sort(key=lambda r:SequenceMatcher(None,stem,normalize(r.get('versioname') or '')).ratio(),reverse=True)
-    for item in matches[:2]:
+    output=[];seen=set()
+    for item in matches[:4]:
+        if len(output)>=limit:break
         try:
             content=fetch('https://wizdom.xyz/api/files/sub/'+str(item['id']),raw=True,timeout=4)
             with zipfile.ZipFile(io.BytesIO(content)) as archive:
                 entries=[e for e in archive.infolist() if e.filename.lower().endswith('.srt')
                          and not e.is_dir() and e.file_size<=2*1024*1024]
-                if not entries: continue
-                # Read bytes only: never extract provider-controlled archive paths.
+                if not entries:continue
                 content=archive.read(entries[0])
-            if content.startswith((b'\xff\xfe',b'\xfe\xff')): text=content.decode('utf-16')
-            else:
-                try: text=content.decode('utf-8-sig')
-                except UnicodeDecodeError: text=content.decode('cp1255')
-            if not re.search(r'\d{2}:\d{2}:\d{2}[,.]\d{3}\s*-->',text):
-                raise ValueError('Not an SRT subtitle')
-            folder=DATA/'subtitles'/hashlib.sha256(key.encode()).hexdigest()[:24]
-            folder.mkdir(parents=True,exist_ok=True)
-            target=folder/'he.srt'
-            temporary=folder/'he.srt.tmp'
-            temporary.write_text(text,encoding='utf-8')
-            temporary.replace(target)
-            return remember(cachekey,[{'lang':'heb','path':str(target),'provider':'WizdomSubs',
-                'release':item.get('versioname',''),'release_match':normalize(item.get('versioname') or '')==stem}],86400)
-        except (ValueError,UnicodeError,zipfile.BadZipFile): continue
-    return remember(cachekey,[],3600)
+            sub=store_subtitle(key,content,'heb')
+            if sub['variant'] in seen:continue
+            seen.add(sub['variant'])
+            sub.update(provider='WizdomSubs',release=item.get('versioname',''),
+                release_match=normalize(item.get('versioname') or '')==stem)
+            output.append(sub)
+        except (ClientCancelled,PlaybackBusy):raise
+        except (ValueError,UnicodeError,zipfile.BadZipFile,urllib.error.URLError,TimeoutError):continue
+    return remember(cachekey,output,86400 if output else 3600)
 
 
-def external_subtitles(key,filename,have_english=False):
+def external_subtitles(key,filename,have_english=False,max_hebrew=2):
     try:
-        hebrew=wizdom_subtitles(key,filename)
+        hebrew=wizdom_subtitles(key,filename,limit=max_hebrew)
         if hebrew: return hebrew
     except Exception:
         log('Wizdom subtitles unavailable for '+key+'; checking fallback')
     config=subtitle_config()
     if not config.get('api_key'): return []
-    cachekey='subtitles:'+key+':'+hashlib.sha256(filename.encode()).hexdigest()[:12]
+    cachekey='subtitles-v2:'+key+':'+hashlib.sha256(filename.encode()).hexdigest()[:12]
     saved=cached(cachekey)
     if saved is not None: return saved
     kind,imdb,*episode=key.split(':')
@@ -734,9 +757,9 @@ def external_subtitles(key,filename,have_english=False):
         item=matches[0]
         link=fetch('https://api.opensubtitles.com/api/v1/download',{'file_id':item['files'][0]['file_id'],'sub_format':'srt'},headers,timeout=5)
         content=fetch(link['link'],raw=True,timeout=5)
-        target=folder/(lang+'.srt')
-        target.write_bytes(content)
-        output.append({'lang':'heb' if lang=='he' else 'eng','path':str(target), 'release_match':str(item.get('release','')).lower() in stem if item.get('release') else False})
+        sub=store_subtitle(key,content,'heb' if lang=='he' else 'eng')
+        sub['release_match']=str(item.get('release','')).lower() in stem if item.get('release') else False
+        output.append(sub)
         # Download only the preferred available language to respect account quotas.
         break
     return remember(cachekey,output,86400)
@@ -820,14 +843,64 @@ def conversion_preflight(key,selected,info,audio_index,deadline):
     remember(cachekey,{'video_copy':True,'audio':'aac','profile':'LC','checked_at':time.time()},7*86400)
 
 
+def detail_playback_busy():
+    """Fail closed: even paused/native/downloaded playback protects the server."""
+    with LIVE_LOCK:
+        if LIVE['active']>0:return True
+    try:return any(session.get('NowPlayingItem') for session in jf('/Sessions',timeout=1))
+    except Exception:return True
+
+
+def warm_details(key):
+    # No queue: only the currently opened playable title may occupy the slot.
+    if not DETAIL_LIMIT.acquire(blocking=False):return False
+    with DETAIL_LOCK:
+        now=time.monotonic()
+        if DETAIL_RECENT.get(key,0)>now-60:
+            DETAIL_LIMIT.release();return False
+        if len(DETAIL_RECENT)>=256:DETAIL_RECENT.clear()
+        DETAIL_RECENT[key]=now
+    def work():
+        started=time.monotonic()
+        previous=getattr(BUDGET,'speculative',False)
+        BUDGET.speculative=True
+        try:
+            if detail_playback_busy():return
+            # Navigation already makes queue workers yield. Session checks also
+            # cancel this job if playback begins while preparation is running.
+            state={'next':0,'busy':False}
+            def cancel():
+                now=time.monotonic()
+                if now>=state['next']:
+                    state['busy']=detail_playback_busy();state['next']=now+1
+                return state['busy']
+            prepared(key,cancel=cancel)
+            playback_event(key,'details_warm',started,'ok')
+        except (ClientCancelled,PlaybackBusy) as error:
+            playback_event(key,'details_warm',started,'cancelled',error)
+        except Exception as error:
+            playback_event(key,'details_warm',started,'failed',error)
+        finally:
+            BUDGET.speculative=previous
+            DETAIL_LIMIT.release()
+    try:threading.Thread(target=work,daemon=True).start()
+    except Exception:
+        DETAIL_LIMIT.release();raise
+    return True
+
+
 def prepared(key,background=False,audio_index=None,cancel=None):
-    deadline=time.monotonic()+(60 if background else PREPARATION_SECONDS)
+    speculative=getattr(BUDGET,'speculative',False)
+    deadline=time.monotonic()+(DETAIL_SECONDS if speculative else 60 if background else PREPARATION_SECONDS)
     with request_budget(deadline,cancel),playback_phase(key,'preparation'):
         with LOCKS_LOCK:lock=LOCKS.setdefault(key,threading.Lock())
-        # Poll cancellation during lock waits; never mark a source failed just
-        # because another request is preparing the same title.
-        while not lock.acquire(timeout=min(.1,remaining(.1))):
-            if deadline-time.monotonic()<.1:raise PlaybackBusy('Preparation already in progress')
+        # Speculative navigation never waits behind actual Play or a worker.
+        if speculative:
+            remaining(1)
+            if not lock.acquire(blocking=False):raise PlaybackBusy('Preparation already in progress')
+        else:
+            while not lock.acquire(timeout=min(.1,remaining(.1))):
+                if deadline-time.monotonic()<.1:raise PlaybackBusy('Preparation already in progress')
         try:return prepare_locked(key,background,audio_index,deadline)
         finally:lock.release()
 
@@ -838,7 +911,9 @@ def prepare_locked(key,background,audio_index,deadline):
         if LIVE['key'] not in (None,key) and LIVE['active']>0:
             raise PlaybackBusy('Another title is currently streaming; this server supports one stream')
     saved=cached(prepared_key)
-    if saved and saved.get('audio_policy')==2 and F.source_state(key) in ('verified','downloaded'): return saved
+    if saved and saved.get('audio_policy')==2 and saved.get('subtitle_policy')==2 and F.source_state(key) in ('verified','downloaded'):
+        playback_event(key,'prepared_cache',time.monotonic(),'hit')
+        return saved
     for attempt in range(3):
         try:
             with playback_phase(key,'torrent_resolution'):selected=resolve(key,deadline=deadline)
@@ -846,6 +921,7 @@ def prepare_locked(key,background,audio_index,deadline):
         except Exception as error:
             cancel=getattr(BUDGET,'cancel',None)
             if cancel and cancel():raise ClientCancelled('Client disconnected') from None
+            if getattr(BUDGET,'speculative',False):raise
             remember('source-status:'+key,{'state':'unavailable','checked_at':time.time()},900)
             F.validation_result(key,False,reason='Source preparation failed ('+type(error).__name__+')')
             raise
@@ -873,6 +949,7 @@ def prepare_locked(key,background,audio_index,deadline):
         except Exception as error:
             cancel=getattr(BUDGET,'cancel',None)
             if cancel and cancel():raise ClientCancelled('Client disconnected') from None
+            if getattr(BUDGET,'speculative',False):raise
             if selected['hash']=='dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c':
                 remember('open-film-failed',True,900)
             with db() as conn: conn.execute('DELETE FROM cache WHERE key=?',('resolved:'+key,))
@@ -907,26 +984,43 @@ def prepare_locked(key,background,audio_index,deadline):
     # while copying video; direct AAC-LC retains the original stream.
     tracks.sort(key=lambda t:(0 if t['Type']=='Video' else 1 if t['Type']=='Audio' else 2,0 if t.get('Codec')=='aac' and t.get('Profile')=='LC' else 1))
     if not any(t['Type']=='Video' for t in tracks): raise RuntimeError('No video in selected source')
-    # External search/download has a bounded deadline. A timeout never blocks video.
-    if not background and 'heb' not in languages:
+    # Show at most two Hebrew choices, including any embedded track. Retain
+    # original stream indexes and all other languages; explicit None stays -1.
+    hebrew=[t for t in tracks if t['Type']=='Subtitle' and t['Language']=='heb']
+    keep={t['Index'] for t in hebrew[:2]}
+    next_index=max(t['Index'] for t in tracks)+1
+    tracks=[t for t in tracks if t['Type']!='Subtitle' or t['Language']!='heb' or t['Index'] in keep]
+    if not background and len(hebrew)<2:
         pool=ThreadPoolExecutor(max_workers=1)
+        cancel=getattr(BUDGET,'cancel',None)
+        def subtitles():
+            with request_budget(deadline,cancel):
+                return external_subtitles(key,selected['filename'],'eng' in languages,max_hebrew=2-len(hebrew))
         try:
-            external=pool.submit(external_subtitles,key,selected['filename'],'eng' in languages).result(timeout=max(.001,min(15,deadline-time.monotonic())))
+            with playback_phase(key,'subtitle_lookup'):
+                external=pool.submit(subtitles).result(timeout=max(.001,min(15,deadline-time.monotonic())))
+            he_count=len(hebrew)
             for sub in external:
-                tracks.append({'Index':max(t['Index'] for t in tracks)+1,'Type':'Subtitle','Codec':'srt',
+                if sub['lang']=='heb' and he_count>=2:continue
+                if sub['lang']=='heb':he_count+=1
+                variant=sub.get('variant')
+                tracks.append({'Index':next_index,'Type':'Subtitle','Codec':'srt',
                     'Language':sub['lang'],'IsExternal':True,'SupportsExternalStream':True,
-                    'DeliveryMethod':'External','DeliveryUrl':signed_path('sub',key)+'&lang='+sub['lang'],
+                    'DeliveryMethod':'External','DeliveryUrl':signed_path('sub',key)+'&lang='+sub['lang']+('&variant='+variant if variant else ''),
                     'Title':sub['lang'].upper()+' (downloaded)'})
-                languages.add(sub['lang'])
+                next_index+=1;languages.add(sub['lang'])
         except Exception: log('Subtitle download unavailable or timed out for '+key)
-        finally: pool.shutdown(wait=False,cancel_futures=True)
+        finally:pool.shutdown(wait=False,cancel_futures=True)
+    for number,track in enumerate((t for t in tracks if t['Type']=='Subtitle' and t['Language']=='heb'),1):
+        track['Title']='עברית '+str(number)
     preferred=next((t['Index'] for lang in ('heb','eng') for t in tracks if t['Type']=='Subtitle' and t['Language']==lang),None)
     output={'selected':selected,'MediaStreams':tracks,'DefaultSubtitleStreamIndex':preferred,
         'Container':Path(selected['filename']).suffix[1:].lower(),
         'RunTimeTicks':int(float(info.get('format',{}).get('duration',0))*10000000),
         'Bitrate':int(info.get('format',{}).get('bit_rate',5000000)),
-        'languages':sorted(languages),'checked_at':time.time(),'audio_policy':2,
+        'languages':sorted(languages),'checked_at':time.time(),'audio_policy':2,'subtitle_policy':2,
         'DefaultAudioStreamIndex':selected_audio['index'] if selected_audio else None,'AudioConversionRequired':needs_conversion}
+    if getattr(BUDGET,'speculative',False):remaining(1)
     with db() as conn:
         conn.execute('INSERT OR REPLACE INTO playback VALUES (?,?,?)',(key,json.dumps(output),time.time()))
     F.validation_result(key,True,proof={'version':4,'audio_policy':2,'audio_conversion':needs_conversion,'selected_audio_index':selected_audio['index'] if selected_audio else None,'audio_profiles':[{'codec':t.get('Codec'),'profile':t.get('Profile'),'language':t.get('Language')} for t in tracks if t['Type']=='Audio'],'checked_at':output['checked_at'],'source_hash':selected['hash'],'filename':selected['filename'],'Container':output['Container']})
@@ -1066,6 +1160,9 @@ class Handler(BaseHTTPRequestHandler):
                 wanted=U.parse_qs(parsed.query).get('keys',[''])[0]
                 if wanted:ready.intersection_update(wanted.split(','))
                 return self.reply({'titles':sorted(ready)})
+            if parsed.path=='/series-counts':
+                wanted=U.parse_qs(parsed.query).get('ids',[''])[0].split(',')[:1000]
+                return self.reply(F.series_episode_counts(wanted))
             if parsed.path=='/validation':
                 with F.db() as conn:
                     states=dict(conn.execute('SELECT state,COUNT(*) FROM validation GROUP BY state'))
@@ -1151,20 +1248,10 @@ class Handler(BaseHTTPRequestHandler):
                 F.enqueue(key,100)
                 if F.source_state(key) not in ('verified','downloaded'):
                     return self.reply({'streams':[]})
-                # Warm source listings without making title details wait for an
-                # indexer. No torrent/video is fetched until the user presses Play.
-                if cached('streams:'+key) is None and not cached('listing-warm:'+key):
-                    remember('listing-warm:'+key,True,30)
-                    def warm_listing():
-                        try: stream_candidates(key)
-                        except Exception: log('Source listing unavailable for '+key)
-                    threading.Thread(target=warm_listing,daemon=True).start()
-                if cached('wizdom-search:'+key) is None and not cached('subtitle-warm:'+key):
-                    remember('subtitle-warm:'+key,True,30)
-                    def warm_subtitle_search():
-                        try: wizdom_search(key)
-                        except Exception: pass
-                    threading.Thread(target=warm_subtitle_search,daemon=True).start()
+                # Opening a playable title starts one bounded speculative job.
+                # Source and subtitle work share that job rather than duplicate
+                # provider requests in separate warming threads.
+                if self.command=='GET':warm_details(key)
                 filename='video.mkv'
                 local=F.local_download(key)
                 streams=[{'name':'Downloaded on server' if local else 'Stream now','title':'Downloaded on server' if local else 'Stream now (1080p / 720p)',
@@ -1186,7 +1273,10 @@ class Handler(BaseHTTPRequestHandler):
             if parts[0]=='sub':
                 lang=U.parse_qs(parsed.query).get('lang',[''])[0]
                 if lang not in ('heb','eng'): return self.reply({'error':'Not found'},404)
-                target=DATA/'subtitles'/hashlib.sha256(key.encode()).hexdigest()[:24]/('he.srt' if lang=='heb' else 'en.srt')
+                variant=U.parse_qs(parsed.query).get('variant',[''])[0]
+                if variant and not re.fullmatch('[a-f0-9]{16}',variant):return self.reply({'error':'Invalid subtitle'},400)
+                name=('he' if lang=='heb' else 'en')+('-'+variant if variant else '')+'.srt'
+                target=DATA/'subtitles'/hashlib.sha256(key.encode()).hexdigest()[:24]/name
                 if not target.is_file(): return self.reply({'error':'Subtitle unavailable'},404)
                 return self.reply(target.read_bytes(),ctype='application/x-subrip; charset=utf-8')
             # Initial source resolution and first data share one 15s budget.
@@ -1205,7 +1295,9 @@ class Handler(BaseHTTPRequestHandler):
             headers=torr_headers()
             if self.headers.get('Range'): headers['Range']=self.headers['Range']
             upstream_request=R.Request(upstream(selected),headers=headers,method=self.command)
-            with R.urlopen(upstream_request,timeout=max(.001,data_deadline-time.monotonic())) as response:
+            with playback_phase(key,'upstream_open'):
+                upstream_response=R.urlopen(upstream_request,timeout=max(.001,data_deadline-time.monotonic()))
+            with upstream_response as response:
                 # Read an initial block BEFORE committing a successful response.
                 # A header-only upstream must fail promptly instead of leaving
                 # the TV waiting on an already successful empty video stream.
@@ -1214,6 +1306,7 @@ class Handler(BaseHTTPRequestHandler):
                     with playback_phase(key,'first_video_bytes'):
                         initial=read_bounded(response,1,data_deadline)
                         if not initial:raise RuntimeError('No initial video bytes')
+                playback_event(key,'stream_ready',stream_started,'ok')
                 self.send_response(response.status)
                 response_started=True
                 for name in ('Content-Type','Content-Length','Content-Range','Accept-Ranges','Last-Modified'):

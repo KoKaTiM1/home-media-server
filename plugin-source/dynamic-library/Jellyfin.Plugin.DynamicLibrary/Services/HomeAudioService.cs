@@ -124,6 +124,7 @@ public sealed class HomeAudioService(IMemoryCache cache, ILibraryManager library
 
     public static void Configure(MediaSourceInfo source, Guid itemId, string playSession, HttpRequest request)
     {
+        HomeSubtitleTracks.Label(source);
         var audio = source.MediaStreams.FirstOrDefault(s => s.Type == MediaStreamType.Audio && s.Index == source.DefaultAudioStreamIndex)
             ?? source.MediaStreams.FirstOrDefault(s => s.Type == MediaStreamType.Audio);
         if (audio is null || !NeedsConversion(audio)) return;

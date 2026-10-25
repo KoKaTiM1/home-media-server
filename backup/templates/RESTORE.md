@@ -85,7 +85,7 @@ manifests; do not simulate watched flags to test cleanup on real files.
    docker build -t home-media-catalogue:1 /opt/media-stack/catalogue
    ```
 
-5. Build the modified Dynamic Library version 1.4.0.15 from the configured
+5. Build the modified Dynamic Library version 1.4.0.17 from the configured
    source, then install its DLL and the public `meta.json` into
    `appdata/jellyfin/config/plugins/DynamicLibrary/` while Jellyfin is stopped.
    It was tested with Jellyfin 10.11.11. Install Wizdom from its publisher or
@@ -180,7 +180,7 @@ This downloads metadata, not movie files; allow time/storage for the initial bui
   reboot separately if appropriate; a healthy service alone is not reboot proof.
 
 The source-server deployment was checked on 2026-10-25 with Dynamic Library
-1.4.0.15: a zero-warning plugin build, Python feature and playback-deadline/stream
+1.4.0.17: a zero-warning plugin build, Python feature and playback-deadline/stream
 regression suites, .NET favorites/audio/indexing checks, native
 Favorites queries retaining unavailable titles, explicit failed-source responses,
 local HTTP206 playback and unchanged existing watched/favorite records. The
@@ -278,7 +278,7 @@ backup on the same disk does not protect against losing that disk.
 
 ## Favorites and timeout verification
 
-Dynamic Library 1.4.0.15 preserves unavailable titles in explicit Favorites
+Dynamic Library 1.4.0.17 preserves unavailable titles in explicit Favorites
 queries without exposing them in normal online browse/search. Verify an existing
 unavailable favorite remains visible and that Play still returns a compatible
 source or explicit failure. Preserve user hearts/watch history during recovery.
@@ -303,3 +303,28 @@ Timers retain their normal schedules. Install the matching monitor helper too;
 its previous counter snapshot remains available when a scan yields. Client
 image caches are optional: metadata lists and local posters still work without
 internet artwork access when the images are already stored.
+
+### Playback preparation and watched indicators
+
+Details-page source preparation runs only in the bridge: one 12-second job,
+60-second repeat cooldown, no queue, fail-closed session checks, five-minute
+prepared cache. It never requests a managed full-film download. Preserve the
+existing one-stream limit and do not restart playback services during viewing.
+Test active/paused suppression, source failure retaining verification, cache
+reuse and cancellation before enabling on a restored server.
+
+Whole-show response counts include known released episodes not indexed yet.
+They do not modify native UserData. Enable Settings > Customization (or Display)
+> Watched indicator > Always on each Android TV client. This TV-local setting
+is not a server preference and is not restored by this software backup.
+
+### Two Hebrew subtitle choices
+
+Keep the bridge and Dynamic Library subtitle relay versions synchronized.
+Up to two tracks share `Language=heb` but have distinct stream indexes and
+content-specific `variant` query IDs. Preserve that query in the native relay.
+Test that both actual Jellyfin VTT responses contain the selected track's
+content, not only different menu labels. Titles begin עברית 1 / עברית 2;
+None and English keep existing behavior. Older `he.srt` links remain readable,
+and old prepared-cache entries rebuild on the next preparation. No provider can
+guarantee a second available version or synchronization with every release.

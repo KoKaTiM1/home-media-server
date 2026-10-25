@@ -58,13 +58,26 @@ for preview in online:
             previews+=1
         else:unknown.append(preview['Name'])
         continue
-    for field in ('UnplayedItemCount','Played','PlayCount','PlaybackPositionTicks','IsFavorite','LastPlayedDate'):
+    for field in ('PlayCount','PlaybackPositionTicks','IsFavorite','LastPlayedDate'):
         assert actual.get(field)==expected.get(field),(preview['Name'],field,actual.get(field),expected.get(field))
-    assert preview.get('RecursiveItemCount')==item.get('RecursiveItemCount'),preview['Name']
+    imdb=preview.get('ProviderIds',{}).get('Imdb')
+    known=metadata.get(imdb)
+    native_total=item.get('RecursiveItemCount')
+    if known and native_total is not None:
+        total=max(native_total,known)
+        watched=max(0,min(native_total,native_total-expected['UnplayedItemCount']))
+        assert actual.get('UnplayedItemCount')==total-watched,preview['Name']
+        assert actual.get('Played')==(watched==total),preview['Name']
+        assert preview.get('RecursiveItemCount')==total,preview['Name']
+    elif known:
+        assert actual.get('Played') is False,preview['Name']
+        assert actual.get('UnplayedItemCount')>=known,preview['Name']
+    else:
+        assert actual.get('UnplayedItemCount')==expected.get('UnplayedItemCount'),preview['Name']
     checked+=1
     print('PASS:',preview['Name'],'unwatched episodes:',actual['UnplayedItemCount'])
 assert checked,'No native indexed shows with count data found'
-print('PASS:',checked,'indexed shows match native counts and watched/favorite state;',
+print('PASS:',checked,'indexed shows preserve native user data and include full released-episode totals;',
       previews,'previews match saved released-episode counts;',len(unknown),'counts unknown;',
       round(time.monotonic()-started,2),'seconds')
 assert not unknown,unknown

@@ -52,7 +52,7 @@ initial verification of the large metadata pool takes time.
 No disk serial numbers, network addresses or machine identifiers are included
 in this hardware overview.
 
-## Current features — deployed 2026-10-25 (Dynamic Library 1.4.0.15)
+## Current features — deployed 2026-10-25 (Dynamic Library 1.4.0.17)
 
 - Separate online movies/shows and local downloaded Movies/Shows libraries.
   The owner's order puts online movies/shows first, then local Movies/Shows.
@@ -65,7 +65,9 @@ in this hardware overview.
 - Online libraries named סרטים צפייה ישירה and סדרות צפייה ישירה.
 - YouTube trailer links where metadata supplies them. TV playback uses the
   native trailer control; embedded trailers within the detail page are not added.
-- Wizdom Hebrew subtitles with English fallback where available. Green HE means
+- Up to two distinct Hebrew subtitle choices, עברית 1 / עברית 2, with the best
+  available release match selected first. Wizdom provides free Hebrew subtitles
+  with English fallback where available. Green HE means
   confirmed Hebrew, red EN means confirmed English, gray ? means unknown.
 - Direct AAC-LC playback or native audio-only HLS conversion with unchanged
   video, for supported torrent streams and saved files. Verified conversion
@@ -73,8 +75,9 @@ in this hardware overview.
 - Torrent streaming and an explicit download-to-server option. Completed owned
   downloads move into the existing movies/shows storage and are preferred on
   the original title page; managed retention removes them after viewing or age.
-- Online show episode badges use native per-user unwatched counts when indexed,
-  with saved released-episode counts for previews that are not indexed yet.
+- Native watched checks for movies/episodes; online whole-show completion also
+  counts known released episodes awaiting indexing. Enable the TV app's Watched
+  indicator preference locally. No inferred progress overwrites watch history.
 - OMV phone tables use labelled cards with borders and an optional table view;
   desktop layout remains native.
 - Unavailable favorites stay visible without losing hearts or watched state.
@@ -82,6 +85,9 @@ in this hardware overview.
 - Shared 27-second foreground preparation budget, a 30-second plugin HTTP
   timeout and a separate 15-second initial stream-data budget. Failed playback
   returns an explicit error; the TV app can still retry its own requests.
+- Details-page source preparation: one job, up to 12 seconds, suppressed during
+  viewing, with successful results reused for five minutes. Failed speculative
+  preparation keeps existing verification. Slow sources can still delay Play.
 - Local playback diagnostics identify phase, elapsed time and exception type;
   private links, magnets and credentials are excluded.
 - Faster shared initial loading: a compact persistent cache of verified-title
@@ -124,7 +130,7 @@ The [worker-monitor guide](deploy/media-stack/omv-monitor/README.md) and
 [phone-layout guide](deploy/media-stack/omv-mobile/README.md) describe the installed
 OMV extensions. `RESTORE.md` includes all seven worker schedules and startup steps.
 
-Jellyfin is pinned to 10.11.11; the modified Dynamic Library is 1.4.0.15.
+Jellyfin is pinned to 10.11.11; the modified Dynamic Library is 1.4.0.17.
 The modified plugin must be built from this repository's configured source;
 installing an upstream release does not include these server-specific features.
 Its [plugin README](plugin-source/dynamic-library/README.md) describes this fork;

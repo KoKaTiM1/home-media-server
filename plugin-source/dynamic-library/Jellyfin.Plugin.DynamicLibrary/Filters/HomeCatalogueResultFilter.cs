@@ -146,6 +146,29 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
     public static bool KeepInResults(bool favoritesQuery, string? key, ISet<string> ready)
         => favoritesQuery || key is null || ready.Contains(key);
 
+    private async Task CorrectSeriesProgressAsync(IEnumerable<BaseItemDto> entries, CancellationToken token)
+    {
+        var series = entries.Where(e => e.Type == BaseItemKind.Series && IsHomeTitle(e)).ToArray();
+        var indexed = series.Select(e => (Item: e, Key: HomeKey(e.Id, e.Type)))
+            .Where(e => e.Key?.StartsWith("series:", StringComparison.Ordinal) == true).ToArray();
+        if (indexed.Length == 0) return;
+        try
+        {
+            var client = clients.CreateClient();
+            client.Timeout = TimeSpan.FromSeconds(1);
+            foreach (var batch in indexed.Chunk(100))
+            {
+                var counts = await client.GetFromJsonAsync<Dictionary<string, int>>(
+                    "http://catalogue-bridge:8092/series-counts?ids="
+                    + Uri.EscapeDataString(string.Join(',', batch.Select(e => e.Key![7..]).Distinct())), token);
+                foreach (var entry in batch)
+                    if (counts?.TryGetValue(entry.Key![7..], out var total) == true)
+                        HomeWatchStateService.Apply(entry.Item, total);
+            }
+        }
+        catch (Exception) { /* Keep native state when local episode metadata is unavailable. */ }
+    }
+
     public async Task OnResultExecutionAsync(ResultExecutingContext context, ResultExecutionDelegate next)
     {
         if (context.Result is ObjectResult listResult && listResult.Value is QueryResult<BaseItemDto> list)
@@ -164,6 +187,17 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
             var visible = keyed.Where(e => KeepInResults(favoritesQuery, e.Key, ready)).Select(e => e.Entry).ToArray();
             list.Items = visible;
             list.TotalRecordCount = Math.Max(visible.Length, list.TotalRecordCount - (entries.Length - visible.Length));
+        }
+        if (context.Result is ObjectResult progressResult)
+        {
+            var progressItems = progressResult.Value switch
+            {
+                QueryResult<BaseItemDto> page => page.Items,
+                BaseItemDto single => new[] { single },
+                IEnumerable<BaseItemDto> array => array,
+                _ => Array.Empty<BaseItemDto>()
+            };
+            await CorrectSeriesProgressAsync(progressItems, context.HttpContext.RequestAborted);
         }
         if (context.Result is ObjectResult titleResult && titleResult.Value is BaseItemDto title
             && title.Type is BaseItemKind.Movie or BaseItemKind.Series
@@ -295,8 +329,7 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
                             && subtitleUri.Host == "<SERVER_LAN_IP>" && subtitleUri.Port == 8092
                             && subtitleUri.AbsolutePath.StartsWith("/sub/", StringComparison.Ordinal))
                         {
-                            var key = Uri.UnescapeDataString(subtitleUri.AbsolutePath[5..]);
-                            stream.DeliveryUrl = $"/HomeCatalogue/Subtitles/{Uri.EscapeDataString(key)}/{stream.Language}.vtt{subtitleUri.Query}";
+                            stream.DeliveryUrl = HomeSubtitleTracks.RelayUrl(subtitleUri, stream.Language);
                             stream.Codec = "webvtt";
                             stream.DeliveryMethod = MediaBrowser.Model.Dlna.SubtitleDeliveryMethod.External;
                             stream.SupportsExternalStream = true;

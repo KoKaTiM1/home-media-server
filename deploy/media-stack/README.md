@@ -3,7 +3,7 @@
 Debian 13 / OpenMediaVault 8 runs Jellyfin, the custom catalogue bridge,
 Transmission and TorrServer through `/opt/media-stack/compose.yaml`.
 Jellyfin is pinned to 10.11.11, the modified Dynamic Library plugin is
-1.4.0.15, and the installed Wizdom subtitle provider is 0.2.0.0.
+1.4.0.17, and the installed Wizdom subtitle provider is 0.2.0.0.
 The initial Jellyfin wizard and catalogue integration are complete on the
 source server. A fresh recovery still needs its own accounts, keys and setup.
 
@@ -32,8 +32,12 @@ Use the native source/version selector on a title to stream, request
 Download to server + play, or play an existing downloaded copy. Saved files
 are linked to the original title page. If an owned saved copy is removed by
 retention, the same page can resolve a verified torrent again.
-Online show cards use native per-user unwatched counts when available and
-saved released-episode metadata for previews pending native indexing.
+Online show cards combine native per-user progress with saved released-episode
+totals, so unindexed episodes prevent a premature whole-show completion check.
+Enable Watched indicator > Always in the TV app to show checks and counts.
+Details-page source preparation can warm one title for up to 12 seconds while
+idle; successful preparation is reused for five minutes. Existing playback
+suppresses preparation and speculative failures retain prior verification.
 Show subtitle markers sit bottom-left, clear of the episode counter.
 
 ## Storage and Docker mounts
@@ -163,3 +167,8 @@ credentials, media and compiled plugins. Build the configured plugin from
 source; install Wizdom separately. No automated off-server runtime backup is
 configured. If the disk is lost, software can be rebuilt, but excluded state
 must be recreated and media downloaded again unless separately backed up.
+
+Hebrew subtitle selection offers up to two distinct versions labelled עברית 1
+and עברית 2, best release match first. Stable variant URLs keep their files
+separate; explicit None and English fallback remain available. A second choice
+depends on available releases and does not guarantee synchronization.

@@ -1,7 +1,7 @@
 # Home media server — modified Dynamic Library plugin
 
 This is the modified plugin used by **home-media-server**, currently
-**1.4.0.15**, tested with **Jellyfin 10.11.11**. Its active configuration uses
+**1.4.0.17**, tested with **Jellyfin 10.11.11**. Its active configuration uses
 the project's local catalogue bridge. The generic upstream feature list does
 not describe which providers or services this deployment uses.
 
@@ -14,6 +14,9 @@ not describe which providers or services this deployment uses.
 - Stable posters with Hebrew/English subtitle markers, native per-user show
   counts and locally saved preview episode-count fallbacks.
 - Unavailable favorites retained while normal watch lists stay ready-only.
+- Whole-show display progress includes known released episodes awaiting indexing;
+  native movie/episode watch history is preserved. Watched indicators are enabled
+  in the TV app locally. Details-page bridge preparation warms one idle title.
 - Verified bridge torrent sources and original-page access to completed saves.
 - AAC-LC direct playback or native audio-only HLS conversion with video copy,
   seeking and selectable external/embedded text subtitles.
@@ -47,3 +50,8 @@ recovery sequence for this configured server.
 setup/features guide. Optional TVDB/TMDB, Embedarr and upstream OpenSubtitles
 settings described there are not a declaration that this server runs them.
 The original [MIT license](LICENSE) is retained unchanged.
+
+Hebrew subtitle choices are labelled עברית 1 / עברית 2. Bridge variant IDs must
+remain in the native subtitle relay query: both tracks can share a language but
+must retain distinct URLs/files/indexes. HomeSubtitleTracks labels both direct
+and audio-converted playback without changing language IDs or explicit None.

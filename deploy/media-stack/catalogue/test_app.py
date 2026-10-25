@@ -279,14 +279,15 @@ class CatalogueTests(unittest.TestCase):
                 if '/search?' in url:
                     self.assertIn('imdb=tt0903747&season=1&episode=2',url)
                     return [{'id':1,'versioname':'Other.release'},{'id':2,'versioname':'Show.S01E02.1080p.x264'}]
-                self.assertTrue(url.endswith('/files/sub/2'))
+                self.assertTrue(url.endswith(('/files/sub/2','/files/sub/1')))
                 return archive.getvalue()
             with patch.object(a,'DATA',Path(directory)),patch.object(a,'fetch',side_effect=fake_fetch):
                 subs=a.external_subtitles('series:tt0903747:1:2','Show.S01E02.1080p.x264.mkv')
                 self.assertEqual(subs[0]['lang'],'heb')
                 self.assertTrue(subs[0]['release_match'])
                 self.assertEqual(Path(subs[0]['path']).read_text(encoding='utf-8'),subtitle)
-                self.assertEqual(len(calls),2)
+                self.assertEqual(len(calls),3)
+                self.assertEqual(len(subs),1)  # identical copies do not make a second choice
                 self.assertFalse((Path(directory).parent/'outside.srt').exists())
 
 

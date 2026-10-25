@@ -147,6 +147,7 @@ public sealed class HomeBrowseFilter(ILibraryManager library, SearchResultFactor
                     dto.UserData.ItemId = dto.Id;
                     dto.UserData.UnplayedItemCount = episodes;
                 }
+                if (preview.EpisodeCount is int releasedCount) HomeWatchStateService.Apply(dto, releasedCount);
                 result.Add(dto);
             }
             context.Result = new OkObjectResult(new QueryResult<BaseItemDto>

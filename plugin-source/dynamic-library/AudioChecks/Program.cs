@@ -22,6 +22,56 @@ static MediaSourceInfo Source(string profile) => new()
         new() { Index = 2, Type = MediaStreamType.Subtitle, Codec = "srt", Language = "heb" }
     }
 };
+var seriesProgress = new BaseItemDto
+{
+    Type = Jellyfin.Data.Enums.BaseItemKind.Series, RecursiveItemCount = 2,
+    UserData = new UserItemDataDto { Key = "fixture-watch", Played = true, UnplayedItemCount = 0, IsFavorite = true, PlayCount = 4 }
+};
+HomeWatchStateService.Apply(seriesProgress, 10);
+Check(!seriesProgress.UserData.Played && seriesProgress.UserData.UnplayedItemCount == 8, "Two verified episodes cannot complete a ten-episode show");
+Check(seriesProgress.UserData.PlayCount == 4 && seriesProgress.UserData.IsFavorite, "Aggregate correction preserves account fields");
+HomeWatchStateService.Apply(seriesProgress, 10);
+Check(seriesProgress.UserData.UnplayedItemCount == 8, "Aggregate correction is idempotent");
+seriesProgress.RecursiveItemCount = 10;seriesProgress.UserData.UnplayedItemCount = 0;
+HomeWatchStateService.Apply(seriesProgress, 10);
+Check(seriesProgress.UserData.Played, "All released episodes watched gives whole-show checkmark");
+HomeWatchStateService.Apply(seriesProgress, 11);
+Check(!seriesProgress.UserData.Played && seriesProgress.UserData.UnplayedItemCount == 1, "New released episode removes completion checkmark");
+var movieProgress = new BaseItemDto { Type = Jellyfin.Data.Enums.BaseItemKind.Movie, UserData = new UserItemDataDto { Key = "fixture-watch", Played = true } };
+HomeWatchStateService.Apply(movieProgress, 12);
+Check(movieProgress.UserData.Played, "Movie watch state unchanged");
+Console.WriteLine("PASS: whole-show completion, missing episodes, new episodes, idempotence, movie and account state preservation");
+var hebrewOptions = new MediaSourceInfo
+{
+    MediaStreams = new List<MediaStream>
+    {
+        new() { Type = MediaStreamType.Subtitle, Index = 2, Language = "heb", IsExternal = true, Title = "HEB (downloaded)", DeliveryUrl = "/first?variant=aaaaaaaaaaaaaaaa" },
+        new() { Type = MediaStreamType.Subtitle, Index = 3, Language = "heb", IsExternal = true, Title = "HEB (downloaded)", DeliveryUrl = "/second?variant=bbbbbbbbbbbbbbbb" },
+        new() { Type = MediaStreamType.Subtitle, Index = 4, Language = "eng", Title = "English" }
+    }, DefaultSubtitleStreamIndex = -1
+};
+HomeSubtitleTracks.Label(hebrewOptions);
+Check(hebrewOptions.MediaStreams[0].Title == "עברית 1" && hebrewOptions.MediaStreams[1].Title == "עברית 2", "Hebrew choices have clear Hebrew names");
+Check(hebrewOptions.MediaStreams[0].DisplayTitle.StartsWith("עברית 1") && hebrewOptions.MediaStreams[1].DisplayTitle.StartsWith("עברית 2"), "Serialized display names start in Hebrew");
+Check(hebrewOptions.MediaStreams[0].Language == "heb" && hebrewOptions.MediaStreams[1].Language == "heb", "Language identifiers remain valid for automatic selection");
+Check(hebrewOptions.MediaStreams[0].DeliveryUrl != hebrewOptions.MediaStreams[1].DeliveryUrl, "Hebrew choices retain distinct URLs");
+Check(hebrewOptions.DefaultSubtitleStreamIndex == -1 && hebrewOptions.MediaStreams[2].Title == "English", "Explicit None and other languages preserved");
+var relayOne = HomeSubtitleTracks.RelayUrl(new Uri("http://catalogue-bridge:8092/sub/movie:tt00000000?sig=" + new string('a',64) + "&lang=heb&variant=aaaaaaaaaaaaaaaa"), "heb");
+var relayTwo = HomeSubtitleTracks.RelayUrl(new Uri("http://catalogue-bridge:8092/sub/movie:tt00000000?sig=" + new string('a',64) + "&lang=heb&variant=bbbbbbbbbbbbbbbb"), "heb");
+Check(relayOne != relayTwo && relayOne.Contains("variant=aaaaaaaaaaaaaaaa") && relayTwo.Contains("variant=bbbbbbbbbbbbbbbb"), "Playback response relay preserves distinct variant identities");
+var subFactory = new SubtitleFactory();
+var subController = new Jellyfin.Plugin.DynamicLibrary.Api.HomeCatalogueSubtitleController(subFactory)
+{
+    ControllerContext = new Microsoft.AspNetCore.Mvc.ControllerContext { HttpContext = new DefaultHttpContext() }
+};
+var firstSub = await subController.Get("movie:tt00000000", "heb", "vtt", new string('a',64), "aaaaaaaaaaaaaaaa");
+var firstText = (firstSub as Microsoft.AspNetCore.Mvc.ContentResult)?.Content;
+var secondSub = await subController.Get("movie:tt00000000", "heb", "vtt", new string('a',64), "bbbbbbbbbbbbbbbb");
+var secondText = (secondSub as Microsoft.AspNetCore.Mvc.ContentResult)?.Content;
+Check(firstText?.StartsWith("WEBVTT") == true && firstText.Contains("ראשון") && secondText?.Contains("שני") == true, "Two Hebrew variants reach distinct VTT tracks through native relay");
+var invalidSub = await subController.Get("movie:tt00000000", "heb", "vtt", new string('a',64), "../../secret");
+Check(invalidSub is Microsoft.AspNetCore.Mvc.BadRequestResult && subFactory.Handler.Requests == 2, "Invalid variant rejected before network");
+Console.WriteLine("PASS: two Hebrew labels/display names, stable language IDs, distinct variant relay/VTT, None/English preservation and invalid variant rejection");
 var favoriteContext = new DefaultHttpContext();
 favoriteContext.Request.QueryString = new QueryString("?Filters=IsFavorite");
 Check(Jellyfin.Plugin.DynamicLibrary.Filters.HomeCatalogueResultFilter.IsFavoritesQuery(favoriteContext.Request.Query), "Native favorites filter");
@@ -147,5 +197,22 @@ public sealed class ImageHandler : HttpMessageHandler
         {
             Content = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes(request.RequestUri!.Query))
         };
+    }
+}
+
+sealed class SubtitleFactory : IHttpClientFactory
+{
+    public SubtitleHandler Handler { get; } = new();
+    public HttpClient CreateClient(string name) => new(Handler, disposeHandler: false);
+}
+sealed class SubtitleHandler : HttpMessageHandler
+{
+    public int Requests;
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        Requests++;
+        var text = request.RequestUri!.Query.Contains("variant=aaaaaaaaaaaaaaaa") ? "ראשון" : "שני";
+        return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        { Content = new StringContent("1\n00:00:01,000 --> 00:00:02,000\n" + text + "\n", Encoding.UTF8) });
     }
 }
