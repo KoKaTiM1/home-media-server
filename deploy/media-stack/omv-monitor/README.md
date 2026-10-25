@@ -1,48 +1,43 @@
 # OMV media worker monitor
 
-OMV administrator page: Diagnostics > Media workers, with two tabs:
+The installed OMV administrator page is **Diagnostics > Media workers**.
+It provides two read-only tabs:
 
-- Workers and schedules: all scheduled jobs, health/running/waiting/disabled state,
-  schedule, next run/countdown, last start/result and current validation key.
-- Catalogue queue and progress: pending movies/shows/episodes, failed/due retry
-  counts, passed source checks, distinct movies/shows, indexed visible counts,
-  metadata outside the queue, last-hour activity and last completed check.
+- **Workers and schedules**: all seven jobs, health, running/waiting/disabled
+  state, schedule, next run/countdown, last start/result and current check.
+- **Catalogue queue and progress**: pending movies/shows/episodes, failed and
+  due retries, passed source checks, distinct movies/shows, visible indexed
+  counts, metadata outside the queue, recent activity and audio resync progress.
 
-Worker rows refresh every10 seconds. A separate worker prepares counters in the background, one minute after each completed snapshot; the page reads the saved snapshot immediately. Metadata pool/outside-queue counters additionally cache5 minutes. Each value shows its snapshot time.
-Waiting between successful oneshot runs is healthy. A disabled timer or failed
-run is reported separately. Data is read-only; no start/stop/delete actions or
-shell input are accepted. RPC methods require the OMV administrator role.
-No source URLs, signed playback links, passwords or API tokens are returned.
-The helper reads systemd properties and read-only SQLite connections.
+Worker rows refresh every 10 seconds. A separate worker prepares counters two
+minutes after boot and then one minute after each completed snapshot. The page
+reads the saved snapshot without launching heavy database queries. Metadata
+pool/outside-queue counters cache up to five minutes; values include snapshot
+timestamps. A cold database can take longer than a minute to count.
 
-Deploy/restore at /opt/media-stack/omv-monitor and run `python3 install.py`.
-This uses supported workbench manifest and engined RPC extension directories;
-OMV core files are not modified. Only the OMV RPC engine restarts. On another
-server, adjust DATA in monitor.py to the restored media partition first.
+Waiting between successful oneshot runs is healthy. Failed jobs and disabled
+timers are reported separately. Counter generation uses limited CPU/IO and a
+192 MiB memory limit. The page is read-only, requires the OMV administrator role,
+and exposes no shell input, service controls, source URLs or credentials.
 
-The initial validation scheduler allocates most probes to new titles, with
-slots for existing-series episodes and due failures. Many passed episodes can
-belong to one visible show; source-check counts are not library title counts.
-AAC Main test status is separate from proof that a physical Chromecast plays it.
+The validation scheduler allocates probes across new titles/first show episodes,
+extra episodes, due failures and older audio-proof audits. Many verified episodes
+can belong to one show: source-check counts are not distinct library counts.
+Metadata pool size is not the number of verified playable titles.
 
-The owner initially reported distorted direct AAC Main audio and better AAC-LC
-audio in the paired samples. The deployed policy now accepts conversion-
-dependent sources only after a verified AAC-LC conversion sample. The owner
-confirmed the converted Big Buck Bunny test on Chromecast. Direct AAC Main
-pass-through is not used for these catalogue sources. The private persisted
-`aac-main-tv-result.json` supplies the reported result to the progress page.
+The deployed audio mode is **audio_policy2**: AAC-LC can play directly, while
+AAC Main and other supported non-LC audio require a verified AAC-LC conversion
+sample before eligibility. Native Jellyfin HLS supplies audio-only conversion
+for torrent and saved-file sources. Direct Main pass-through is not used for
+these catalogue sources. The owner confirmed converted playback on Chromecast.
 
-The audio-policy resync counters show how many prior failures were scheduled
-once and how many existing successful sources still await an audio audit.
-Verified entries remain visible pending an actual failed recheck; restarting
-the worker never resets the resync marker or the increasing retry waits.
+The durable **audio-policy-resync-v2** marker schedules older failed entries
+and proof audits once. Existing verified titles stay visible pending an actual
+failed recheck; restarting the worker does not reset attempts or retry backoff.
+The private AAC TV-test result supplies reported test status; dashboard counters
+alone cannot establish that a physical client plays every source correctly.
 
-The counter snapshot job is included in the worker table. It is enabled at boot,
-uses low CPU/IO priority and a192MiB memory limit, and can take longer than a
-minute on a cold database. Counter reads never launch million-row queries
-inside an OMV web request.
-
-Current mode is audio_policy2: AAC Main inputs are eligible after a verified
-AAC-LC conversion sample; direct Main delivery is not used. The current resync
-counter reads audio-policy-resync-v2, which supersedes the earlier filter-only
-policy. Native HLS handles delivery for torrent and saved-file sources.
+Restore this folder to `/opt/media-stack/omv-monitor`, configure the destination
+media-partition path in `monitor.py`, and run `python3 install.py` as root.
+The installer uses supported workbench manifest/engined RPC extension locations;
+OMV core files remain unchanged. It restarts only the OMV RPC engine.

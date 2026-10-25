@@ -2,7 +2,8 @@
 
 This local extension keeps native OMV tables, row selection, sorting, and
 actions. On screens up to 767 CSS pixels (or touch screens up to 1024 pixels),
-each normal table row becomes a full-width card with a label and complete
+each normal table row becomes a full-width card with a subtle border, spacing,
+a label and complete
 value for each column. Long paths wrap instead of being truncated. A **Show
 table** button restores the native column layout for sorting or comparison;
 **Show cards** returns to the full details. Native controls, row selection and
@@ -36,5 +37,6 @@ The check script uses Playwright Chromium and read-only `omv-rpc` responses
 to render the real OMV Angular interface without credentials. It does not
 use an owner's browser session, write server preferences, or modify storage.
 Browser tooling is a development dependency and is not needed to use the UI.
-Actual iPhone Safari feedback is still needed; Chromium emulation is not a
-physical iPhone test. Recheck the layout following a major OMV frontend update.
+The owner confirmed the phone layout and card borders work. Automated checks
+use Chromium emulation, so they do not establish every Safari/browser version.
+Recheck the layout following a major OMV frontend update.

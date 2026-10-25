@@ -52,13 +52,18 @@ initial verification of the large metadata pool takes time.
 No disk serial numbers, network addresses or machine identifiers are included
 in this hardware overview.
 
-## Current features
+## Current features — deployed 2026-10-25 (Dynamic Library 1.4.0.14)
 
-- Movies and series catalogue with paging beyond the original 1,000/200 limits.
+- Separate online movies/shows and local downloaded Movies/Shows libraries.
+  The owner's order puts online movies/shows first, then local Movies/Shows.
+- A persistent metadata discovery pool with no 1,000-movie/200-show total cap.
+  Normal browsing exposes validated titles; page size is separate from total size.
 - Hebrew title lookup, related English franchise search and single/range year search.
 - Newest production year first, then real release date by default; selected score/name/runtime sorting within years.
 - Month searches such as `2026-07` and `2026-07..2026-09` where real dates are known.
 - Online libraries named סרטים צפייה ישירה and סדרות צפייה ישירה.
+- YouTube trailer links where metadata supplies them. TV playback uses the
+  native trailer control; embedded trailers within the detail page are not added.
 - Wizdom Hebrew subtitles with English fallback where available. Green HE means
   confirmed Hebrew, red EN means confirmed English, gray ? means unknown.
 - Direct AAC-LC playback or native audio-only HLS conversion with unchanged
@@ -71,12 +76,19 @@ in this hardware overview.
   with saved released-episode counts for previews that are not indexed yet.
 - OMV phone tables use labelled cards with borders and an optional table view;
   desktop layout remains native.
-- Unavailable favorites stay visible; playback preparation and initial video-data waits are bounded and failures have local phase diagnostics.
+- Unavailable favorites stay visible without losing hearts or watched state.
+  Normal online browsing continues to hide unavailable sources.
+- Shared 27-second foreground preparation budget, a 30-second plugin HTTP
+  timeout and a separate 15-second initial stream-data budget. Failed playback
+  returns an explicit error; the TV app can still retry its own requests.
+- Local playback diagnostics identify phase, elapsed time and exception type;
+  private links, magnets and credentials are excluded.
 - Four catalogue syncs per day, mount-aware startup and enabled background timers.
 - OMV Diagnostics > Media workers: live schedules, health, current check and queue counters.
-- Persistent video validation and failed-title retry queue; only validated sources
-  or saved copies appear in the online watch catalogue. Backoff reduces repeated
-  requests; checks pause between probes during playback and resume after reboot.
+- Persistent video validation and retained failed-title retry queue. Ordinary
+  online browsing/search shows validated sources or saved copies; Favorites
+  preserves saved titles even when unavailable. Failures retry with backoff
+  from six hours up to 30 days; checks pause between probes during viewing.
 
 Torrent listings, metadata and subtitle matches are not guarantees of successful
 playback or exact subtitle timing. Native TV uses its existing search controls;
@@ -102,11 +114,17 @@ The authoritative current catalogue behavior is described in
 [the catalogue README](deploy/media-stack/catalogue/README.md).
 [The stack README](deploy/media-stack/README.md) describes current storage,
 service access and administration; [RESTORE.md](RESTORE.md) covers rebuilding.
-The worker-monitor and phone-layout READMEs document their optional OMV extensions.
+The [worker-monitor guide](deploy/media-stack/omv-monitor/README.md) and
+[phone-layout guide](deploy/media-stack/omv-mobile/README.md) describe the installed
+OMV extensions. `RESTORE.md` includes all seven worker schedules and startup steps.
 
 Jellyfin is pinned to 10.11.11; the modified Dynamic Library is 1.4.0.14.
-Upstream Dynamic Library source retains its MIT license. Wizdom is installed separately from its publisher or plugin catalogue; its
-licensing remains with its authors. No provider ZIP is included in this backup.
+The modified plugin must be built from this repository's configured source;
+installing an upstream release does not include these server-specific features.
+Its [plugin README](plugin-source/dynamic-library/README.md) describes this fork;
+the original upstream guide is separately labelled reference material. The MIT
+license is retained. Wizdom is installed separately from its publisher or plugin
+catalogue; its licensing remains with its authors. No provider ZIP is included.
 
 ## Snapshot updates
 

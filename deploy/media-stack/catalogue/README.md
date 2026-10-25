@@ -1,463 +1,263 @@
 # Home media catalogue
 
-Online show cards reuse Jellyfin's native per-user episode counts and watched
-data, so their unwatched badge matches Recently Added for indexed series.
-New previews without native indexing show distinct released episodes from
-locally saved metadata. They switch to the native unwatched count once indexed.
-Browsing fetches no provider episode metadata; unknown counts remain unknown.
+Current deployed behavior, reviewed 2026-10-25 against Dynamic Library
+**1.4.0.14**, Jellyfin **10.11.11**, the bridge and systemd units. This is the
+current operating guide, rather than a chronological list of old features.
+The installed WizdomSubs Downloader version is **0.2.0.0**.
 
-Show posters place the green HE / red EN / gray unknown subtitle marker in
-the bottom-left corner, leaving the top free for native episode-count badges.
-Movie subtitle markers remain at the top-left. Poster style versions refresh
-the client image identity when the placement changes.
+## Browse, search and favorites
 
-## Native collections maintenance
+Open **סרטים צפייה ישירה** for online movies or **סדרות צפייה ישירה** for online
+shows. Local **Movies** and **Shows** hold downloaded/retained media. The owner
+has those four libraries in that order, followed by Collections and Downloads.
+Library order belongs to each Jellyfin user.
 
-The collections job reads native Jellyfin titles and existing collection
-members in pages of 100. It requests total counts only on the first page,
-with a 60-second maintenance request timeout. Availability filtering can
-return an empty page before the end, so paging advances by the requested
-size and uses a conservative native-slot bound. It does not stop at an empty
-filtered page or at 2,000 titles. Existing collection members are preserved;
-only missing memberships are added. Bucket matching uses a dictionary rather
-than comparing every title against every metadata row.
+The local IMDb index contains roughly a million discovery metadata entries.
+It is not a million-title playable library. Normal online browsing/search shows
+only saved copies or titles with successful video-source validation. A series
+becomes eligible after a verified episode; its episode lists also hide unchecked
+episodes. Unknown or failed titles remain in the durable validation/retry queue.
+Searching an unknown title can queue it for a later check without displaying it
+as immediately playable. Availability can change after a successful sample.
 
-Jellyfin 10.11.11 is pinned in /opt/media-stack/compose.yaml. The local Dynamic
-Library extension is version 1.4.0.14; WizdomSubs Downloader is version 0.2.0.0.
-Do not automatically update these plugins/Jellyfin without integration testing.
+Favorites keep unavailable saved titles visible. Their hearts and watched state
+survive source failure. Opening an unavailable favorite remains possible; Play
+must prepare a working compatible source or return an explicit failure. This
+exception applies to Favorites, not the normal online watch catalogue.
 
-## Watching and browsing
+The former 1,000-movie/200-show total cap is removed. The native TV app loads
+100 items as you scroll; the bridge accepts pages up to 1,000 items. These are
+page sizes, not total library limits. Only persisted/opened titles create native
+Jellyfin items; browsing does not create every episode in the metadata index.
+Visible counts grow as validation succeeds and can fall when a source fails.
 
-Open סרטים צפייה ישירה or סדרות צפייה ישירה. The catalogue no longer has a 1,000/200
-application limit. Browsing uses an on-disk IMDb index, roughly 775,000 movie and
-346,000 series metadata entries at setup. Native TV loads 100 items per batch as
-you scroll; requests can page through up to 1,000 entries at a time. The total
-reported by the API respects year/release checks and known source failures.
-Only opened titles are persisted into Jellyfin; browsing a million series does
-not create every episode of every show. The original indexed libraries and
-user favourites/watch state remain available if remote browsing fails.
+| Search or sort | Behavior |
+| --- | --- |
+| `2025` | One release year |
+| `1994-2000` | Inclusive year range |
+| `2026-07` | One month, where a real release date is known |
+| `2026-07..2026-09` | Inclusive month range, where dates are known |
+| Default / Newest / Date added | Production year descending, then actual release date descending for online catalogue titles |
+| Score, name or runtime | Selected secondary sort within each production year |
+| Hebrew title or franchise keyword | Cached Hebrew aliases and related English matches; coverage varies |
 
-Search for 2025 or 1994-2000 to select one release year or an inclusive range.
-Years are filters, not dedicated folders. A series year means its first release.
-Native Android TV 0.19.10 has no year-picker control, so use its existing search;
-its usual search result limits still apply. The Items API supports fully paged
-year/range queries; clients that expose Years can send a comma-separated list.
-Production year descending stays primary. The selected name, IMDb community
-score, runtime or popularity sort works within each year, before pagination.
-Critic scores and age certificates are not provided by the IMDb dataset, so
-sorting by those fields cannot distinguish titles without that metadata.
+A show's year is its first release year. The native Android TV app used for
+verification has no added year/month picker: use its existing search controls,
+which retain client result limits. Unknown dates are not invented and do not
+match month searches. Local libraries retain Jellyfin's native Date added
+behavior. Bulk IMDb metadata does not supply critic scores or age certificates.
 
-Hebrew queries use Wikidata's Hebrew labels and IMDb identities. Related English
-franchise keywords expand the local search, including Hebrew Spider-Man variants. Known aliases
-are stored locally and displayed as Hebrew / English; unidentified titles retain
-their original names. Full-text local English/title search also works when the
-Cinemeta search provider is unavailable. Tests include שובר שורות (Breaking Bad)
-and מטריקס (The Matrix). Hebrew coverage and provider availability vary; the
-system does not invent translations or promise every title has a Hebrew name.
+Hebrew names use Wikidata labels and IMDb identity, with franchise expansion
+such as Hebrew Spider-Man variants. Known names display as Hebrew / English;
+others keep their original name. Local English full-text search can work when
+the remote search provider is unavailable. No translation is invented.
 
-Where metadata supplies a YouTube trailer, the native Trailer/Play trailers
-button opens the TV's YouTube app. The button can be under More. Existing
-metadata was backfilled for 1,185 titles; newly opened titles get trailers from
-the provider where available. YouTube playback embedded inside the same native
-TV page would require changes to that TV app.
+## Posters, episode counts and trailers
 
-The installed TV player already supports Fit, Auto crop, and Stretch through
-its aspect-ratio control during playback. Fit shows the complete frame, Auto
-crop fills the display by trimming edges, Stretch fills it by distorting the
-aspect ratio. There is no server-side fine-grained zoom-out control. If Fit
-still cuts off picture edges, check the TV's overscan/Screen Fit settings.
+Poster badges show **HE in green**, **EN in red**, or **? in gray** for confirmed
+Hebrew, confirmed English, or unknown subtitle availability. Show markers sit
+bottom-left; movie markers sit top-left. A show's subtitle badge does not promise
+subtitles for every episode or exact timing for every release.
 
-## Source availability
+Indexed shows use native per-user unwatched episode counts, including watched
+and favorite state. Previews without native indexing use locally saved distinct
+released-episode metadata, then switch to native counts when indexed. Preview
+counts include released specials and exclude future, duplicate and invalid
+entries. Unknown counts stay unknown. Browsing does not fetch provider episode
+metadata merely to populate the badge.
 
-The online watch catalogue shows only saved copies or titles with a successful
-video-source validation. Unknown and failed titles stay in the persistent
-queue rather than appearing as playable choices. A verified episode makes a
-series eligible; its episode lists also filter unchecked episodes. Searching
-an unknown title can queue it for a later check. Known failures remain saved
-for retry with increasing delays from six hours up to 30 days.
+Browse, details, search and Back navigation preserve the same poster identity.
+Missing artwork gets a generated title/badge image; it is not proof of a missing
+torrent. Concurrent artwork writes use atomic replacement. Poster style/badge
+changes invalidate the client image identity.
 
-The checker resumes five minutes after boot, then one minute after each batch
-finishes. Each batch starts at most 20 probes or runs up to eight minutes
-before starting another probe. It checks actual bounded video samples and
-current audio policy, pauses between probes during playback, and defers when
-providers or Jellyfin session checks are unavailable. See Persistent validation
-catalogue below for queue priorities, retained proof and retry behavior.
+Where metadata supplies a YouTube trailer, the native Trailer / Play trailers
+control can open YouTube on TV; the control may be under More. Trailers are
+links, not videos hosted by this server. Embedded YouTube playback within the
+native TV detail page is not implemented. The TV player's existing aspect-ratio
+controls provide Fit, Auto crop and Stretch; those are client controls.
 
-Sources prefer H.264 1080p/720p and healthier reported swarms. Explicit zero-seed
-releases, 4K, HEVC/AV1, camera releases and archive/ISO payloads are excluded.
-An episode must match its season/episode or an explicit unambiguous file index;
-movie packs require an explicit index. Actual codecs are probed. Preparation
-has a 27-second foreground budget with bounded metadata/source retries and subtitle lookup;
-a stalled/dead source fails rather than waiting indefinitely. Free P2P sources
-can still stall or fail. Only one distinct video stream is supported at once.
-The server does not transcode video; clients must decode the selected release.
+## Playback and audio
 
-## Save on the server
+Sources favor H.264 1080p/720p and healthier reported swarms. Explicit zero-seed
+listings, 4K, HEVC/AV1, camera releases and archive/ISO payloads are excluded.
+Actual video/audio are probed. Episodes must match season/episode or an explicit
+unambiguous file index; movie packs require an explicit index. Selected video
+must be compatible with the client: this catalogue does not encode or scale it.
+One distinct video stream is supported at a time on the current PC.
 
-On a movie or episode page, use the native source/version selector:
-- Stream now: streams without requesting a full download.
-- Download to server + play: explicitly queues the selected movie/episode in
-  Transmission and starts playback. Stop the player if you only want to save it
-  for later; the download continues. This is a native source option, not a new
-  standalone custom TV button. A series is saved one selected episode at a time.
-- Downloaded on server: a completed file takes priority automatically on the
-  SAME original item page. After its eventual removal, Play uses torrents again.
+AAC-LC audio can play directly. Selected AAC Main, AC3/EAC3, MP3 or other non-LC
+tracks can use Jellyfin native HLS with **video copy and AAC-LC stereo audio at
+192 kbps / 48 kHz**. The bridge verifies a small converted sample before making
+a conversion-dependent source eligible. Unknown VOD duration or failed metadata,
+data, conversion or decode checks leave the source unavailable for retry.
+AAC Main is not categorically excluded and is not passed directly to the TV by
+this catalogue conversion path. Conversion works for torrent streams, saved
+copies on the original title page and native local files. Full-film download
+is not required before torrent playback starts; original files stay unchanged.
 
-The download watcher checks every minute. It selects only the requested file
-from a season pack, reserves at least 20 GiB free space, and caps queued requests
-at three. Existing torrents outside this feature are rejected rather than
-modified. A durable manifest and process lock protect engine operations. A
-persisted move intent recovers if a process/reboot interrupts the final move.
+Native Jellyfin HLS owns seeking, segments, authentication and cleanup. Text
+subtitles remain separately selectable; video encoding/subtitle burning is not
+requested. After restore, `configure-audio.py` applies native throttling at
+60 seconds ahead and segment retention of 90 seconds through Jellyfin's API.
+Temporary HLS files use the existing media-partition Jellyfin cache.
 
-Storage is entirely on /dev/sda5, UUID
-<MEDIA_FILESYSTEM_UUID>. Host root:
-/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>
-Completed movies: media/movies/Saved/IMDB/movie.EXT
-Completed episodes: media/shows/Saved/IMDB/Season 01/S01E02.EXT
-Transmission staging: downloads/complete/Saved/TORRENT_HASH/...
+| Server request stage | Bound / failure behavior |
+| --- | --- |
+| Foreground preparation | Shared 27-second budget for lock waits, provider calls, resolution, probing, conversion checks and subtitle wait |
+| Plugin request for preparation | 30-second HTTP timeout; failure returns `NoCompatibleStream`, never a successful empty source list |
+| Initial stream resolution and first video byte | Separate shared 15-second budget; do not send successful video headers before receiving data |
+| Background validation preparation | 60-second preparation budget per probe |
 
-The bridge has one common bind mount of this filesystem at /storage so completed
-files can be atomically renamed across its download/media directories. Jellyfin
-still sees retained media read-only at /media and completed Downloads at /downloads.
-Bridge state/secrets remain separate; new owned media files are tracked explicitly.
-
-Managed Saved files are removed on a watcher pass AFTER a new watched/completed
-signal, while never removing an actively playing item. Old historical Played
-flags do not immediately delete a new download. Unwatched saved files expire
-30 days after completion. Size/inode/modification checks preserve changed files.
-Only manifest-owned files under Saved are eligible; existing manually retained
-media is excluded. The older Downloads cleanup policy remains 24 hours after
-watched / 30 days unwatched and is separate from the new Saved workflow.
+These are per-request limits, not a promise about total TV app time if it retries.
+Alternate compatible sources are tried within the preparation budget; the server
+does not change sources after delivery starts. Busy preparation and disconnected
+clients are not negative source proof. A real source failure clears its cached
+preparation and hides it from normal browse while retaining it for retry.
 
 ## Subtitles
 
-WizdomSubs is the default free Hebrew provider; no key/account is required.
-The bridge matches movie IMDb IDs or series IMDb plus exact season/episode,
-ranks releases against the selected filename, reads ZIPs without extracting
-paths, and converts Windows-1255/UTF-16 subtitles to UTF-8. Hebrew is preferred,
-then embedded English. OpenSubtitles is optional for additional Hebrew/English
-coverage; configure privately using /opt/media-stack/configure-subtitles.py.
-If English is neither embedded nor available from a configured provider, it
-cannot be fabricated. Release matching does not guarantee perfect timing.
+Wizdom is the default free Hebrew provider and needs no account/key. Movie IMDb
+IDs or series IMDb plus exact season/episode identify matches; release names
+help rank candidates. Hebrew is preferred, with English where available.
+OpenSubtitles is optional additional coverage, configured privately through
+`configure-subtitles.py`. Missing subtitles cannot be fabricated, and matching
+a release name does not guarantee synchronization.
 
-Native subtitle URLs are Jellyfin-relative /HomeCatalogue/Subtitles/... paths.
-The signed relay validates through the bridge and converts Hebrew SRT to WebVTT.
-Embedded subtitle tracks explicitly advertise Embed; external tracks advertise
-External. Explicit selections including None survive PlaybackInfo refreshes.
-A player opened before a deployment must be stopped/reopened to get new URLs.
+The bridge reads ZIP contents without extracting archive paths and converts
+Windows-1255/UTF-16 content to UTF-8. The signed Jellyfin-relative subtitle relay
+serves Hebrew/English text as WebVTT. External and embedded text tracks remain
+selectable, including explicit None across PlaybackInfo refreshes. A player
+already open during an update must be stopped/reopened to use changed metadata.
 
-Poster HE/EN/? badges represent confirmed subtitle availability, not torrent
-availability. A show badge does not establish that every episode has subtitles.
-Hourly checks update 25 badges under a 200-search/day application budget without
-bulk subtitle downloads. Actual preferred subtitles are downloaded on demand.
+Hourly badge refreshes are bounded to 25 titles and a 200-search/day application
+budget, prioritizing recently browsed titles. Badges use cached availability;
+preferred subtitle files are downloaded on demand, not for the entire index.
 
-## Scheduling and restart
+## Save files and retention
 
-media-catalogue-sync.timer checks at 00:00, 06:00, 12:00 and 18:00 Asia/Jerusalem,
-with up to two minutes jitter and Persistent=yes. Its discovery-sync command
-refreshes recent metadata and episode lists of indexed/opened shows. IMDb bulk
-source data is refreshed about daily; it is not downloaded four times daily.
-A separate last-full-sync marker prevents small incremental changes from
-accidentally postponing the next daily rebuild. Index replacement is atomic.
+Use the native source/version selector on a movie or episode page:
 
-media-source-availability.timer: five minutes after boot, then one minute after each completed batch.
-media-saved-downloads.timer: every minute.
-media-catalogue-badges.timer: hourly.
-media-catalogue-collections.timer: every 30 minutes.
-media-cleanup.timer: hourly legacy completed-download retention.
-media-worker-status.timer: two minutes after boot, then one minute after each completed counter snapshot.
+- **Stream now**: stream without requesting a full download.
+- **Download to server + play**: queue the selected movie/episode in Transmission
+  and begin playback. Stopping the player leaves the requested download running.
+- **Downloaded on server**: a completed owned file takes priority on the same
+  original title page. After retention removes it, Play can use torrents again.
 
-Docker's media-storage.conf drop-in and media-stack.service require the actual
-media mount before startup. Docker/container restart policies and these timers
-are enabled. A full machine reboot on 2026-10-25 verified automatic storage,
-OMV, Docker/container, Tailscale and worker startup without an interactive login.
-Post-reboot quota and maintenance issues were repaired and checked separately.
+This is a source option, not a custom TV download button. Shows download one
+selected episode at a time. The watcher selects only the requested file from a
+pack, caps queued requests at three and reserves at least 20 GiB free. Existing
+torrents outside this feature are rejected rather than modified.
 
-## Validation and recovery
+All persistent state, media, staging and streaming caches use the existing EXT4
+media partition, `/dev/sda5` on the source machine. Device names may differ after
+recovery; verify the filesystem. Paths below are relative to its OMV mount:
 
-python3 /opt/media-stack/catalogue/test_app.py
-python3 /opt/media-stack/catalogue/test_features.py
-python3 /opt/media-stack/catalogue/check_subtitle_delivery.py
-python3 /opt/media-stack/catalogue/check_saved_download.py
+| Directory | Purpose |
+| --- | --- |
+| `media/movies/Saved/IMDB/movie.EXT` | Completed owned movies |
+| `media/shows/Saved/IMDB/Season 01/S01E02.EXT` | Completed owned episodes |
+| `downloads/complete/Saved/TORRENT_HASH/` | Transmission staging |
+| `appdata/catalogue/catalogue.sqlite` | Queue, proof, aliases, metadata/cache and download manifests |
+| `appdata/catalogue/imdb/catalogue.sqlite` | Rebuildable bulk metadata index |
 
-The last two are live checks for root while nobody is watching. The download
-check uses the publisher's Big Buck Bunny source and can leave a completed file
-for owner testing; managed retention can subsequently remove it. Do not assume
-that an earlier sample is still present. No watch state is modified by the check. The local movie successfully
-served two HTTP 206 ranges through its original Jellyfin item, at offsets 0 and
-1,048,576. Unit checks cover episode selection, no external-torrent mutation,
-managed-file retention, active playback protection, historical watched flags,
-changed files, year/paging beyond 1,000, Hebrew alias lookup, and restart recovery
-between rename and ready-state persistence. Server checks cannot establish
-physical TV rendering, every torrent's viability, or subtitle synchronization.
+The bridge sees the whole filesystem at `/storage` so final moves can use an
+atomic rename. Jellyfin reads media at `/media` and completed Downloads at
+`/downloads`. Preserve that common bridge bind when restoring.
 
-Operational logs: docker logs catalogue-bridge, docker logs jellyfin, and the
-corresponding systemd journals. SQLite state and the catalogue index live under
-appdata/catalogue. The full local plugin source/build outputs are under
-/opt/media-stack/vendor/dynamic-library-src; retain the upstream MIT license.
+Only manifest-owned Saved files qualify for automatic removal: after a new
+watched/completed signal, or 30 days after completion if unwatched. Historical
+Played flags do not immediately delete a new save. Active playback and changed
+size/inode/modification identities are protected. A durable move intent recovers
+interrupted final moves. Manually retained media is excluded.
 
-Backups before these changes are in /root/server-setup-backups/before-trailers-*
-and /root/server-setup-backups/before-catalogue-expansion-*. The latter includes
-the prior DLL/meta, Compose/app/tests/docs, timers and server context. Preserve
-current media and download manifests before rollback; restore the old DLL/config
-and Compose only while services are stopped. Do not delete saved media as part
-of rollback. Detailed milestones are in <SERVICE_HOME>/SERVER_CONTEXT.md.
+The separate legacy Downloads cleaner uses a 24-hour watched grace period or
+30 days after observed completion if unwatched. Watching in an external player
+does not supply Jellyfin watched status. Retention deletes video data; restore
+ownership/cleanup state before enabling it on a recovered server.
 
-Metadata sources: IMDb Non-Commercial Datasets, used locally for personal
-non-commercial access (https://data.imdb.com/non-commercial-datasets/), Cinemeta,
-and Wikidata (https://www.wikidata.org/wiki/Wikidata:Data_access). Posters and
-trailer links come from metadata providers; no trailer videos are mirrored.
+## Workers, retries and restart
 
-## Poster subtitle indications
+| Timer | Schedule / purpose |
+| --- | --- |
+| `media-catalogue-sync` | 00:00 / 06:00 / 12:00 / 18:00 Asia/Jerusalem, up to two minutes jitter; discover and refresh metadata |
+| `media-source-availability` | Five minutes after boot, then one minute after each batch finishes; source/audio/video validation |
+| `media-saved-downloads` | Every minute; downloads, final moves and Saved retention |
+| `media-catalogue-badges` | Hourly; subtitle availability markers |
+| `media-catalogue-collections` | Every 30 minutes; native collection membership |
+| `media-cleanup` | Hourly; legacy Downloads retention |
+| `media-worker-status` | Two minutes after boot, then one minute after completion; cached dashboard counters |
 
-All indexed-catalogue and search previews use the local poster renderer: HE
-means confirmed Hebrew (green), EN confirmed English (red), and ? unchecked/unknown (gray). These
-are cached title/release availability indications, not a guarantee of timing
-for every torrent. Cached Wizdom movie matches count as confirmed Hebrew.
-Poster rendering uses cached discovery metadata and bounded concurrency; it
-does not fetch complete title metadata or query subtitle providers per image.
-The hourly badge job prioritizes recently browsed titles within its 200 daily
-lookup budget. Image tags incorporate poster URL and current badge, invalidating
-previously unbadged previews and changing when cached availability changes.
+Bulk IMDb refresh is approximately daily, not four full downloads per day;
+index replacement is atomic. Four daily syncs update recent metadata, release
+dates and indexed/opened shows without resetting existing validation results.
 
-## Android TV recovery fixes (1.4.0.6)
+Validation runs serially, starting at most 20 probes per batch or running for
+up to eight minutes before starting another probe. It reads bounded video samples
+and decodes two seconds rather than saving full films. It pauses between probes
+during viewing and defers when session information is unavailable. Queue slots
+cover new movies/first show episodes, extra episodes, due failures and older
+audio-proof audits. A passed episode count is not a count of distinct shows.
 
-Failed/empty PlaybackInfo responses now carry NoCompatibleStream. The Android
-TV 0.19.10 client checks this error before creating StreamInfo; without it the
-client dereferences a null MediaSource and crashes. Intros returns QueryResult
-instead of an array. The two library IDs retained by clients before the Hebrew
-rename translate to the current collection IDs before model binding.
+Failures retry after 6 hours, 12 hours, 1 day, 2 days and increasing delays capped
+at 30 days. Prior successful proof remains saved for diagnosis; newer failed
+evidence determines current readiness. Provider HTTP429 triggers 15 minutes
+cooldown; provider server errors trigger five minutes. Audio-policy v2 resync
+rechecks older proofs without resetting metadata, attempts or future backoff.
 
-Covering name/score/runtime indexes avoid table seeks while filtering the current
-year; catalogue counts cache for60 seconds with index/source-state invalidation.
-Missing artwork returns a generated title/badge JPEG and caches failures for six
-hours rather than retrying an absent image for every card.
+Collections maintenance reads native titles/members in pages of 100, requests
+totals once and uses a 60-second maintenance timeout. It traverses empty filtered
+pages and titles beyond 2,000 while preserving existing memberships.
 
-Ordinary Play for persisted catalogue movies/episodes uses the bridge even when
-a cached browse preview lacks a full premiere date. It cannot fall through to
-the native .strm placeholder. Recovery checks cover both empty listings and
-listed sources with failed preparation, verifying NoCompatibleStream; the saved
-Big Buck Bunny movie returns real prepared metadata and seekable HTTP206 bytes.
+OMV **Diagnostics > Media workers** shows all seven jobs, schedules, health,
+current work, pending/failed/due counts, distinct passed titles, metadata outside
+the queue and resync progress. Heavy counters are prepared outside web requests.
 
-Cold magnet metadata adds can take20 seconds; a socket timeout is followed by
-status polling rather than immediate abandonment. Already-loaded metadata is
-reused. Overall preparation stays bounded at27 seconds, with time reserved for
-probing, so a failed source returns an explicit error rather than waiting beyond
-the TV client's request timeout. Slow/dead swarms can still fail; cataloguing a
-title does not establish its torrent health.
+Mount-aware Docker/startup units, restart policies and timers start without an
+interactive login. A full reboot on 2026-10-25 verified source-server startup;
+repeat storage/network/client checks on replacement hardware. GitHub contains
+software and recovery templates, not private runtime databases or media. No
+automated encrypted off-server runtime backup is configured.
 
-## Real release months (1.4.0.7)
+## Logs, verification and recovery
 
-Default year ordering now uses actual premiere date newest-first within each
-year. Selecting score/name retains those secondary sorts. Choose Premiere date
-/Release date to restore chronological month/day order. Native Android TV has
-no server-supplied month picker; search2026-07 or2026-07..2026-09 for one month
-or an inclusive range. Normal TV search result limits remain.
+```sh
+docker logs --since 15m catalogue-bridge
+journalctl -u media-source-availability.service --no-pager -n 40
+systemctl list-timers 'media-*'
+systemctl --failed
+```
 
-Provider-supplied full dates persist in release_dates independently of the daily
-IMDb rebuild, and populate the bulk index released field. Existing metadata was
-backfilled; recent two years are enriched during the existing four daily syncs.
-Known future dates are hidden from normal browsing. Dates unknown in IMDb remain
-unknown: do not invent January1. Month searches include only titles with known
-dates, so they do not cover the entire million-title index. Provider timeouts
-are deferred to subsequent syncs; opening a title can add its genuine date too.
+Structured `Playback` events record the title/episode key, phase, duration,
+outcome and exception class for preparation, torrent resolution, video probing,
+audio conversion and initial video data. Generic request failures are recorded
+too. Exception text, signed URLs, magnets and credentials are excluded. These
+logs narrow the failing stage; they cannot always prove a remote peer's cause.
+Background preparation events also appear in the source worker's journal.
 
-check_release_months.py verifies the native Items dates/order, Movie/Series month
-searches, inclusive ranges and Android TV Search/Hints.
+Run isolated unit tests from this folder:
 
-For online catalogue browsing only, the client's Date added/Newest sort is an
-alias for real premiere date too; the bulk index creation timestamp cannot
-distinguish new releases. Local media libraries keep Jellyfin's native Date
-added behavior. Score/name choices retain their within-year sorting.
+```sh
+python3 -m unittest test_app test_features test_playback_deadlines
+```
 
-## Poster consistency on Back
+`check_show_counts.py --all` is read-only and checks native/preview counts.
+Playback/source/download checks such as `check_audio_conversion.py`,
+`check_audio_subtitles.py`, `check_saved_download.py` and
+`check_subtitle_delivery.py` are live integration tools: inspect their fixtures
+and run only while viewing is idle. Earlier saved Big Buck Bunny downloads may
+have been removed by normal retention; do not assume they still exist.
 
-Opening a title can finish a source-list check; a confirmed missing compatible
-source or newly known future release may then hide it from subsequent browsing.
-This does not remove a media file. Missing artwork does not prove a missing
-torrent. Details retrieve listings/metadata/subtitle availability, while movie
-data preparation/streaming happens through PlaybackInfo/Play.
+Deployment verification includes a zero-warning plugin build, Python feature
+and playback-deadline/stream regression suites, .NET favorites/audio/indexing
+checks, both native Favorites query variants, explicit failed-source responses,
+local HTTP206 playback and unchanged existing watched/favorite records. Counts
+are dated verification observations, not fixed library totals. The owner
+confirmed Chromecast AAC Main-to-LC playback; each client/source still needs its
+own test after a restore or update. No sample establishes every torrent's health.
 
-Browse, metadata, native item refresh and search now share the same poster URL
-and hash tag, preserving the poster when a native DTO replaces the grid card.
-Native query DTOs are materialized before image metadata is applied, so deferred
-serialization cannot silently discard the fix. Artwork URL updates do not
-replace cached media/series DTOs. JPEG writes use unique temporary files and
-atomic replacement with readable permissions, including concurrent rendering.
-
-check_poster_navigation.py verifies image bytes/tags across browse, detail,
-repeat detail, native refresh and search, plus series seasons/episodes.
-
-## Persistent validation catalogue (1.4.0.9)
-
-The IMDb metadata index is a discovery pool, not proof that a title can stream.
-Only saved copies or titles with successful video validation appear in the
-online watch catalogue/search. Series become visible after a verified episode;
-individual episode lists also hide unchecked episodes. Searching an unknown
-title saves its metadata and queues a high-priority check; it may appear later.
-
-The media partition's appdata/catalogue/catalogue.sqlite stores the durable
-validation queue, latest state, attempt count, retry time, and prior successful
-source proof. The separate imdb/catalogue.sqlite retains bulk title metadata.
-Both live on /dev/sda5. Bulk metadata refreshes add missing queue keys without
-resetting existing results. A verified series queues its aired episodes too.
-Previous negative source listings migrate into retained retry records.
-
-Background validation resumes one minute after each batch (maximum 20 probes
-or eight minutes before starting another probe). It pauses between probes when
-Jellyfin reports playback; provider/session outages defer the job. Checks run
-serially, read a bounded video sample and decode two seconds. They do not save
-full films. The existing TorrServer working cache is reused. A source listing
-alone is insufficient. At that stage AAC Main-only audio and non-8-bit H264 were rejected; see the
-current LC conversion section below. Failed candidates can fall through to alternatives.
-
-Failures retry after 6h, 12h, 1d, 2d, and so on, capped at 30d. Successful proofs
-remain until newer negative evidence or a streaming error invalidates them;
-old metadata/proofs are retained for future retries. Successful sources are
-checked again at Play, rather than re-downloading every old title each sync.
-This cannot guarantee an entire remote torrent or every physical client.
-The catalogue initially shrinks and grows as background verification succeeds.
-
-GET /validation exposes aggregate queue counts; GET /ready supplies ready keys
-for the local Jellyfin result filter. These endpoints expose no provider URL,
-torrent magnet, authentication token or signed playback URL. Existing local
-libraries, watched-download cleanup and storage reserve stay in place.
-
-Search safely handles null/unknown release dates. Provider search metadata is
-cached for six hours (five minutes after a lookup error); unknown title keys
-are queued in one database transaction. HTTP 429 pauses source validation for
-15 minutes, and provider server errors pause it for five minutes. Native search
-readiness filtering applies even when remote enrichment fails. The durable
-queue, metadata databases and proofs belong in a separate encrypted runtime
-backup; the public GitHub project snapshot intentionally excludes them.
-
-check_durable_validation.py verifies the live queue, ready-only bridge/native
-browse and search, and saved-file HTTP206 delivery. Earlier broad-catalogue
-checks used unchecked metadata as fixtures and their fixed result counts no
-longer describe the ready-only live library.
-
-One in five probes is reserved for due failed entries, preventing retries from
-being starved by a large new-title backlog. Remaining probes prioritize searched
-and previously opened titles, then recent discovery pages and popular titles.
-
-## OMV worker page and first-pass breadth (1.4.0.10)
-
-OMV Diagnostics > Media workers has auto-refreshing schedules/health and queue
-counter tabs. Most initial probes now check distinct movies and first show
-episodes; one in five slots covers extra episodes and one in five reserves due
-retries. Previously extra episodes could take priority over most new titles,
-so a high passed-source count could still mean only a few visible shows.
-
-An owner-requested 60-second AAC Main test is stored separately under local
-Movies/Tests/AAC Main TV test. It uses Big Buck Bunny H264 video with AAC Main
-stereo audio. Search `AAC Main TV test` in Jellyfin. It is not a full downloaded
-film or a torrent-readiness claim. Check TV picture/sound and whether playback
-is Direct Play before widening AAC Main acceptance. Canelones' torrent stalled
-in preparation; it was not falsely marked ready. No per-title AAC Main bypass is enabled for online playback.
-
-Dynamic Library 1.4.0.10 lets actual existing local video files use Jellyfin's
-native PlaybackInfo handler. Upstream's persisted-item branch previously
-returned an empty response even for ordinary local MP4/MKV files. Catalogue
-.strm files retain their verified bridge source handling and explicit errors.
-
-## Earlier audio-policy resync (superseded by LC conversion below)
-
-AAC-LC sounded better than the AAC Main test on the owner's Chromecast. Online
-preparation now excludes AAC Main tracks and offers AAC-LC first among compatible
-choices, preserving original stream indexes and profiles. AAC Main-only sources
-remain unavailable; actual local diagnostic samples use native Jellyfin playback.
-Prepared results include audio_policy1 and old prepared caches are not reused.
-
-A one-time audio-policy-resync-v1 marker moves prior failures to due for a fresh
-source lookup and queues existing successful sources in a durable audio_recheck
-table. Existing verified titles stay visible during the audit. A new failed
-check removes only that source's readiness. One in ten probes audits a saved
-success until those audits finish, alongside new-title checks, episodes and due
-retries. The migration does not reset metadata, attempts or later retry backoff.
-Source proofs retain the observed audio codecs/profiles and policy version.
-The OMV progress tab shows failed entries scheduled and remaining audio audits.
-
-That earlier filtering-only policy is superseded by the deployed LC conversion mode described below.
-
-
-## Current audio delivery: direct LC or verified LC conversion
-
-AAC-LC sources retain direct playback. A selected non-LC track (including AAC
-Main, AC3/EAC3 and MP3) can now play through Jellyfin native HLS with video
-stream copy and AAC-LC stereo audio at192kbps/48kHz. Downloaded media files
-remain unchanged: conversion happens during playback, whether input is the
-buffered torrent, the original page's saved file, or a native local library
-item. No completed full download is required before torrent playback starts.
-
-The bridge validates a small converted sample and its decode before marking a
-conversion-dependent source ready. Codec conversion alone is not proof of
-torrent availability: failed metadata/data probes, failed conversion and
-unknown VOD duration remain unavailable for retry. Video format restrictions
-remain. Selected stream indexes, source profiles and audio_policy2 are stored.
-Prepared results from the earlier policy cannot bypass the current checks.
-
-The plugin registers original verified media sources with Jellyfin's native
-media-source provider. Native HLS handles segment production, forward/backward
-seek, authentication and encoding cleanup. Its URL forces VideoCodec=copy and
-AllowAudioStreamCopy=false; no video scaling, video encoding or subtitle burning
-is requested. External and embedded text subtitles remain selectable as VTT,
-with explicit None preserved. Native response DTOs do not mutate stored
-subtitle metadata. Newly browsed canonical movie/episode records are persisted
-if the asynchronous library scan has not yet created them.
-
-Run configure-audio.py after restoration to set native transcoder throttling
-to60seconds ahead and remove old segments with90seconds retention. Encoding
-options are updated through Jellyfin's supported API; private configuration
-and API keys are not exported. Temporary HLS data uses the existing Jellyfin
-cache on the media partition, not the managed saved-download directory.
-
-The one-time audio-policy-resync-v2 marker makes prior failures due for fresh
-source checks, and re-audits older successful proofs gradually. Already
-verified audio_policy2 sources are skipped. Titles stay visible during audits
-until a real failure invalidates them. Existing metadata, attempts and later
-retry backoff survive sync/reboot. The OMV progress tab displays current v2
-resync totals and remaining audits.
-
-Validation tools: check_audio_conversion.py checks actual LC/H264 HLS segments,
-seeking, direct LC and unchanged watched-state fields; check_audio_subtitles.py
-checks Hebrew VTT/None and unchanged native subtitle codec. AudioChecks in
-the plugin source checks authorization, media-source cloning and first-open
-canonical movie/series/season/episode creation without overwriting items.
-
-## Episode-counter validation (1.4.0.13)
-
-`check_show_counts.py --all` compares every visible online show with native
-per-user counts or locally saved released-episode metadata. The deployment
-check passed for 149 shows: 92 native indexed counts and 57 preview fallbacks.
-Counts are a snapshot, not a fixed library size. Preview counts exclude future,
-duplicate and invalid episodes and include released specials; unknown counts
-are left unknown. Watched/favorite state was verified unchanged. The feature
-regression suite passed 23 tests and the plugin built without warnings/errors.
-
-## Favorites and bounded playback (1.4.0.14)
-
-Favorites retain saved online titles even when their sources become unavailable;
-normal online browsing/search remains ready-only. The heart and watched state
-are not erased by a failed source. An unavailable favorite can still be opened,
-but Play returns an explicit error unless a compatible source can be prepared.
-
-Foreground preparation shares a 27-second budget across same-title lock waits,
-provider calls, metadata resolution, video probing and audio-conversion checks.
-The plugin's preparation HTTP timeout is 30 seconds. Initial stream resolution
-and the first video byte share a separate 15-second budget. These limits apply
-to individual server requests, not a promise that the TV app never retries.
-Sources may still become unavailable after a successful bounded sample check.
-
-Busy preparation and disconnected clients do not count as negative source proof.
-Preparation tries alternate compatible sources within the same budget; it does
-not switch sources after delivery begins. Failed cached preparation is cleared,
-previous successful proof is retained for diagnosis, and retries use the existing
-persistent backoff queue. Manual favorites do not bypass playback checks.
-
-Docker bridge logs contain structured Playback events for preparation, torrent
-resolution, video probing, audio conversion and first video bytes, including
-phase duration and exception class. Exception text, provider links, torrent
-magnets, authentication tokens and signed URLs are deliberately excluded.
-`test_playback_deadlines.py` uses synthetic local HTTP servers and isolated
-state to test trickling responses, header-only stalls, lock waits, busy-server
-and cancellation handling, source fallback, retained proof and safe diagnostics.
+Use the public root `RESTORE.md` for recovery. Keep media/ownership state together;
+never format the existing filesystem or erase watched state to satisfy a check.
+The modified plugin retains its upstream MIT license. Metadata uses IMDb's
+non-commercial datasets, Cinemeta and Wikidata; posters/trailers come from
+metadata providers, and trailer videos are not mirrored.

@@ -179,24 +179,23 @@ This downloads metadata, not movie files; allow time/storage for the initial bui
 - Confirm systemd units/timers and mount dependencies, then test a controlled
   reboot separately if appropriate; a healthy service alone is not reboot proof.
 
-Earlier source validation: 27 catalogue unit tests, zero-warning .NET build,
-year/range/paging/search/native HE-poster live checks passed. Existing 36 HE and
-2 EN posters were rendered and pixel-verified as green/red. Cached Hebrew VTT
-relay and invalid-signature checks passed. A later Breaking Bad pilot full
-playback/subtitle-selection retest hit torrent timeouts; do not claim that
-particular source is currently working.
+The source-server deployment was checked on 2026-10-25 with Dynamic Library
+1.4.0.14: a zero-warning plugin build, Python feature and playback-deadline/stream
+regression suites, .NET favorites/audio/indexing checks, native
+Favorites queries retaining unavailable titles, explicit failed-source responses,
+local HTTP206 playback and unchanged existing watched/favorite records. The
+owner confirmed Chromecast AAC Main-to-LC playback. These checks describe the
+source server, not a guarantee that any remote title remains available.
 
-Subsequent validation covered AAC-LC conversion of torrent and saved-file audio,
-Hebrew subtitle selection, persistent validation resync and collections paging.
-The owner confirmed the AAC Main sample on Chromecast. A real full reboot on
-2026-10-25 verified storage, core services, all four containers, Tailscale and
-the worker timers start automatically. Post-reboot quota/maintenance failures
-were repaired and checked separately. These checks describe the source server;
-repeat the recovery checks on replacement hardware.
+A full reboot on 2026-10-25 verified storage, core services, all four containers,
+Tailscale and worker startup without login. Post-reboot quota and maintenance
+issues were repaired and checked. Repeat verification after restoring to new
+hardware; inspect each live-check script's fixtures before running it. Prior
+saved diagnostic downloads may have been removed by normal retention.
 
 ## Android TV failure contracts and ordinary Play
 
-Dynamic Library 1.4.0.13 addresses four reproduced server-side problems: empty
+The deployed plugin handles four reproduced server-side problems: empty
 successful PlaybackInfo caused Android TV 0.19.10 to dereference a null source;
 ordinary Play could bypass preparation and expose a local .strm placeholder;
 Intros returned an array where QueryResult was required; renamed collections
@@ -214,19 +213,20 @@ actual client after restoring.
 Covering sort indexes, count caching and six-hour artwork negative caching
 reduce catalogue delays and repeated missing-image requests.
 
-Release dates/months:1.4.0.13 defaults to actual newest premiere date within each
+Release dates/months: the online catalogue defaults to actual newest premiere date within each
 year; search2026-07 or2026-07..2026-09 for known-date month filtering. Dates
 persist in the runtime release_dates table independently of the daily IMDb
 rebuild. Recent-year date enrichment follows the four daily syncs; unknown dates
 are never invented and are absent from month searches. Restore this metadata
-cache from the encrypted application backup or let provider enrichment refill it.
+cache if a separate encrypted application backup exists, or let provider
+enrichment refill it.
 
 Newest/Date added is a release-date sort alias for the virtual online catalogue;
 it does not use the shared bulk-import timestamp. Local library Date added
 semantics are unchanged. Live month checks cover this alias as well as Premiere
 date and default year order.
 
-Poster navigation:1.4.0.13 keeps canonical poster tags/URLs on catalogue previews,
+Poster navigation: the plugin keeps canonical poster tags/URLs on catalogue previews,
 native details/refreshes and search. Image-cache updates preserve media/series
 DTOs. Native query DTOs must be materialized before image mutations. Concurrent
 artwork writes use unique temporary files, atomic replacement and readable
