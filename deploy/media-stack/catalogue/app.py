@@ -667,11 +667,46 @@ def probe(selected,key,deadline=None):
     return json.loads(result.stdout)
 
 
-def prepared(key,background=False):
+def frame_rate(value):
+    try:
+        parts=str(value).split('/')
+        return float(parts[0])/float(parts[1]) if len(parts)==2 else float(parts[0])
+    except (ValueError,ZeroDivisionError,TypeError):return None
+
+
+def conversion_preflight(key,selected,info,audio_index,deadline):
+    """Verify a small video-copy/AAC-LC output; never saves a full movie."""
+    cachekey='audio-convert-v2:'+selected['hash']+':'+str(audio_index)+':'+str(selected.get('length',0))
+    if cached(cachekey):return
+    folder=DATA/'audio-preflight';folder.mkdir(parents=True,exist_ok=True)
+    source=selected.get('local') or signed_path('raw',key)
+    def remaining(maximum):return max(.1,min(maximum,deadline-time.monotonic()))
+    with tempfile.TemporaryDirectory(dir=folder,prefix='sample-') as directory:
+        output=Path(directory)/'sample.ts'
+        command=['ffmpeg','-v','error','-threads','1','-rw_timeout','6000000','-i',source,'-t','3',
+            '-map','0:v:0','-map',f'0:{audio_index}','-c:v','copy','-c:a','aac','-profile:a','aac_low',
+            '-b:a','192k','-ac','2','-ar','48000','-sn','-f','mpegts',str(output)]
+        converted=subprocess.run(command,capture_output=True,timeout=remaining(15))
+        if converted.returncode:raise RuntimeError('Audio conversion failed')
+        result=subprocess.run(['ffprobe','-v','error','-show_streams','-of','json',str(output)],capture_output=True,timeout=remaining(5))
+        if result.returncode:raise RuntimeError('Converted sample probe failed')
+        streams=json.loads(result.stdout).get('streams',[])
+        original=next((s for s in info.get('streams',[]) if s.get('codec_type')=='video'),{})
+        if not any(s.get('codec_type')=='video' and s.get('codec_name')==original.get('codec_name') for s in streams):
+            raise RuntimeError('Converted sample video missing')
+        if not any(s.get('codec_type')=='audio' and s.get('codec_name')=='aac' and s.get('profile')=='LC' for s in streams):
+            raise RuntimeError('Converted sample is not AAC-LC')
+        decoded=subprocess.run(['ffmpeg','-v','error','-threads','1','-i',str(output),'-t','1','-f','null','-'],capture_output=True,timeout=remaining(8))
+        if decoded.returncode:raise RuntimeError('Converted sample decode failed')
+    remember(cachekey,{'video_copy':True,'audio':'aac','profile':'LC','checked_at':time.time()},7*86400)
+
+
+def prepared(key,background=False,audio_index=None):
     with LOCKS_LOCK: lock=LOCKS.setdefault(key,threading.Lock())
     with lock:
-        saved=cached('prepared:'+key)
-        if saved and saved.get('audio_policy')==1 and F.source_state(key) in ('verified','downloaded'): return saved
+        prepared_key='prepared:'+key+(':'+str(audio_index) if audio_index is not None else '')
+        saved=cached(prepared_key)
+        if saved and saved.get('audio_policy')==2 and F.source_state(key) in ('verified','downloaded'): return saved
         with LIVE_LOCK:
             if LIVE['key'] not in (None,key) and LIVE['active']>0:
                 raise RuntimeError('Another title is currently streaming; this server supports one stream')
@@ -690,8 +725,13 @@ def prepared(key,background=False):
                 if video.get('codec_name') not in ('h264','mpeg4','vp8','vp9'):
                     raise RuntimeError('Source requires unsupported video decoding')
                 audio=[t for t in info.get('streams',[]) if t.get('codec_type')=='audio']
-                if audio and all(t.get('codec_name')=='aac' and t.get('profile')=='Main' for t in audio):
-                    raise RuntimeError('AAC Main audio is incompatible with this TV')
+                ordered=sorted(audio,key=lambda t:0 if t.get('codec_name')=='aac' and t.get('profile')=='LC' else 1)
+                selected_audio=next((t for t in ordered if t['index']==audio_index),None) if audio_index is not None else next((t for lang in ('eng','en','heb','he') for t in ordered if t.get('tags',{}).get('language')==lang),ordered[0] if ordered else None)
+                if audio_index is not None and selected_audio is None:raise ValueError('Audio track not found')
+                needs_conversion=selected_audio is not None and (selected_audio.get('codec_name')!='aac' or selected_audio.get('profile')!='LC')
+                if needs_conversion:
+                    if float(info.get('format',{}).get('duration') or 0)<=0:raise RuntimeError('Converted VOD requires a known duration')
+                    conversion_preflight(key,selected,info,selected_audio['index'],deadline)
                 if background:
                     remaining=max(.1,deadline-time.monotonic())
                     sample=subprocess.run(['ffmpeg','-v','error','-rw_timeout','6000000','-i',selected.get('local') or signed_path('raw',key),'-t','2','-map','0:v:0','-map','0:a:0?','-f','null','-'],capture_output=True,timeout=min(15,remaining))
@@ -714,18 +754,21 @@ def prepared(key,background=False):
         for stream in info.get('streams',[]):
             typ=stream.get('codec_type')
             if typ not in ('video','audio','subtitle'): continue
-            if typ=='audio' and stream.get('codec_name')=='aac' and stream.get('profile')=='Main':continue
             if typ=='video' and stream.get('disposition',{}).get('attached_pic'): continue
             lang=stream.get('tags',{}).get('language','und')
             lang={'he':'heb','iw':'heb','en':'eng'}.get(lang,lang)
             if typ=='subtitle': languages.add(lang)
             tracks.append({'Index':stream['index'],'Type':typ.title(),'Codec':stream.get('codec_name'),'Profile':stream.get('profile'),
-                'Language':lang,'Channels':stream.get('channels'), 'Width':stream.get('width'),
+                'Language':lang,'Channels':stream.get('channels'),
+                'AverageFrameRate':frame_rate(stream.get('avg_frame_rate')),'RealFrameRate':frame_rate(stream.get('r_frame_rate')),
+                'BitRate':int(stream['bit_rate']) if str(stream.get('bit_rate','')).isdigit() else None,
+                'SampleRate':int(stream['sample_rate']) if str(stream.get('sample_rate','')).isdigit() else None,
+                'PixelFormat':stream.get('pix_fmt'),'Level':stream.get('level'), 'Width':stream.get('width'),
                 'Height':stream.get('height'),'IsExternal':False,
                 'IsDefault':bool(stream.get('disposition',{}).get('default')),
                 'IsForced':bool(stream.get('disposition',{}).get('forced'))})
-        # Keep actual stream indexes, but offer AAC-LC before other safe
-        # audio choices in each language. AAC Main is not offered online.
+        # Keep actual indexes. Native HLS converts a selected non-LC track
+        # while copying video; direct AAC-LC retains the original stream.
         tracks.sort(key=lambda t:(0 if t['Type']=='Video' else 1 if t['Type']=='Audio' else 2,0 if t.get('Codec')=='aac' and t.get('Profile')=='LC' else 1))
         if not any(t['Type']=='Video' for t in tracks): raise RuntimeError('No video in selected source')
         # External search/download has a bounded deadline. A timeout never blocks video.
@@ -746,22 +789,23 @@ def prepared(key,background=False):
             'Container':Path(selected['filename']).suffix[1:].lower(),
             'RunTimeTicks':int(float(info.get('format',{}).get('duration',0))*10000000),
             'Bitrate':int(info.get('format',{}).get('bit_rate',5000000)),
-            'languages':sorted(languages),'checked_at':time.time(),'audio_policy':1}
+            'languages':sorted(languages),'checked_at':time.time(),'audio_policy':2,
+            'DefaultAudioStreamIndex':selected_audio['index'] if selected_audio else None,'AudioConversionRequired':needs_conversion}
         with db() as conn:
             conn.execute('INSERT OR REPLACE INTO playback VALUES (?,?,?)',(key,json.dumps(output),time.time()))
-        F.validation_result(key,True,proof={'version':3,'audio_policy':1,'audio_profiles':[{'codec':t.get('Codec'),'profile':t.get('Profile'),'language':t.get('Language')} for t in tracks if t['Type']=='Audio'],'checked_at':output['checked_at'],'source_hash':selected['hash'],'filename':selected['filename'],'Container':output['Container']})
+        F.validation_result(key,True,proof={'version':4,'audio_policy':2,'audio_conversion':needs_conversion,'selected_audio_index':selected_audio['index'] if selected_audio else None,'audio_profiles':[{'codec':t.get('Codec'),'profile':t.get('Profile'),'language':t.get('Language')} for t in tracks if t['Type']=='Audio'],'checked_at':output['checked_at'],'source_hash':selected['hash'],'filename':selected['filename'],'Container':output['Container']})
         kind,imdb,*_=key.split(':')
         with db() as conn: row=conn.execute('SELECT meta FROM items WHERE key=?',(kind+':'+imdb,)).fetchone()
         if row:
             folder=LIBRARY/('movies' if kind=='movie' else 'shows')/imdb
             try: make_poster(folder,json.loads(row[0]),kind,imdb)
             except OSError: log('Poster badge update deferred for '+key)
-        return output if background else remember('prepared:'+key,output,300)
+        return output if background else remember(prepared_key,output,300)
 
 
 def update_collections():
     """Create native Jellyfin collections after its library scan has indexed items."""
-    result=jf('/Items?Recursive=true&IncludeItemTypes=Movie,Series&Fields=Path,ProviderIds&Limit=2000')
+    result=jf('/Items?Recursive=true&IncludeItemTypes=Movie,Series&Fields=Path,ProviderIds&EnableUserData=false&Limit=2000')
     with db() as conn:
         rows=conn.execute('SELECT kind,imdb,buckets FROM items').fetchall()
     buckets={}
@@ -774,12 +818,12 @@ def update_collections():
             for bucket in json.loads(row_buckets):
                 if bucket in ('Recent Releases','Popular'):
                     buckets.setdefault('Online '+bucket,[]).append(item['Id'])
-    existing=jf('/Items?Recursive=true&IncludeItemTypes=BoxSet&Limit=100').get('Items',[])
+    existing=jf('/Items?Recursive=true&IncludeItemTypes=BoxSet&EnableUserData=false&Limit=100').get('Items',[])
     for name,ids in buckets.items():
         collection=next((i for i in existing if i['Name']==name),None)
         if not collection:
             collection=jf('/Collections?'+U.urlencode({'name':name}),{},method='POST')
-        current=jf('/Items?'+U.urlencode({'ParentId':collection['Id'],'Limit':2000})).get('Items',[])
+        current=jf('/Items?'+U.urlencode({'ParentId':collection['Id'],'Limit':2000,'EnableUserData':'false'})).get('Items',[])
         present={i['Id'] for i in current}
         pending=[item_id for item_id in ids if item_id not in present]
         for start in range(0,len(pending),50):
@@ -967,7 +1011,8 @@ class Handler(BaseHTTPRequestHandler):
             sig=U.parse_qs(parsed.query).get('sig',[''])[0]
             if not hmac.compare_digest(sig,signature(key)): return self.reply({'error':'Unauthorized'},401)
             if parts[0]=='info':
-                info=prepared(key)
+                audio=U.parse_qs(parsed.query).get('audio',[None])[0]
+                info=prepared(key,audio_index=int(audio) if audio is not None else None)
                 return self.reply(info)
             if parts[0]=='sub':
                 lang=U.parse_qs(parsed.query).get('lang',[''])[0]

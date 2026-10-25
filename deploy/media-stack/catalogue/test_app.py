@@ -105,7 +105,7 @@ class CatalogueTests(unittest.TestCase):
                 a.import_item('movie',meta,'Recent Releases')
                 self.assertEqual(file.read_text(),'existing-stream')
 
-    def test_audio_policy_omits_main_and_prefers_lc_without_changing_indexes(self):
+    def test_audio_policy_prefers_lc_and_preserves_other_track_indexes(self):
         with tempfile.TemporaryDirectory() as directory:
             selected={'filename':'movie.mkv','hash':'a'*40,'index':1}
             info={'streams':[
@@ -117,17 +117,51 @@ class CatalogueTests(unittest.TestCase):
             with patch.object(a,'DATA',Path(directory)),patch.object(a,'resolve',return_value=selected),patch.object(a,'probe',return_value=info),patch.object(a,'external_subtitles',return_value=[]):
                 result=a.prepared('movie:tt1234567')
             audio=[s for s in result['MediaStreams'] if s['Type']=='Audio']
-            self.assertEqual([s['Index'] for s in audio],[2,3])
+            self.assertEqual([s['Index'] for s in audio],[2,1,3])
             self.assertEqual(audio[0]['Profile'],'LC')
-            self.assertEqual(result['audio_policy'],1)
+            self.assertEqual(result['audio_policy'],2)
 
-    def test_main_only_audio_remains_unavailable(self):
+    def test_main_only_audio_is_eligible_when_conversion_passes(self):
         with tempfile.TemporaryDirectory() as directory:
             selected={'filename':'movie.mkv','hash':'a'*40,'index':1}
             info={'streams':[{'index':0,'codec_type':'video','codec_name':'h264','pix_fmt':'yuv420p'},
                 {'index':1,'codec_type':'audio','codec_name':'aac','profile':'Main'}],'format':{'duration':'60'}}
-            with patch.object(a,'DATA',Path(directory)),patch.object(a,'resolve',return_value=selected),patch.object(a,'probe',return_value=info),patch.object(a,'stream_candidates',return_value=[]),patch.object(a,'torr',return_value={}):
+            with patch.object(a,'DATA',Path(directory)),patch.object(a,'resolve',return_value=selected),patch.object(a,'probe',return_value=info),patch.object(a,'conversion_preflight') as convert,patch.object(a,'external_subtitles',return_value=[]):
+                result=a.prepared('movie:tt1234567')
+                self.assertTrue(result['AudioConversionRequired'])
+                self.assertEqual(result['DefaultAudioStreamIndex'],1)
+                self.assertEqual(a.F.source_state('movie:tt1234567'),'verified')
+                convert.assert_called_once()
+
+    def test_failed_audio_conversion_does_not_mark_title_ready(self):
+        with tempfile.TemporaryDirectory() as directory:
+            selected={'filename':'movie.mkv','hash':'a'*40,'index':1}
+            info={'streams':[{'index':0,'codec_type':'video','codec_name':'h264','pix_fmt':'yuv420p'},
+                {'index':1,'codec_type':'audio','codec_name':'aac','profile':'Main'}],'format':{'duration':'60'}}
+            with patch.object(a,'DATA',Path(directory)),patch.object(a,'resolve',return_value=selected),patch.object(a,'probe',return_value=info),patch.object(a,'conversion_preflight',side_effect=RuntimeError('Conversion failed')),patch.object(a,'stream_candidates',return_value=[]),patch.object(a,'torr',return_value={}):
                 with self.assertRaises(RuntimeError):a.prepared('movie:tt1234567')
+                self.assertEqual(a.F.source_state('movie:tt1234567'),'unavailable')
+
+    def test_conversion_probe_rejects_wrong_output_profile(self):
+        import json
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as directory,patch.object(a,'DATA',Path(directory)):
+            selected={'local':'fixture.mp4','hash':'a'*40,'length':100}
+            info={'streams':[{'codec_type':'video','codec_name':'h264'}]}
+            wrong={'streams':[{'codec_type':'video','codec_name':'h264'},{'codec_type':'audio','codec_name':'aac','profile':'Main'}]}
+            results=[SimpleNamespace(returncode=0),SimpleNamespace(returncode=0,stdout=json.dumps(wrong).encode())]
+            with patch.object(a.subprocess,'run',side_effect=results):
+                with self.assertRaises(RuntimeError):a.conversion_preflight('movie:tt1234567',selected,info,1,a.time.monotonic()+30)
+            self.assertIsNone(a.cached('audio-convert-v2:'+'a'*40+':1:100'))
+
+    def test_converted_source_with_unknown_duration_is_not_advertised(self):
+        with tempfile.TemporaryDirectory() as directory:
+            selected={'filename':'movie.mkv','hash':'a'*40,'index':1}
+            info={'streams':[{'index':0,'codec_type':'video','codec_name':'h264','pix_fmt':'yuv420p'},
+                {'index':1,'codec_type':'audio','codec_name':'aac','profile':'Main'}],'format':{'duration':'0'}}
+            with patch.object(a,'DATA',Path(directory)),patch.object(a,'resolve',return_value=selected),patch.object(a,'probe',return_value=info),patch.object(a,'conversion_preflight') as convert,patch.object(a,'stream_candidates',return_value=[]),patch.object(a,'torr',return_value={}):
+                with self.assertRaises(RuntimeError):a.prepared('movie:tt1234567')
+                convert.assert_not_called()
                 self.assertEqual(a.F.source_state('movie:tt1234567'),'unavailable')
 
     def test_trailer_links_only_accept_youtube_identities_and_deduplicate(self):
@@ -146,7 +180,7 @@ class CatalogueTests(unittest.TestCase):
         for languages,expected in [(['eng','heb'],'heb'),(['eng'],'eng'),([],None)]:
             with self.subTest(languages=languages),tempfile.TemporaryDirectory() as directory:
                 tracks=[{'index':0,'codec_type':'video','codec_name':'h264','pix_fmt':'yuv420p'},
-                        {'index':1,'codec_type':'audio','codec_name':'aac'}]
+                        {'index':1,'codec_type':'audio','codec_name':'aac','profile':'LC'}]
                 for index,lang in enumerate(languages,2):
                     tracks.append({'index':index,'codec_type':'subtitle','codec_name':'subrip','tags':{'language':lang}})
                 selected={'filename':'movie.mp4','hash':'a'*40,'index':1}
@@ -161,7 +195,7 @@ class CatalogueTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             selected={'filename':'movie.mp4','hash':'b'*40,'index':1}
             info={'streams':[{'index':0,'codec_type':'video','codec_name':'h264','pix_fmt':'yuv420p'},
-                {'index':1,'codec_type':'audio','codec_name':'aac'},
+                {'index':1,'codec_type':'audio','codec_name':'aac','profile':'LC'},
                 {'index':2,'codec_type':'subtitle','codec_name':'subrip','tags':{'language':'eng'}},
                 {'index':3,'codec_type':'video','codec_name':'mjpeg','disposition':{'attached_pic':1}}],
                 'format':{'duration':'60'}}

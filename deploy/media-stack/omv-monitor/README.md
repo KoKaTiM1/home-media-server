@@ -41,3 +41,8 @@ The counter snapshot job is included in the worker table. It is enabled at boot,
 uses low CPU/IO priority and a192MiB memory limit, and can take longer than a
 minute on a cold database. Counter reads never launch million-row queries
 inside an OMV web request.
+
+Current mode is audio_policy2: AAC Main inputs are eligible after a verified
+AAC-LC conversion sample; direct Main delivery is not used. The current resync
+counter reads audio-policy-resync-v2, which supersedes the earlier filter-only
+policy. Native HLS handles delivery for torrent and saved-file sources.

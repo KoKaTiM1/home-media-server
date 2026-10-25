@@ -69,7 +69,7 @@ def export(destination):
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
-    for name in ['compose.yaml', 'cleanup.py', 'test_cleanup.py', 'configure-subtitles.py', 'README.md']:
+    for name in ['compose.yaml', 'cleanup.py', 'test_cleanup.py', 'configure-subtitles.py', 'configure-audio.py', 'README.md']:
         copy(STACK / name, Path('deploy/media-stack') / name)
     for folder, relative in [
         (STACK / 'catalogue', Path('deploy/media-stack/catalogue')),

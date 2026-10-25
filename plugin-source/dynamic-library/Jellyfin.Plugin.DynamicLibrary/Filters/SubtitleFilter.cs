@@ -1,3 +1,4 @@
+using MediaBrowser.Controller.Library;
 using System.Text;
 using Jellyfin.Plugin.DynamicLibrary.Services;
 using Microsoft.AspNetCore.Mvc;
@@ -16,6 +17,8 @@ public class SubtitleFilter : IAsyncActionFilter, IOrderedFilter
     private readonly DynamicItemCache _itemCache;
     private readonly SubtitleService _subtitleService;
     private readonly ILogger<SubtitleFilter> _logger;
+    private readonly HomeAudioService _homeAudio;
+    private readonly ILibraryManager _library;
 
     private static readonly HashSet<string> SubtitleActions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -26,11 +29,13 @@ public class SubtitleFilter : IAsyncActionFilter, IOrderedFilter
     public SubtitleFilter(
         DynamicItemCache itemCache,
         SubtitleService subtitleService,
-        ILogger<SubtitleFilter> logger)
+        ILogger<SubtitleFilter> logger, HomeAudioService homeAudio, ILibraryManager library)
     {
         _itemCache = itemCache;
         _subtitleService = subtitleService;
         _logger = logger;
+        _homeAudio = homeAudio;
+        _library = library;
     }
 
     // Run before other filters
@@ -60,6 +65,20 @@ public class SubtitleFilter : IAsyncActionFilter, IOrderedFilter
             itemId = altItemId;
         }
 
+        var local = _library.GetItemById(itemId);
+        if (local?.Path is string nativePath && !nativePath.EndsWith(".strm", StringComparison.OrdinalIgnoreCase) && File.Exists(nativePath))
+        {
+            await next();
+            return;
+        }
+        // Verified catalogue sources registered for native HLS also use the
+        // native subtitle extractor. Its indexes are actual container indexes.
+        var originalSources = _homeAudio.Sources(itemId).ToArray();
+        if (context.ActionArguments.Values.OfType<string>().Any(value => originalSources.Any(s => s.Id == value)))
+        {
+            await next();
+            return;
+        }
         // Check if this is a dynamic item
         if (!_itemCache.HasItem(itemId))
         {

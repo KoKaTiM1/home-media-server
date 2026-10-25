@@ -5,6 +5,7 @@ using Jellyfin.Plugin.DynamicLibrary.ScheduledTasks;
 using Jellyfin.Plugin.DynamicLibrary.Services;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Plugins;
+using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Caching.Memory;
@@ -40,6 +41,8 @@ public class ServiceRegistrator : IPluginServiceRegistrator
 
         // Register caches and services
         services.AddSingleton<DynamicItemCache>();
+        services.AddSingleton<HomeAudioService>();
+        services.AddSingleton<IMediaSourceProvider, HomeMediaSourceProvider>();
         services.AddSingleton<SearchResultFactory>();
         services.AddSingleton<DynamicLibraryService>();
         services.AddSingleton<SubtitleService>();

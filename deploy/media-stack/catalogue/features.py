@@ -128,14 +128,14 @@ class Features:
     def schedule_audio_resync(self):
         # One migration only. Keep verified titles visible until their audit
         # actually fails; retain negative metadata, attempt counts and proofs.
-        marker='audio-policy-resync-v1'
+        marker='audio-policy-resync-v2'
         with self.db() as conn:
             if conn.execute('SELECT 1 FROM cache WHERE key=?',(marker,)).fetchone():return
             now=time.time()
             failed=conn.execute("SELECT COUNT(*) FROM validation WHERE state='unavailable'").fetchone()[0]
-            passed=conn.execute("SELECT COUNT(*) FROM validation WHERE state='verified'").fetchone()[0]
+            passed=conn.execute("SELECT COUNT(*) FROM validation WHERE state='verified' AND COALESCE(json_extract(proof,'$.audio_policy'),0)<2").fetchone()[0]
             conn.execute("UPDATE validation SET next_check=MIN(next_check,?) WHERE state='unavailable'",(now,))
-            conn.execute("INSERT OR IGNORE INTO audio_recheck(key) SELECT key FROM validation WHERE state='verified'")
+            conn.execute("INSERT INTO audio_recheck(key) SELECT key FROM validation WHERE state='verified' AND COALESCE(json_extract(proof,'$.audio_policy'),0)<2 ON CONFLICT(key) DO UPDATE SET completed=0")
             conn.execute('DELETE FROM cache WHERE key LIKE ?',('prepared:%',))
             conn.execute('INSERT OR REPLACE INTO cache VALUES (?,?,?)',(marker,json.dumps({'scheduled_at':now,'failed_scheduled':failed,'verified_audits':passed}),now+10*365*86400))
 

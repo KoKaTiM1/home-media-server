@@ -18,6 +18,9 @@ full disk image or a complete application-data backup.
 - Online libraries named סרטים צפייה ישירה and סדרות צפייה ישירה.
 - Wizdom Hebrew subtitles with English fallback where available. Green HE means
   confirmed Hebrew, red EN means confirmed English, gray ? means unknown.
+- Direct AAC-LC playback or native audio-only HLS conversion with unchanged
+  video, for supported torrent streams and saved files. Verified conversion
+  sources are eligible; missing torrents remain hidden for retry.
 - Torrent streaming and an explicit download-to-server option. Completed owned
   downloads move into the existing movies/shows storage and are preferred on
   the original title page; managed retention removes them after viewing or age.
@@ -51,7 +54,7 @@ The authoritative current catalogue behavior is described in
 stack README is retained as a historical setup document; some early manual-only
 instructions and library names there predate the integrated catalogue.
 
-Jellyfin is pinned to 10.11.11; the modified Dynamic Library is 1.4.0.10.
+Jellyfin is pinned to 10.11.11; the modified Dynamic Library is 1.4.0.11.
 Upstream Dynamic Library source retains its MIT license. Wizdom is included as
 the original provider package; its licensing remains with its authors.
 

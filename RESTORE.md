@@ -62,7 +62,7 @@ manifests; do not simulate watched flags to test cleanup on real files.
 
 5. With Jellyfin stopped, restore `artifacts/DynamicLibrary/` into
    `appdata/jellyfin/config/plugins/DynamicLibrary/`. The supplied DLL is
-   modified version 1.4.0.10, tested with Jellyfin 10.11.11. Restore/extract the
+   modified version 1.4.0.11, tested with Jellyfin 10.11.11. Restore/extract the
    Wizdom package into its own plugin directory. Preserve readable ownership.
 6. If rebuilding the DLL from source instead, from this repository root:
 
@@ -130,7 +130,7 @@ particular source is currently working.
 
 ## Android TV failure contracts and ordinary Play
 
-Dynamic Library 1.4.0.10 addresses four reproduced server-side problems: empty
+Dynamic Library 1.4.0.11 addresses four reproduced server-side problems: empty
 successful PlaybackInfo caused Android TV 0.19.10 to dereference a null source;
 ordinary Play could bypass preparation and expose a local .strm placeholder;
 Intros returned an array where QueryResult was required; renamed collections
@@ -146,7 +146,7 @@ A physical Chromecast retry is still needed to confirm the app behavior.
 Covering sort indexes, count caching and six-hour artwork negative caching
 reduce catalogue delays and repeated missing-image requests.
 
-Release dates/months:1.4.0.10 defaults to actual newest premiere date within each
+Release dates/months:1.4.0.11 defaults to actual newest premiere date within each
 year; search2026-07 or2026-07..2026-09 for known-date month filtering. Dates
 persist in the runtime release_dates table independently of the daily IMDb
 rebuild. Recent-year date enrichment follows the four daily syncs; unknown dates
@@ -158,7 +158,7 @@ it does not use the shared bulk-import timestamp. Local library Date added
 semantics are unchanged. Live month checks cover this alias as well as Premiere
 date and default year order.
 
-Poster navigation:1.4.0.10 keeps canonical poster tags/URLs on catalogue previews,
+Poster navigation:1.4.0.11 keeps canonical poster tags/URLs on catalogue previews,
 native details/refreshes and search. Image-cache updates preserve media/series
 DTOs. Native query DTOs must be materialized before image mutations. Concurrent
 artwork writes use unique temporary files, atomic replacement and readable
@@ -170,3 +170,9 @@ partition, and running `python3 /opt/media-stack/omv-monitor/install.py` as root
 This restarts only the OMV RPC engine and regenerates its navigation/routes.
 The local AAC Main movie sample and runtime queue are private media/data and
 are excluded from the public project export.
+
+After Jellyfin and its API key are restored, run
+`python3 /opt/media-stack/configure-audio.py` while playback is idle. This
+configures bounded native HLS buffering and segment cleanup through the API.
+Audio conversion uses Jellyfin's own ffmpeg with video copy; saved originals
+are retained until the existing managed watched/age cleanup removes them.

@@ -114,10 +114,12 @@ def counts(data=DATA,refresh=False):
         due=conn.execute("SELECT COUNT(*) FROM validation WHERE state='unavailable' AND next_check<=?",(now,)).fetchone()[0]
         add('Failed checks due for retry now',due,'One in five probes is reserved for due failures')
         add('Passed source / episode checks',grouped.get('verified',0),'Several episode checks can belong to one visible show')
+        converted=conn.execute("SELECT COUNT(*) FROM validation WHERE state='verified' AND json_extract(proof,'$.audio_policy')=2 AND json_extract(proof,'$.audio_conversion')=1").fetchone()[0]
+        add('Passed sources using verified AAC-LC conversion',converted,'Video stays unchanged; sources with direct AAC-LC do not need conversion')
         if conn.execute("SELECT 1 FROM sqlite_master WHERE name='audio_recheck'").fetchone():
             audits=conn.execute('SELECT COUNT(*) FROM audio_recheck WHERE completed=0').fetchone()[0]
             add('Passed sources awaiting new audio-policy audit',audits,'Audited gradually without clearing the verified catalogue')
-        marker=conn.execute("SELECT value FROM cache WHERE key='audio-policy-resync-v1'").fetchone()
+        marker=conn.execute("SELECT value FROM cache WHERE key IN ('audio-policy-resync-v1','audio-policy-resync-v2') ORDER BY key DESC LIMIT 1").fetchone()
         if marker:
             migration=json.loads(marker[0])
             if isinstance(migration,dict):

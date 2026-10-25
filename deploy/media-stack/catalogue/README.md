@@ -279,8 +279,8 @@ or eight minutes before starting another probe). It pauses between probes when
 Jellyfin reports playback; provider/session outages defer the job. Checks run
 serially, read a bounded video sample and decode two seconds. They do not save
 full films. The existing TorrServer working cache is reused. A source listing
-alone is insufficient. AAC Main-only audio and non-8-bit H264 are rejected for
-this TV setup; failed candidates can fall through to alternatives.
+alone is insufficient. At that stage AAC Main-only audio and non-8-bit H264 were rejected; see the
+current LC conversion section below. Failed candidates can fall through to alternatives.
 
 Failures retry after 6h, 12h, 1d, 2d, and so on, capped at 30d. Successful proofs
 remain until newer negative evidence or a streaming error invalidates them;
@@ -331,7 +331,7 @@ native PlaybackInfo handler. Upstream's persisted-item branch previously
 returned an empty response even for ordinary local MP4/MKV files. Catalogue
 .strm files retain their verified bridge source handling and explicit errors.
 
-## Audio-policy resync
+## Earlier audio-policy resync (superseded by LC conversion below)
 
 AAC-LC sounded better than the AAC Main test on the owner's Chromecast. Online
 preparation now excludes AAC Main tracks and offers AAC-LC first among compatible
@@ -348,8 +348,49 @@ retries. The migration does not reset metadata, attempts or later retry backoff.
 Source proofs retain the observed audio codecs/profiles and policy version.
 The OMV progress tab shows failed entries scheduled and remaining audio audits.
 
-Audio-only conversion while torrent streaming is technically possible, with
-video copied unchanged and a small buffer. It is not implemented in this
-custom bridge yet: current online AAC Main-only sources remain filtered.
-The local AAC Main/LC samples establish conversion and comparative TV audio
-behavior, not end-to-end torrent conversion or seek support.
+That earlier filtering-only policy is superseded by the deployed LC conversion mode described below.
+
+
+## Current audio delivery: direct LC or verified LC conversion (1.4.0.11)
+
+AAC-LC sources retain direct playback. A selected non-LC track (including AAC
+Main, AC3/EAC3 and MP3) can now play through Jellyfin native HLS with video
+stream copy and AAC-LC stereo audio at192kbps/48kHz. Downloaded media files
+remain unchanged: conversion happens during playback, whether input is the
+buffered torrent, the original page's saved file, or a native local library
+item. No completed full download is required before torrent playback starts.
+
+The bridge validates a small converted sample and its decode before marking a
+conversion-dependent source ready. Codec conversion alone is not proof of
+torrent availability: failed metadata/data probes, failed conversion and
+unknown VOD duration remain unavailable for retry. Video format restrictions
+remain. Selected stream indexes, source profiles and audio_policy2 are stored.
+Prepared results from the earlier policy cannot bypass the current checks.
+
+The plugin registers original verified media sources with Jellyfin's native
+media-source provider. Native HLS handles segment production, forward/backward
+seek, authentication and encoding cleanup. Its URL forces VideoCodec=copy and
+AllowAudioStreamCopy=false; no video scaling, video encoding or subtitle burning
+is requested. External and embedded text subtitles remain selectable as VTT,
+with explicit None preserved. Native response DTOs do not mutate stored
+subtitle metadata. Newly browsed canonical movie/episode records are persisted
+if the asynchronous library scan has not yet created them.
+
+Run configure-audio.py after restoration to set native transcoder throttling
+to60seconds ahead and remove old segments with90seconds retention. Encoding
+options are updated through Jellyfin's supported API; private configuration
+and API keys are not exported. Temporary HLS data uses the existing Jellyfin
+cache on the media partition, not the managed saved-download directory.
+
+The one-time audio-policy-resync-v2 marker makes prior failures due for fresh
+source checks, and re-audits older successful proofs gradually. Already
+verified audio_policy2 sources are skipped. Titles stay visible during audits
+until a real failure invalidates them. Existing metadata, attempts and later
+retry backoff survive sync/reboot. The OMV progress tab displays current v2
+resync totals and remaining audits.
+
+Validation tools: check_audio_conversion.py checks actual LC/H264 HLS segments,
+seeking, direct LC and unchanged watched-state fields; check_audio_subtitles.py
+checks Hebrew VTT/None and unchanged native subtitle codec. AudioChecks in
+the plugin source checks authorization, media-source cloning and first-open
+canonical movie/series/season/episode creation without overwriting items.

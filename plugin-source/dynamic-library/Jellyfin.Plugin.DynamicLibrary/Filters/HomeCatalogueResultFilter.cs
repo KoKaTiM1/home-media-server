@@ -22,7 +22,7 @@ namespace Jellyfin.Plugin.DynamicLibrary.Filters;
 // Applies only to this server's catalogue bridge, never existing local media.
 public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
     ILogger<HomeCatalogueResultFilter> logger,
-    DynamicLibraryService catalogues, ILibraryManager library, DynamicItemCache itemCache) : IAsyncAlwaysRunResultFilter, IAsyncActionFilter
+    DynamicLibraryService catalogues, ILibraryManager library, DynamicItemCache itemCache, HomeAudioService audioService) : IAsyncAlwaysRunResultFilter, IAsyncActionFilter
 {
     public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
     {
@@ -52,6 +52,7 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
         public long RunTimeTicks { get; set; }
         public int Bitrate { get; set; }
         public int? DefaultSubtitleStreamIndex { get; set; }
+        public int? DefaultAudioStreamIndex { get; set; }
     }
 
     private sealed class TitleLabels
@@ -231,6 +232,22 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
         {
             foreach (var source in playback.MediaSources)
             {
+                var routeItem = context.RouteData.Values.TryGetValue("itemId", out var rawItemId) && Guid.TryParse(rawItemId?.ToString(), out var nativeId) ? nativeId : Guid.Empty;
+                if (routeItem != Guid.Empty && source.MediaStreams.Any(s => s.Type == MediaStreamType.Video)
+                    && (source.Path?.StartsWith("/media/", StringComparison.Ordinal) == true || source.Path?.StartsWith("/downloads/", StringComparison.Ordinal) == true)
+                    && File.Exists(source.Path))
+                {
+                    // A display DTO must not mutate the native repository's
+                    // subtitle codec/metadata while preparing external VTT.
+                    source.MediaStreams = JsonSerializer.Deserialize<List<MediaStream>>(JsonSerializer.Serialize(source.MediaStreams))!;
+                    if (context.HttpContext.Items["HomeSubtitleStreamIndex"] is int requestedNativeSub
+                        && (requestedNativeSub == -1 || source.MediaStreams.Any(s => s.Type == MediaStreamType.Subtitle && s.Index == requestedNativeSub)))
+                        source.DefaultSubtitleStreamIndex = requestedNativeSub;
+                    if (context.HttpContext.Items["HomeAudioStreamIndex"] is int requestedNativeAudio && source.MediaStreams.Any(s => s.Type == MediaStreamType.Audio && s.Index == requestedNativeAudio))
+                        source.DefaultAudioStreamIndex = requestedNativeAudio;
+                    HomeAudioService.Configure(source, routeItem, playback.PlaySessionId ?? Guid.NewGuid().ToString("N"), context.HttpContext.Request);
+                    continue;
+                }
                 if (!Uri.TryCreate(source.Path, UriKind.Absolute, out var uri)
                     || uri.Port != 8092 || uri.Host != "<SERVER_LAN_IP>"
                     || !uri.AbsolutePath.StartsWith("/play/", StringComparison.Ordinal)) continue;
@@ -238,6 +255,8 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
                 {
                     var infoUri = source.Path.Replace("/play/", "/info/", StringComparison.Ordinal)
                         .Replace("&save=1", "", StringComparison.Ordinal);
+                    if (context.HttpContext.Items["HomeAudioStreamIndex"] is int requestedProbeAudio)
+                        infoUri += "&audio=" + requestedProbeAudio;
                     var client = clients.CreateClient();
                     client.Timeout = TimeSpan.FromSeconds(75);
                     var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
@@ -295,12 +314,19 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
                         && (requestedSubtitle == -1 || info.MediaStreams.Any(s => s.Type == MediaStreamType.Subtitle && s.Index == requestedSubtitle)))
                         source.DefaultSubtitleStreamIndex = requestedSubtitle;
                     var audio = info.MediaStreams.Where(s => s.Type == MediaBrowser.Model.Entities.MediaStreamType.Audio).ToList();
-                    source.DefaultAudioStreamIndex = (audio.FirstOrDefault(s => s.Language == "eng")
+                    source.DefaultAudioStreamIndex = info.DefaultAudioStreamIndex ?? (audio.FirstOrDefault(s => s.Language == "eng")
                         ?? audio.FirstOrDefault(s => s.Language == "heb") ?? audio.FirstOrDefault())?.Index;
                     if (context.HttpContext.Items["HomeAudioStreamIndex"] is int requestedAudio
                         && audio.Any(s => s.Index == requestedAudio)) source.DefaultAudioStreamIndex = requestedAudio;
                     source.SupportsProbing = false;
                     source.SupportsTranscoding = false;
+                    if (indexedId.HasValue)
+                    {
+                        var key = Uri.UnescapeDataString(uri.AbsolutePath[6..]);
+                        audioService.EnsureIndexed(indexedId.Value, key, itemCache.GetItem(indexedId.Value), info.RunTimeTicks);
+                        audioService.Register(indexedId.Value, source);
+                        HomeAudioService.Configure(source, indexedId.Value, playback.PlaySessionId ?? Guid.NewGuid().ToString("N"), context.HttpContext.Request);
+                    }
                 }
                 catch (Exception error)
                 {
