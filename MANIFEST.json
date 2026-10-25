@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-10-25T07:58:20.047014+00:00",
+  "created_utc": "2026-10-25T08:00:05.044793+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -38,7 +38,7 @@
     "deploy/media-stack/omv-mobile/check_mobile.py": "0778b9f635b10c99758853dd818241ac5a2cbbb528b50fd0728ccce89b9cf29a",
     "deploy/media-stack/omv-mobile/install.py": "3309e4c93b3cb3715d1abca0633d00ee5ee8b32016c7bb9480cdf2aeed800edb",
     "deploy/media-stack/omv-mobile/mobile.conf": "9c7980c48b1b0b069f9c0670b5cdc96d4c8cbee5275d8ea7ad913076b75b2f37",
-    "deploy/media-stack/omv-mobile/mobile.css": "6ee8ca2aad9beac9ff9a1748d9c7927b11a5895546ec5d3b81dea31f730d7cd4",
+    "deploy/media-stack/omv-mobile/mobile.css": "ec6ce6d243ad3c90f3288dc173cb4db127292711191e161c78954fac7c636809",
     "deploy/media-stack/omv-mobile/mobile.js": "8c30ddec320828d2d7163675a49f16d0e063f43891e6b129c1b8b6f1d46352d1",
     "deploy/media-stack/omv-monitor/README.md": "71a4a37ffe5ecd22d50194f1c38702e7fc1b8a78bfcfc179622c36e6a3e5589c",
     "deploy/media-stack/omv-monitor/check_live.py": "37add95d8d91b9b8339f6c9ac8fe99c56ec5a38dc63afb4dcaaa73d09200e678",

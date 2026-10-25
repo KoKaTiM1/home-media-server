@@ -58,7 +58,7 @@
   }
   .omv-phone-card-view .datatable-row-group { transform: none !important; }
   .omv-phone-card-view .datatable-body-row {
-    margin: 0 0 12px; border: 1px solid var(--omv-background-color-muted, #ddd);
+    margin: 0 0 16px; border: 1px solid var(--mat-color-secondary-text, #777);
     border-radius: 8px; overflow: hidden;
     background: var(--mat-background-color-card, white);
   }
