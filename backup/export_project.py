@@ -168,7 +168,7 @@ def export(destination):
     for name in ['meta.json']:
         copy(plugins / name, Path('artifacts/DynamicLibrary') / name)
     copy(STACK / 'backup/templates/ARTIFACTS.md', 'artifacts/README.md')
-    for relative in ['README.md', 'RESTORE.md', '.gitignore']:
+    for relative in ['README.md', 'RESTORE.md', 'FOLLOW_UP.md', '.gitignore']:
         copy(STACK / 'backup/templates' / relative, relative)
     command = subprocess.run(['omv-confdbadm', 'read', 'conf.system.sharedfolder'], check=True, capture_output=True, text=True)
     (destination / 'deploy/omv-sharedfolders.json').write_text(json.dumps(json.loads(command.stdout), indent=2) + '\n')
