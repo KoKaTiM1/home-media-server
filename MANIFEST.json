@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-10-26T23:13:39.794157+00:00",
+  "created_utc": "2026-10-26T23:14:37.237240+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -128,7 +128,7 @@
     "deploy/systemd/media-saved-downloads.timer": "096081dd925c4b108e7cc76053d8c0e1b9cc192bdbebf0216aea81d5a48091fd",
     "deploy/systemd/media-source-availability.service": "939aeaa7c15e334906a0b17fe67e8920c3acb74febb23977de3eada05f339bf4",
     "deploy/systemd/media-source-availability.timer": "a8bbd5c6f90f3c91dcf1aa6eb6d9d364f7c3276b709062f9bb263f35a204fa8d",
-    "deploy/systemd/media-stack.service": "ac4e28dc6818b92a292a536314db5b7760845ef869e7907cf541fa8183556047",
+    "deploy/systemd/media-stack.service": "bea981cea32c5d227d5afa493579efa16b9e499c489d1bd8a7b70033512fae25",
     "deploy/systemd/media-verification-coordinator.service": "d5e01bb29c83a4a60482e60c7f307102bc4715069931077951caad0f8d12af3d",
     "deploy/systemd/media-verification-guard.service": "72f04c424e1f878b9e17bb35abaabef80e89a4849c3bc0fdfd3cc4602d48b513",
     "deploy/systemd/media-verification-guard.timer": "a4d2bce51911fe121c5181e101d57ecead802aabad15cbf550ebe68ae56abb76",

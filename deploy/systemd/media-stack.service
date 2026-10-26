@@ -9,6 +9,8 @@ RequiresMountsFor=/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID> /srv/dev-disk-by
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=/opt/media-stack
+# Published ports bind to the LAN IPv4 address; wait because DHCP may finish after network-online.target.
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do /usr/sbin/ip -o -4 address show | /usr/bin/grep -Fq "<SERVER_LAN_IP>/" && exit 0; /usr/bin/sleep 1; done; exit 1'
 ExecStart=/usr/bin/docker compose up -d --remove-orphans
 ExecStop=/usr/bin/docker compose down
 TimeoutStartSec=0
