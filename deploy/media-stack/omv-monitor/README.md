@@ -3,11 +3,16 @@
 The installed OMV administrator page is **Diagnostics > Media workers**.
 It provides two read-only tabs:
 
-- **Workers and schedules**: all seven jobs, health, running/waiting/disabled
+- **Workers and schedules**: server and optional Windows jobs, health, running/waiting/disabled
   state, schedule, next run/countdown, last start/result and current check.
 - **Catalogue queue and progress**: pending movies/shows/episodes, failed and
   due retries, passed source checks, distinct movies/shows, visible indexed
   counts, metadata outside the queue, recent activity and audio resync progress.
+
+The optional Windows rows separate metadata imports from actual source checks.
+The source verifier reports PC heartbeat, active operation, title passes,
+unavailable outcomes and checkpoints. A successful probe or sample operation
+alone does not count as a fully verified title.
 
 Worker rows refresh every 10 seconds. A separate worker prepares counters two
 minutes after boot and then one minute after each completed snapshot. The page

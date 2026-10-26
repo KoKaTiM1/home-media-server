@@ -911,6 +911,10 @@ def run_preflight(command,**kwargs):
 
 
 def probe(selected,key,deadline=None):
+    if getattr(BUDGET,'remote_verification',False) and not selected.get('local'):
+        from verification_remote import execute as remote_execute
+        with REL.lock('torrent:'+selected['hash']):
+            return remote_execute(globals(),key,selected,'probe',{},deadline or time.monotonic()+WORK_SECONDS)
     token=hashlib.sha256(os.urandom(32)).hexdigest()[:32]
     raw_url=selected.get('local') or REL.source_url('raw',key,selected,token)
     result=REL.run(['ffprobe','-v','error','-threads','1','-analyzeduration','4000000','-probesize','4000000',
@@ -1044,7 +1048,9 @@ def prepared(key,background=False,audio_index=None,cancel=None):
             # Preserve the scheduling signal through the real preparation
             # wrapper; it must reach the worker's continue-with-other-title path.
             raise
-        except (Checkpoint,TimeoutError,subprocess.TimeoutExpired,ClientCancelled) as error:
+        except (Checkpoint,TimeoutError,subprocess.TimeoutExpired,ClientCancelled,sqlite3.OperationalError) as error:
+            if isinstance(error,sqlite3.OperationalError):
+                raise Checkpoint('Catalogue database is temporarily busy') from None
             if not speculative:
                 F.enqueue(key,200)
                 REL.checkpoint(key,state='checkpoint',message='Preparation continues in background; retry Play later',audio_index=audio_index)
@@ -1068,7 +1074,7 @@ def prepare_locked(key,background,audio_index,deadline):
     for attempt in range(3):
         try:
             with playback_phase(key,'torrent_resolution'):selected=verified['selected'] if verified else resolve(key,deadline=deadline)
-        except (ClientCancelled,PlaybackBusy,Checkpoint,TimeoutError,subprocess.TimeoutExpired):raise
+        except (ClientCancelled,PlaybackBusy,Checkpoint,TimeoutError,subprocess.TimeoutExpired,sqlite3.OperationalError):raise
         except Exception as error:
             cancel=getattr(BUDGET,'cancel',None)
             if cancel and cancel():raise ClientCancelled('Client disconnected') from None
@@ -1092,7 +1098,7 @@ def prepare_locked(key,background,audio_index,deadline):
             if needs_conversion and float(info.get('format',{}).get('duration') or 0)<=0:raise RuntimeError('Converted VOD requires known duration')
             proof=verified['proof'] if verified else REL.verify(key,selected,info,selected_audio['index'] if selected_audio else None,needs_conversion,deadline)
             break
-        except (ClientCancelled,PlaybackBusy,Checkpoint,TimeoutError,subprocess.TimeoutExpired):raise
+        except (ClientCancelled,PlaybackBusy,Checkpoint,TimeoutError,subprocess.TimeoutExpired,sqlite3.OperationalError):raise
         except Exception as error:
             cancel=getattr(BUDGET,'cancel',None)
             if cancel and cancel():raise ClientCancelled('Client disconnected') from None
@@ -1533,7 +1539,7 @@ def main():
     # its native metadata and downloaded sidecar subtitles beside STRM files.
     os.umask(0o002)
     parser=argparse.ArgumentParser()
-    parser.add_argument('command',choices=('serve','sync','collections','badges','trailers','discovery-sync','availability','downloads','imdb-sync','metadata-import'),default='serve',nargs='?')
+    parser.add_argument('command',choices=('serve','sync','collections','badges','trailers','discovery-sync','availability','downloads','imdb-sync','metadata-import','remote-availability'),default='serve',nargs='?')
     parser.add_argument('--movies',type=int,default=1000)
     parser.add_argument('--shows',type=int,default=200)
     args=parser.parse_args()
@@ -1547,6 +1553,7 @@ def main():
     if args.command=='trailers': return refresh_trailers()
     if args.command=='discovery-sync': return F.sync_discovery()
     if args.command=='availability': return F.warm_availability()
+    if args.command=='remote-availability': return F.warm_availability(remote=True)
     if args.command=='downloads': return F.manage_downloads()
     if args.command=='imdb-sync': return F.update_index()
     db().close()

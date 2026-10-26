@@ -1,0 +1,8 @@
+[Unit]
+Description=Maintain Windows verification resource gate
+[Timer]
+OnBootSec=3min
+OnUnitInactiveSec=15s
+AccuracySec=2s
+[Install]
+WantedBy=timers.target

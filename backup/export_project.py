@@ -28,6 +28,13 @@ METADATA_WORKER_FILES = (
 )
 
 
+VERIFICATION_WORKER_FILES = (
+    '.gitignore', 'Dockerfile', 'README.md', 'START-HERE.txt', 'config.example.json',
+    'coordinator.py', 'resource_guard.py', 'verification_worker.py', 'worker.ps1',
+    '01-INSTALL.cmd', '04-START.cmd', '05-STATUS.cmd', '06-LOGS.cmd', '07-STOP.cmd',
+)
+
+
 def private_replacements():
     profile=STACK/'secrets/export-redactions.json'
     if not profile.is_file():return {}
@@ -175,6 +182,10 @@ def export(destination):
     if worker.is_dir():
         for name in METADATA_WORKER_FILES:
             copy(worker / name, Path('deploy/media-stack/metadata-worker') / name)
+    verifier = STACK / 'verification-worker'
+    if verifier.is_dir():
+        for name in VERIFICATION_WORKER_FILES:
+            copy(verifier / name, Path('deploy/media-stack/verification-worker') / name)
     for source in Path('/etc/systemd/system').glob('media-*'):
         if source.is_file() and source.suffix in {'.service', '.timer'}:
             copy(source, Path('deploy/systemd') / source.name)

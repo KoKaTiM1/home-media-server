@@ -103,6 +103,8 @@ quota and maintenance issues were repaired and checked.
 | --- | --- |
 | `media-catalogue-sync` | 00:00, 06:00, 12:00, 18:00 Asia/Jerusalem, with jitter; discovery and metadata |
 | `media-source-availability` | Five minutes after boot, then one minute after each batch; bounded serial source checks |
+| `media-remote-availability` | Optional Windows source verification; 15 seconds after each batch while the memory guard permits work |
+| `media-verification-guard` | Every 15 seconds; pauses optional verification on memory pressure or a new TorrServer restart |
 | `media-saved-downloads` | Every minute; track downloads, move owned files and apply managed retention |
 | `media-catalogue-badges` | Hourly; subtitle availability markers |
 | `media-catalogue-collections` | Every 30 minutes; native collection membership |
@@ -112,7 +114,7 @@ quota and maintenance issues were repaired and checked.
 Source verification pauses during playback and yields to real client navigation.
 A 30-second metadata-navigation lease gives initial foreground reads priority;
 counter scans also yield, keeping their previous snapshot. Images/maintenance
-requests do not renew the lease. The seven timer schedules remain unchanged. Its batch starts
+requests do not renew the lease. The normal server batch starts
 at most 20 probes or runs up to eight minutes before starting another probe.
 Failed titles are retained and retry with backoff, not rediscovered from scratch.
 
@@ -178,3 +180,6 @@ virtual record or saved media. Reports are durable, prioritized and visible in
 OMV worker counts; successful fresh checks return titles to ordinary browsing.
 Local media deletion retains its native behavior. TV media-management settings
 and existing user permissions determine whether Delete is visible.
+
+
+Optional Windows source verification is implemented separately from metadata fetching. See [worker operation and recovery](verification-worker/README.md). The server remains authoritative; the PC is enrolled and the memory guarded 20-title pilot is running. Issues #3 and #4 track the remaining live checks before continuous assistance.

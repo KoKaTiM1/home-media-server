@@ -1,0 +1,4 @@
+config/*.local.json
+data/
+*.tar.gz
+SHA256SUMS.json

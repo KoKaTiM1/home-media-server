@@ -1,0 +1,10 @@
+[Unit]
+Description=Coordinate real Windows media sample verification
+Requires=media-stack.service
+After=media-stack.service media-verification-coordinator.service
+RequiresMountsFor=/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker exec catalogue-bridge python /app/app.py remote-availability
+TimeoutStartSec=10min
+Nice=15

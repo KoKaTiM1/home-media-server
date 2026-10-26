@@ -65,7 +65,7 @@ services:
       - /srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>/streaming-cache:/streaming-cache
     ports:
       - "<SERVER_LAN_IP>:8090:8090/tcp"
-    mem_limit: 256m
+    mem_limit: 320m
     cpus: 1.0
     restart: unless-stopped
 

@@ -22,6 +22,9 @@ JOBS=[
  ('media-worker-status','Worker status counters','1 minute after previous snapshot'),
  ('media-metadata-coordinator','LAN metadata receiver','Continuous; receives metadata from the Windows helper'),
  ('media-metadata-import','LAN metadata import','Every 30 seconds; source verification remains separate'),
+ ('media-verification-coordinator','Windows verification gateway','Continuous; fixed media decoding tasks over LAN'),
+ ('media-verification-guard','Windows verification memory gate','Every 15 seconds; protects server memory'),
+ ('media-remote-availability','Windows source verification','Optional parallel worker; 15 seconds between batches'),
 ]
 PROPS='Id,ActiveState,SubState,Result,ExecMainStatus,ExecMainStartTimestamp,ExecMainExitTimestamp,InactiveEnterTimestamp,LastTriggerUSec,NextElapseUSecRealtime,NextElapseUSecMonotonic,UnitFileState'
 
@@ -35,7 +38,7 @@ def span(seconds):
     return f'{seconds//3600}h {(seconds%3600)//60}m'
 
 def systemd():
-    units=[base+suffix for base,_,_ in JOBS for suffix in (('.service',) if base=='media-metadata-coordinator' else ('.service','.timer'))]
+    units=[base+suffix for base,_,_ in JOBS for suffix in (('.service',) if base in ('media-metadata-coordinator','media-verification-coordinator') else ('.service','.timer'))]
     run=subprocess.run(['systemctl','show',*units,'--property='+PROPS],capture_output=True,text=True,timeout=8,check=True)
     result={}
     for block in run.stdout.strip().split('\n\n'):
@@ -43,10 +46,10 @@ def systemd():
         if props.get('Id'):result[props['Id']]=props
     return result
 
-def context(data=DATA):
+def context(data=DATA,cache_key="validation-worker"):
     try:
         with closing(sqlite3.connect('file:'+str(data/'catalogue.sqlite')+'?mode=ro',uri=True,timeout=2)) as conn:
-            row=conn.execute("SELECT value FROM cache WHERE key='validation-worker' AND expires>?",(time.time(),)).fetchone()
+            row=conn.execute("SELECT value FROM cache WHERE key=? AND expires>?",(cache_key,time.time())).fetchone()
             value=json.loads(row[0]) if row else {}
             if value.get('key') and conn.execute("SELECT 1 FROM sqlite_master WHERE name='preparation_work'").fetchone():
                 work=conn.execute('SELECT value,updated FROM preparation_work WHERE key=?',(value['key'],)).fetchone()
@@ -67,7 +70,7 @@ def workers():
         service=units.get(base+'.service',{});timer=units.get(base+'.timer',{})
         running=service.get('ActiveState') in ('active','activating','deactivating')
         failed=service.get('ActiveState')=='failed' or service.get('Result','success')!='success'
-        continuous=base=='media-metadata-coordinator'
+        continuous=base in ('media-metadata-coordinator','media-verification-coordinator')
         enabled=(service.get('UnitFileState')=='enabled' and running) if continuous else (timer.get('UnitFileState')=='enabled' and timer.get('ActiveState')=='active')
         if failed:health='🔴 Failed'
         elif not enabled:health='🟠 Service disabled / stopped' if continuous else '🟠 Timer disabled / stopped'
@@ -104,9 +107,14 @@ def workers():
                 next_run=stamp(time.time()+max(0,remaining));countdown=span(remaining)
             elif running:next_run='After current batch / run';countdown='Running now'
             else:next_run='Waiting for scheduler'
+        if base=='media-remote-availability':
+            remote=context(cache_key='remote-validation-worker')
+            detail=remote.get('message','Waiting for the enrolled Windows PC and resource gate')
+            if running and remote.get('key'):
+                detail='Windows: '+remote.get('name',remote['key'])+' · '+remote.get('preparation',{}).get('phase',detail)
         if continuous:
             next_run='Continuous service';countdown='Running now' if running else 'Stopped'
-            detail='Metadata assignments and uploads only; playback verification stays on server'
+            detail='Metadata assignments and uploads only; playback verification stays on server' if base=='media-metadata-coordinator' else 'Windows decodes exact selected-source samples; server validates and commits proofs'
         rows.append({'id':base,'name':name,'health':health,'schedule':schedule,
             'last_run':service.get('ExecMainStartTimestamp') or timer.get('LastTriggerUSec') or 'Never',
             'last_result':'In progress' if running else service.get('Result','Not run'),
@@ -230,6 +238,21 @@ def counts(data=DATA,refresh=False):
             add('LAN metadata kept newer local data',receipts.get('kept_newer',0),'Older uploaded metadata did not overwrite newer cache')
             add('Windows metadata helper last seen',stamp(seen[0]) if seen and seen[0] else 'Not connected','PC heartbeat; playback verification continues on the server')
         except (sqlite3.Error,OSError):pass
+    verification=data.parent/'verification-worker/queue.sqlite'
+    if verification.is_file():
+        try:
+            with closing(sqlite3.connect(verification.as_uri()+'?mode=ro',uri=True,timeout=1)) as remote:
+                totals=dict(remote.execute('SELECT key,value FROM totals'))
+                controls={k:json.loads(v) for k,v in remote.execute('SELECT key,value FROM control')}
+                seen=remote.execute('SELECT seen FROM client WHERE id=1').fetchone()
+                inflight=remote.execute("SELECT COUNT(*) FROM decode_jobs WHERE state IN ('pending','leased') AND controller>?",(now,)).fetchone()[0]
+            add('Windows source checks passed',totals.get('windows_titles_verified',0),'Actual v5 verification runs; distinct from metadata uploads')
+            add('Windows source checks unavailable',totals.get('windows_titles_unavailable',0),'Failures retained under the normal retry policy')
+            add('Windows source checks checkpointed',totals.get('windows_title_checkpoints',0),'Interrupted work is not a failed source')
+            add('Windows active decoding operations',inflight,'Probe or beginning/later sample; one Windows operation at a time')
+            add('Windows verification last seen',stamp(seen[0]) if seen else 'Never','Separate from the metadata helper')
+            add('Windows verification gate',controls.get('reason','Not enabled'),'One server plus one Windows verifier only after memory approval')
+        except (sqlite3.Error,OSError,ValueError):pass
     c=context(data)
     if c.get('message'):add('Validator activity',c.get('name') or c.get('key') or c['message'],c['message'])
     if data==DATA:

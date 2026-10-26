@@ -1,0 +1,8 @@
+[Unit]
+Description=Dispatch optional Windows verification batches
+[Timer]
+OnBootSec=4min
+OnUnitInactiveSec=15s
+AccuracySec=3s
+[Install]
+WantedBy=timers.target

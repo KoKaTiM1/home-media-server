@@ -208,9 +208,11 @@ metadata receipts and results survive interruptions. Windows handles series
 prefetch while server background fetches share ownership/provider budgets and
 retain an offline fallback. OMV lists the receiver/importer and metadata counts.
 The first physical Windows batch completed: 67 records imported at about
-16 results/minute. Follow [issue #2](../../issues/2) for the corrected Windows
-launcher copy and a later physical restart check. [Receiver operation/recovery](deploy/media-stack/metadata-worker/server/README.md)
+16 results/minute. Follow [issue #2](../../issues/2) for the remaining physical stop/restart durability check. [Receiver operation/recovery](deploy/media-stack/metadata-worker/server/README.md)
 describes code installation and private credential regeneration.
 Metadata enrichment does not mark torrent sources playable or complete the
 initial verification audit. The source/protocol/launchers are backed up here;
 the USB's compiled image archive and all live credentials/state are excluded.
+
+
+Optional Windows source verification is implemented separately from metadata fetching. See [worker operation and recovery](deploy/media-stack/verification-worker/README.md). The server remains authoritative; the PC is enrolled and the memory guarded 20-title pilot is running. Issues #3 and #4 track the remaining live checks before continuous assistance.

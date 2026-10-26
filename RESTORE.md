@@ -374,3 +374,6 @@ v5 direct/converted counts, daily audits and live useful-data progress. The
 worker runs serially in eight-minute slices and defers during active/paused
 viewing, navigation or unavailable session status. Do not equate an eight-minute
 checkpoint or a reported peer count with a failed or successful playable source.
+
+
+For optional Windows verification, restore the restricted gateway, memory guard and remote-availability units using [the helper recovery instructions](deploy/media-stack/verification-worker/README.md). Generate fresh private tokens/PC configuration and complete the bounded live pilot before allowing continuous parallel checks. Worker state and compiled images are private runtime data and are not stored here.

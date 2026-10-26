@@ -12,6 +12,7 @@ import shutil
 import sqlite3
 import threading
 import time
+import uuid
 import urllib.error
 import urllib.parse as U
 import urllib.request as R
@@ -38,6 +39,7 @@ class Features:
         conn.execute('CREATE INDEX IF NOT EXISTS validation_due ON validation(state,next_check,priority)')
         conn.execute("CREATE INDEX IF NOT EXISTS validation_work ON validation(priority DESC,next_check) WHERE state!='verified'")
         conn.execute('CREATE TABLE IF NOT EXISTS verification_holds(key TEXT PRIMARY KEY,expires REAL NOT NULL,reason TEXT)')
+        conn.execute('CREATE TABLE IF NOT EXISTS verification_claims(key TEXT PRIMARY KEY,token TEXT,owner TEXT,expires REAL)')
         conn.execute('CREATE TABLE IF NOT EXISTS metadata_waits(key TEXT PRIMARY KEY,expires REAL NOT NULL)')
         conn.execute('CREATE INDEX IF NOT EXISTS metadata_waits_due ON metadata_waits(expires)')
         conn.execute('CREATE TABLE IF NOT EXISTS manual_rechecks(key TEXT PRIMARY KEY,requested REAL,request_id TEXT,status TEXT)')
@@ -848,20 +850,40 @@ class Features:
         with self.db() as conn:
             return bool(conn.execute('SELECT 1 FROM verification_holds WHERE key=? AND expires>?',(key,time.time())).fetchone())
 
+    def claim_verification(self,key,owner):
+        token=uuid.uuid4().hex
+        with self.db() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            conn.execute('DELETE FROM verification_claims WHERE expires<=?',(time.time(),))
+            cursor=conn.execute('INSERT OR IGNORE INTO verification_claims VALUES (?,?,?,?)',(key,token,owner,time.time()+30))
+            return token if cursor.rowcount else None
+
+    def renew_verification(self,key,token):
+        with self.db() as conn:
+            cursor=conn.execute('UPDATE verification_claims SET expires=? WHERE key=? AND token=? AND expires>?',(time.time()+30,key,token,time.time()))
+            return bool(cursor.rowcount)
+
+    def release_verification(self,key,token):
+        with self.db() as conn:conn.execute('DELETE FROM verification_claims WHERE key=? AND token=?',(key,token))
+
     def worker_audit(self,recurring=False):
         # Holds are scheduling exclusions, not failed/finished audit results.
         # Keep original proof/readiness/history and automatically retry after expiry.
         with self.g['REL'].db() as conn:
-            row=conn.execute("SELECT a.key FROM verification_audit a JOIN validation v ON v.key=a.key WHERE a.completed=0 AND (v.state='verified' OR v.next_check<=?) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=v.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (v.key=mw.key OR v.key LIKE mw.key||':%')) ORDER BY a.priority DESC,COALESCE(json_extract(v.proof,'$.version'),0),a.scheduled LIMIT 1",(time.time(),)).fetchone()
+            row=conn.execute("SELECT a.key FROM verification_audit a JOIN validation v ON v.key=a.key WHERE a.completed=0 AND (v.state='verified' OR v.next_check<=?) AND NOT EXISTS(SELECT 1 FROM verification_claims vc WHERE vc.key=v.key AND vc.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=v.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (v.key=mw.key OR v.key LIKE mw.key||':%')) ORDER BY a.priority DESC,COALESCE(json_extract(v.proof,'$.version'),0),a.scheduled LIMIT 1",(time.time(),)).fetchone()
             if not row and recurring:
-                row=conn.execute("SELECT key FROM validation WHERE state='verified' AND checked<=? AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=validation.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (validation.key=mw.key OR validation.key LIKE mw.key||':%')) ORDER BY checked LIMIT 1",(time.time()-86400,)).fetchone()
+                row=conn.execute("SELECT key FROM validation WHERE state='verified' AND checked<=? AND NOT EXISTS(SELECT 1 FROM verification_claims vc WHERE vc.key=validation.key AND vc.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=validation.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (validation.key=mw.key OR validation.key LIKE mw.key||':%')) ORDER BY checked LIMIT 1",(time.time()-86400,)).fetchone()
         return row
 
-    def warm_availability(self,limit=20):
+    def warm_availability(self,limit=20,remote=False):
+        if remote:
+            from verification_remote import ready
+            if not ready(self.g):return
+        self.g['BUDGET'].remote_verification=remote
         self.consume_rechecks()
         # flock survives separate cron/docker exec processes. Interrupted rows
         # remain due and resume automatically; no in-memory-only work cursor.
-        with (self.g['DATA']/'validation.lock').open('a') as lock:
+        with (self.g['DATA']/('remote-validation.lock' if remote else 'validation.lock')).open('a') as lock:
             try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
             except BlockingIOError:return
             # Defer all torrent probes while the owner is playing anything.
@@ -874,10 +896,10 @@ class Features:
                 except Exception:return 'Waiting for Jellyfin startup or session status'
             blocked=busy()
             if blocked:
-                self.remember('validation-worker',{'message':blocked+'; resumes automatically','started':time.time()},180)
+                self.remember('remote-validation-worker' if remote else 'validation-worker',{'message':blocked+'; resumes automatically','started':time.time()},180)
                 return
             if self.cached('validation-provider-backoff'):
-                self.remember('validation-worker',{'message':'Source provider cooldown; resumes automatically','started':time.time()},180)
+                self.remember('remote-validation-worker' if remote else 'validation-worker',{'message':'Source provider cooldown; resumes automatically','started':time.time()},180)
                 return
             self.seed_validation()
             self.g['REL'].schedule()
@@ -888,32 +910,34 @@ class Features:
             while checked<limit and time.monotonic()-started<480:
                 blocked=busy()
                 if blocked:
-                    self.remember('validation-worker',{'message':blocked+'; resumes automatically','started':time.time()},180)
+                    self.remember('remote-validation-worker' if remote else 'validation-worker',{'message':blocked+'; resumes automatically','started':time.time()},180)
                     break
                 with self.db() as conn:
-                    row=conn.execute("SELECT v.key FROM manual_rechecks m JOIN validation v ON v.key=m.key WHERE m.status='pending' AND v.next_check<=? AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=v.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (v.key=mw.key OR v.key LIKE mw.key||':%')) ORDER BY m.requested LIMIT 1",(time.time(),)).fetchone()
+                    row=conn.execute("SELECT v.key FROM manual_rechecks m JOIN validation v ON v.key=m.key WHERE m.status='pending' AND v.next_check<=? AND NOT EXISTS(SELECT 1 FROM verification_claims vc WHERE vc.key=v.key AND vc.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=v.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (v.key=mw.key OR v.key LIKE mw.key||':%')) ORDER BY m.requested LIMIT 1",(time.time(),)).fetchone()
                     # Initial audits precede discovery; one in five ordinary
                     # slots subsequently rechecks a success older than 24 hours.
                     if not row:row=self.worker_audit(recurring=slot%5==4)
                     if not row:
-                        work=conn.execute("SELECT w.key,w.value FROM preparation_work w JOIN validation v ON v.key=w.key WHERE (v.state='verified' OR v.next_check<=?) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=v.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (v.key=mw.key OR v.key LIKE mw.key||':%')) ORDER BY w.updated LIMIT 1",(time.time(),)).fetchone()
+                        work=conn.execute("SELECT w.key,w.value FROM preparation_work w JOIN validation v ON v.key=w.key WHERE (v.state='verified' OR v.next_check<=?) AND NOT EXISTS(SELECT 1 FROM verification_claims vc WHERE vc.key=v.key AND vc.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=v.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (v.key=mw.key OR v.key LIKE mw.key||':%')) ORDER BY w.updated LIMIT 1",(time.time(),)).fetchone()
                         if work:row=(work[0],)
                     # Reserve one in five probes for due failures so a large
                     # discovery backlog cannot starve the saved retry list.
                     if not row and checked%5==0:
-                        row=conn.execute("SELECT key FROM validation WHERE state='unavailable' AND next_check<=? AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=validation.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (validation.key=mw.key OR validation.key LIKE mw.key||':%')) ORDER BY next_check,priority DESC LIMIT 1",(time.time(),)).fetchone()
+                        row=conn.execute("SELECT key FROM validation WHERE state='unavailable' AND next_check<=? AND NOT EXISTS(SELECT 1 FROM verification_claims vc WHERE vc.key=validation.key AND vc.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=validation.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (validation.key=mw.key OR validation.key LIKE mw.key||':%')) ORDER BY next_check,priority DESC LIMIT 1",(time.time(),)).fetchone()
                     if not row:
                         # Most slots widen the catalogue; one in five grows
                         # episode coverage of shows already visible.
                         breadth="(key LIKE 'movie:%' OR key LIKE 'series:%:1:1')"
                         wanted="NOT "+breadth if checked%5==4 else breadth
-                        row=conn.execute("SELECT key FROM validation WHERE state!='verified' AND next_check<=? AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=validation.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (validation.key=mw.key OR validation.key LIKE mw.key||':%')) AND "+wanted+" ORDER BY priority DESC,next_check,rowid LIMIT 1",(time.time(),)).fetchone()
+                        row=conn.execute("SELECT key FROM validation WHERE state!='verified' AND next_check<=? AND NOT EXISTS(SELECT 1 FROM verification_claims vc WHERE vc.key=validation.key AND vc.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=validation.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (validation.key=mw.key OR validation.key LIKE mw.key||':%')) AND "+wanted+" ORDER BY priority DESC,next_check,rowid LIMIT 1",(time.time(),)).fetchone()
                     if not row:
-                        row=conn.execute("SELECT key FROM validation WHERE state!='verified' AND next_check<=? AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=validation.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (validation.key=mw.key OR validation.key LIKE mw.key||':%')) ORDER BY priority DESC,next_check,rowid LIMIT 1",(time.time(),)).fetchone()
+                        row=conn.execute("SELECT key FROM validation WHERE state!='verified' AND next_check<=? AND NOT EXISTS(SELECT 1 FROM verification_claims vc WHERE vc.key=validation.key AND vc.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=validation.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (validation.key=mw.key OR validation.key LIKE mw.key||':%')) ORDER BY priority DESC,next_check,rowid LIMIT 1",(time.time(),)).fetchone()
                 if not row:break
                 key=row[0]
                 if self.verification_held(key):continue
-                self.remember('validation-worker',{'key':key,'started':time.time(),'position':checked+1,'message':'Video sample validation running'},180)
+                claim=self.claim_verification(key,'windows' if remote else 'server')
+                if not claim:continue
+                self.remember('remote-validation-worker' if remote else 'validation-worker',{'key':key,'started':time.time(),'position':checked+1,'message':'Video sample validation running'},180)
                 attempt_started=time.time()
                 slot+=1;self.remember('verification-v5-slot',{'slot':slot},10*365*86400)
                 try:
@@ -924,12 +948,22 @@ class Features:
                     with self.g['REL'].db() as conn:work=conn.execute('SELECT value FROM preparation_work WHERE key=?',(key,)).fetchone()
                     audio_index=json.loads(work[0]).get('audio_index') if work else None
                     last_session_check=[0,False]
+                    last_claim_renew=[time.monotonic()]
                     def interrupted():
+                        if time.monotonic()-last_claim_renew[0]>=10:
+                            if not self.renew_verification(key,claim):return True
+                            last_claim_renew[0]=time.monotonic()
+                        if remote:
+                            from verification_remote import ready
+                            if not ready(self.g):return True
                         if self.foreground_busy():return True
                         if time.monotonic()-last_session_check[0]>=2:
                             last_session_check[:]=[time.monotonic(),bool(busy())]
                         return last_session_check[1]
                     self.g['prepared'](key,background=True,**({'audio_index':audio_index} if audio_index is not None else {}),cancel=interrupted)
+                    if remote:
+                        from verification_remote import jobs
+                        jobs(self.g).count('windows_titles_verified')
                     if key.startswith('series:'):
                         try:
                             meta=self.g['metadata']('series',key.split(':')[1])
@@ -947,11 +981,14 @@ class Features:
                     pending=self.g.get('MetadataPending')
                     if pending and isinstance(error,pending):
                         checked+=1
-                        self.remember('validation-worker',{'message':'Metadata pending on helper; checking other titles','started':time.time()},180)
+                        self.remember('remote-validation-worker' if remote else 'validation-worker',{'message':'Metadata pending on helper; checking other titles','started':time.time()},180)
                         continue
                     transient=tuple(self.g[name] for name in ('ClientCancelled','PlaybackBusy','Checkpoint') if isinstance(self.g.get(name),type))
-                    if transient and isinstance(error,transient):
-                        self.remember('validation-worker',{'message':'Work checkpointed; resumes after foreground activity or next batch','started':time.time()},180)
+                    if isinstance(error,sqlite3.OperationalError) or transient and isinstance(error,transient):
+                        if remote:
+                            from verification_remote import jobs
+                            jobs(self.g).count('windows_title_checkpoints')
+                        self.remember('remote-validation-worker' if remote else 'validation-worker',{'message':'Work checkpointed; resumes after foreground activity or next batch','started':time.time()},180)
                         break
                     if isinstance(error,urllib.error.HTTPError) and (error.code==429 or error.code>=500):
                         self.remember('validation-provider-backoff',True,900 if error.code==429 else 300)
@@ -959,8 +996,13 @@ class Features:
                         break
                     with self.db() as conn:current=conn.execute('SELECT checked FROM validation WHERE key=?',(key,)).fetchone()
                     if not current or current[0]<time.time()-30:self.validation_result(key,False,reason=type(error).__name__,attempt_started=attempt_started,background=True)
+                    if remote:
+                        from verification_remote import jobs
+                        jobs(self.g).count('windows_titles_unavailable')
+                finally:
+                    self.release_verification(key,claim)
                 checked+=1
-                self.remember('validation-worker',{'key':key,'started':time.time(),'position':checked,'message':'Last probe finished; proceeding to next queue entry'},180)
+                self.remember('remote-validation-worker' if remote else 'validation-worker',{'key':key,'started':time.time(),'position':checked,'message':'Last probe finished; proceeding to next queue entry'},180)
                 time.sleep(2)
             self.log(f'Persistent video validation: {checked} checked; unavailable entries retained with backoff')
 

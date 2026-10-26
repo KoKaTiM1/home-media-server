@@ -1,0 +1,18 @@
+Windows verification worker
+
+This is the real media sample decoder, separate from the older metadata worker.
+The server still owns source selection, all library data and final proofs.
+
+1. Keep this folder on a local drive. Start Docker Desktop (Linux engine).
+2. Run 01-INSTALL.cmd to load the included image.
+3. Copy the private verification connection JSON from the server user home
+   into config/verification.local.json using the authenticated SCP login.
+   Do not paste the token into chat or GitHub.
+4. Run 04-START.cmd. It shows live progress. Waiting on the server memory gate
+   is normal until the bounded parallel pilot is enabled.
+5. 05-STATUS.cmd shows counters; 06-LOGS.cmd follows live activity.
+   Ctrl+C closes the activity view only. 07-STOP.cmd stops the worker.
+
+Windows is optional: stopping it or shutting down the PC leaves the server
+working. Keep data/ for identity and retained results across restarts.
+No inbound Windows port, SSH account or shared network database is needed.

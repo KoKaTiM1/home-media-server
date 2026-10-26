@@ -1,0 +1,10 @@
+[Unit]
+Description=Check resource gate for optional Windows verification
+After=media-stack.service
+[Service]
+Type=oneshot
+UMask=0007
+Environment=PYTHONPATH=/usr/local/lib/home-media-verification
+ExecStart=/usr/bin/python3 /usr/local/lib/home-media-verification/resource_guard.py --config /opt/media-stack/secrets/verification_guard.json
+MemoryMax=96M
+Nice=15

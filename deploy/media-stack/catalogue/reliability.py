@@ -20,6 +20,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
+from verification_media import evidence, MissingVideoFrames, MissingSelectedAudio, execute as media_execute
 
 VERSION = 5
 POLL_SECONDS = 2
@@ -34,8 +35,6 @@ class Checkpoint(RuntimeError):
 
 class ResourceCheckpoint(Checkpoint):pass
 class DecodeFailure(RuntimeError):pass
-class MissingVideoFrames(RuntimeError):pass
-class MissingSelectedAudio(RuntimeError):pass
 class SourceStalled(RuntimeError):pass
 
 
@@ -59,35 +58,6 @@ def rank(candidate):
             seeds is not None, bool(re.search('1080',title)),bool(re.search('AAC',title,re.I)))
 
 
-def evidence(output, seconds, audio):
-    text=output.decode(errors='replace') if isinstance(output,bytes) else output
-    bases={};kinds={};packets={}
-    for line in text.splitlines():
-        base=re.match(r'#tb (\d+): (\d+)/(\d+)',line)
-        kind=re.match(r'#media_type (\d+): (\w+)',line)
-        if base and int(base[3]):bases[int(base[1])]=int(base[2])/int(base[3])
-        if kind:kinds[int(kind[1])]=kind[2]
-        if line.startswith('#'):continue
-        fields=[v.strip() for v in line.split(',')]
-        if len(fields)<6:continue
-        try:
-            stream=int(fields[0]);pts=int(fields[2])*bases[stream];duration=int(fields[3])*bases[stream]
-        except (ValueError,KeyError):continue
-        if math.isfinite(pts) and math.isfinite(duration) and duration>0:packets.setdefault(stream,[]).append((pts,duration))
-    def stream(kind):
-        return next((packets.get(i,[]) for i,k in kinds.items() if k==kind),[])
-    video=stream('video');sound=stream('audio')
-    def enough(values,tolerance):
-        if len(values)<2:return False
-        # Both covered timestamp span and accumulated decoded duration matter:
-        # a discontinuity must not turn a few frames into a six-second pass.
-        return (max(t+d for t,d in values)-min(t for t,d in values)>=seconds-tolerance
-                and sum(d for _,d in values)>=seconds-tolerance)
-    if not enough(video,.25):raise MissingVideoFrames('Missing decoded video frames or timestamps')
-    if audio and not enough(sound,.15):raise MissingSelectedAudio('Missing selected audio frames or timestamps')
-    return {'video_frames':len(video),'video_first_pts':min(t for t,_ in video),'video_last_pts':max(t+d for t,d in video),
-            'audio_frames':len(sound),'audio_first_pts':min((t for t,_ in sound),default=None),
-            'audio_last_pts':max((t+d for t,d in sound),default=None)}
 
 
 class SampleResponse:
@@ -292,31 +262,17 @@ class Reliability:
     def sample(self,key,selected,info,audio_index,conversion,position,seconds,deadline):
         token=uuid.uuid4().hex
         source=selected.get('local') or self.source_url('raw',key,selected,token)
-        command=['ffmpeg','-nostdin','-v','error','-xerror','-err_detect','explode','-threads','1','-filter_threads','1','-filter_complex_threads','1']
-        if position:command+=['-ss',str(position)]
         video=next(s for s in info['streams'] if s.get('codec_type')=='video' and not s.get('disposition',{}).get('attached_pic'))
-        command+=['-i',source,'-t',str(seconds),'-map','0:'+str(video['index'])]
-        if audio_index is not None:command+=['-map',f'0:{audio_index}']
-        command+=['-sn','-dn']
+        params={'position':position,'seconds':seconds,'video_index':video['index'],'video_codec':video['codec_name'],
+                'audio_index':audio_index,'conversion':conversion}
         self.checkpoint(key,phase='later sample' if position else 'beginning sample',source_id=self.sid(selected),
                         sample_position=position,audio='AAC-LC conversion' if conversion else 'direct',state='preparing')
-        # Conversion and decode use fresh samples on every audit; a prior
-        # converted header is never considered evidence of decoded frames.
-        with tempfile.TemporaryDirectory(prefix='verify-',dir=self.g['DATA']) as directory:
-            if conversion:
-                output=str(Path(directory)/'sample.mkv')
-                converted=self.run(command+['-c:v','copy','-c:a','aac','-profile:a','aac_low','-ac','2','-ar','48000',output],
-                                   key,'audio conversion',selected,token,deadline)
-                # With loglevel info, errors are fail-fast through -xerror.
-                checked=self.run(['ffprobe','-v','error','-threads','1','-analyzeduration','60000000','-probesize','16000000','-show_streams','-of','json',output],key,'conversion probe',selected,token,deadline)
-                streams=json.loads(checked.stdout).get('streams',[])
-                original=video
-                if not any(s.get('codec_type')=='video' and s.get('codec_name')==original['codec_name'] for s in streams):raise RuntimeError('Video copy missing')
-                if not any(s.get('codec_type')=='audio' and s.get('codec_name')=='aac' and s.get('profile')=='LC' and s.get('channels')==2 for s in streams):raise RuntimeError('AAC-LC stereo missing')
-                command=['ffmpeg','-nostdin','-v','error','-xerror','-err_detect','explode','-threads','1','-filter_threads','1','-filter_complex_threads','1','-i',output,'-map','0:v:0','-map','0:a:0']
-            result=self.run(command+['-vf','scale=160:-2:flags=fast_bilinear','-c:v','rawvideo','-threads','1']+(['-c:a','pcm_s16le'] if audio_index is not None else [])+['-fps_mode','passthrough','-max_interleave_delta','100000','-f','framecrc','-'],
-                            key,'sample decode',selected,token,deadline)
-        return {'position':position,'seconds':seconds,**evidence(result.stdout,seconds,audio_index is not None)}
+        if getattr(self.g['BUDGET'],'remote_verification',False) and not selected.get('local'):
+            from verification_remote import execute as remote_execute
+            with self.lock('torrent:'+selected['hash']):
+                return remote_execute(self.g,key,selected,'sample',params,deadline)
+        result=media_execute('sample',params,source,lambda command,phase:self.run(command,key,phase,selected,token,deadline),self.g['DATA'])
+        return {'position':position,'seconds':seconds,**evidence(result['crc'],seconds,audio_index is not None)}
 
     def verify(self,key,selected,info,audio_index,conversion,deadline):
         if conversion:
@@ -346,7 +302,8 @@ class Reliability:
         return {'version':VERSION,'source_id':self.sid(selected),'source_hash':selected['hash'],
                 'file_index':selected.get('index'),'filename':selected['filename'],'length':selected.get('length'),
                 'selected_audio_index':audio_index,'audio_conversion':conversion,'video_copy':True,
-                'audio_policy':2,'samples':samples,'audit_sequence':sequence,'checked_at':time.time()}
+                'audio_policy':2,'samples':samples,'audit_sequence':sequence,'checked_at':time.time(),
+                'verification_worker':'windows' if getattr(self.g['BUDGET'],'remote_verification',False) and not selected.get('local') else 'server'}
 
     def schedule(self):
         self.db().close()
