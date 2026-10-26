@@ -29,7 +29,8 @@ def main():
     git(repo,'merge','--ff-only','origin/main')
     with tempfile.TemporaryDirectory(prefix='home-media-export-') as temporary:
         snapshot=Path(temporary)/'snapshot';exporter.export(snapshot)
-        for retired in ('artifacts/DynamicLibrary/Jellyfin.Plugin.DynamicLibrary.dll','artifacts/wizdom-0.2.0.0.zip'):
+        for retired in ('artifacts/DynamicLibrary/Jellyfin.Plugin.DynamicLibrary.dll','artifacts/wizdom-0.2.0.0.zip',
+                        'FOLLOW_UP.md','backup/templates/FOLLOW_UP.md'):
             (repo/retired).unlink(missing_ok=True)
         for source in sorted(snapshot.rglob('*')):
             if source.is_file():

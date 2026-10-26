@@ -28,11 +28,10 @@ source can be rebuilt. Authentication keys are supplied through runtime files.
 
 ## Follow-up after verification
 
-See [the recorded findings and retest checklist](FOLLOW_UP.md) for the unresolved
-embedded Hebrew subtitle extraction defect and the playback/series checks to
-repeat after the initial audit. [Create the prepared GitHub issue](https://github.com/<GITHUB_OWNER>/home-media-server/issues/new?title=After+verification%3A+fix+embedded+Hebrew+subtitles+and+retest+playback%2Fblank+series&body=Revisit+after+the+initial+verification-v5+audit+completes.+Track+the+confirmed+embedded+Hebrew+subtitle+extraction+failure%2C+Thamma+playback+retest%2C+and+blank-series+regression+checks.%0A%0AFull+findings+and+closure+checklist%3A+https%3A%2F%2Fgithub.com%2F<GITHUB_OWNER>%2Fhome-media-server%2Fblob%2Fmain%2FFOLLOW_UP.md%0A%0AKeep+this+issue+open+until+fresh+verification+outcomes+and+physical+TV+retests+establish+the+result.+Preserve+viewing+holds%2C+watch+progress%2C+favorites+and+saved+media.).
-The integration rejected issue creation with HTTP 403; this file is the durable
-record until the issue is submitted.
+[Issue #1](https://github.com/<GITHUB_OWNER>/home-media-server/issues/1) tracks the
+embedded Hebrew subtitle extraction defect and the playback/blank-series
+checks to repeat after the initial verification audit. Findings and closure
+criteria are kept in the issue.
 
 ## Hardware currently running this stack
 

@@ -490,3 +490,5 @@ SRT; this is distinct from zero provider matches. A working downloaded second
 option is not evidence that the embedded first option extracted successfully.
 That native extraction issue remains under investigation; no subtitle-source
 expansion or playback-service restart was applied as part of this repair.
+
+Post-verification investigation and acceptance criteria are tracked in [GitHub issue #1](https://github.com/<GITHUB_OWNER>/home-media-server/issues/1).
