@@ -273,6 +273,7 @@ def overview(data=DATA,snapshot=None):
         audit_total=values.get('audit_total',0);audit_done=values.get('audit_done',0)
         add('Initial v5 audit',f'{audit_done:,} / {audit_total:,}',f'{100*audit_done/audit_total:.1f}% complete' if audit_total else 'No initial audit scheduled')
         add('Final passes in last hour',f"{values.get('v5_hour',0):,}",'Latest verified state per title; not a count of decoder operations','success')
+    updated=stamp(now)
     queue=data.parent/'verification-worker/queue.sqlite'
     try:
         with closing(sqlite3.connect('file:'+str(queue)+'?mode=ro',uri=True,timeout=1)) as conn:
@@ -308,7 +309,7 @@ def overview(data=DATA,snapshot=None):
         else:add('Windows working on','Waiting','The next guarded batch starts automatically when work is eligible')
         if problem:
             label='Decode rejected' if problem['outcome']=='decode_failure' else 'Checkpoint'
-            reason=problem['reason_code'] or 'source or viewing interruption'
+            reason=problem['reason_code'] or 'reason unavailable from current PC client'
             add('Latest PC operation issue',label,f"{problem['operation']} · {reason} · {span(now-problem['finished'])} ago",'error')
         else:add('Latest PC operation issue','None in last hour','Older issues remain in the detailed worker log')
     except (sqlite3.Error,OSError,ValueError,TypeError):
