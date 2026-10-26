@@ -28,7 +28,7 @@ source can be rebuilt. Authentication keys are supplied through runtime files.
 
 ## Follow-up after verification
 
-[Issue #1](https://github.com/<GITHUB_OWNER>/home-media-server/issues/1) tracks the
+[Issue #1](../../issues/1) tracks the
 embedded Hebrew subtitle extraction defect and the playback/blank-series
 checks to repeat after the initial verification audit. Findings and closure
 criteria are kept in the issue.
