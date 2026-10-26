@@ -198,15 +198,18 @@ and library configuration, rebuilding metadata/verification, and downloading
 media again. For state recovery, maintain a separate encrypted off-server
 backup; never commit that unencrypted data here.
 
-## Optional Windows metadata helper — USB preparation
+## Optional Windows metadata helper — LAN connection
 
 A [Windows Docker helper](deploy/media-stack/metadata-worker/README.md) has been
-prepared for offline installation from USB. It fetches title/episode metadata
-for leased assignments and retains pending results locally. This is staged
-work: the server coordinator/importer is not installed and LAN synchronization
-is not enabled. Existing playback verification and sync schedules continue.
-Follow [issue #2](../../issues/2) for physical Windows validation, server-side
-lease coordination, authenticated HTTPS and a measured first metadata batch.
+prepared for offline installation from USB; the owner confirmed its demo passed
+on Windows. A restricted HTTPS receiver, durable shared leases and 30-second
+server importer are installed. The PC uses a private scoped connection file;
+metadata receipts and results survive interruptions. Windows handles series
+prefetch while server background fetches share ownership/provider budgets and
+retain an offline fallback. OMV lists the receiver/importer and metadata counts.
+Follow [issue #2](../../issues/2) for the first physical Windows upload batch and
+throughput measurement. [Receiver operation/recovery](deploy/media-stack/metadata-worker/server/README.md)
+describes code installation and private credential regeneration.
 Metadata enrichment does not mark torrent sources playable or complete the
 initial verification audit. The source/protocol/launchers are backed up here;
 the USB's compiled image archive and all live credentials/state are excluded.

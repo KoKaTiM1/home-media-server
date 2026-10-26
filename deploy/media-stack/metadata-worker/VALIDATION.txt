@@ -1,24 +1,22 @@
-USB PHASE 1 VALIDATION - 2026-10-26
+LAN METADATA INTEGRATION VALIDATION - 2026-10-26
 
-PASS: 17 isolated Python regression tests.
-PASS: exact-source metadata identity, partition rejection and single-instance lock.
-PASS: durable outbox across restart and lost acknowledgement; no second fetch.
-PASS: wrong result acknowledgement retains pending data.
-PASS: expired assignments retained without fetching.
-PASS: provider 429 cooldown persisted and reported for shared rate limiting.
-PASS: real TLS pin mismatch sends no token or HTTP request.
-PASS: normal TLS rejects untrusted certificates.
-PASS: allowed Cinemeta redirect retains the exact title ID/path.
-PASS: arbitrary redirect host, port, path, query or downgrade rejected.
-PASS: real metadata smoke check returned Money Trap with eight episodes.
-PASS: final Docker image offline demonstration with network disabled, read-only
-      root, no capabilities, unprivileged user and 128 MiB memory limit.
+PASS: owner confirmed Windows image installation and offline demo.
+PASS: 138 isolated catalogue regressions, including 22 coordinator/import tests.
+PASS: 5 OMV monitor regressions; continuous receiver shown without a timer.
+PASS: real isolated HTTPS claim/upload, lost reply/restart, duplicate receipt,
+      token revocation, exact metadata identity, expired leases and generations.
+PASS: simultaneous background claims do not duplicate ownership.
+PASS: import retry preserves newer cache and leaves source proofs/library files.
+PASS: metadata wait continues verification with another title, without failure.
+PASS: server/PC provider cooldown and catalogue-page request budget shared.
+PASS: active pinned-HTTPS receiver responds to status; invalid token gets 401.
+PASS: corrected shared queue SQLite/WAL/SHM mode0660 for both service/bridge.
 
-NOT TESTED: physical Windows PowerShell 5.1 launchers / Docker Desktop execution.
-NOT ACTIVATED: server coordinator, production claims/uploads, library imports,
-               server partitioning, new schedules, tokens or receiving ports.
-No Jellyfin/bridge/TorrServer/Transmission restart was performed for this work.
+The receiver is limited to the enrolled LAN PC and server. Its unprivileged
+process can write only its own queue. The trusted importer runs every30seconds.
+Production Windows claim/upload/throughput confirmation remains in issue #2
+until first receipts are observed. No playback container was restarted for this
+integration. Source validation remains separate; metadata never proves media.
 
-Image tag: home-media-metadata-worker:0.1.0
-Image platform: linux/amd64
-Image ID: sha256:9f42593e65d1c85062d815eda94f36028595d87c6b625edcf727d903de67dc23
+Original USB client image remains home-media-metadata-worker:0.1.0.
+No client image update is required for this connection protocol.

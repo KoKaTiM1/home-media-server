@@ -38,6 +38,8 @@ class Features:
         conn.execute('CREATE INDEX IF NOT EXISTS validation_due ON validation(state,next_check,priority)')
         conn.execute("CREATE INDEX IF NOT EXISTS validation_work ON validation(priority DESC,next_check) WHERE state!='verified'")
         conn.execute('CREATE TABLE IF NOT EXISTS verification_holds(key TEXT PRIMARY KEY,expires REAL NOT NULL,reason TEXT)')
+        conn.execute('CREATE TABLE IF NOT EXISTS metadata_waits(key TEXT PRIMARY KEY,expires REAL NOT NULL)')
+        conn.execute('CREATE INDEX IF NOT EXISTS metadata_waits_due ON metadata_waits(expires)')
         conn.execute('CREATE TABLE IF NOT EXISTS manual_rechecks(key TEXT PRIMARY KEY,requested REAL,request_id TEXT,status TEXT)')
         conn.execute('CREATE TABLE IF NOT EXISTS recheck_requests(id TEXT PRIMARY KEY,requested REAL,count INTEGER)')
         self.ensure_read_model(conn)
@@ -850,9 +852,9 @@ class Features:
         # Holds are scheduling exclusions, not failed/finished audit results.
         # Keep original proof/readiness/history and automatically retry after expiry.
         with self.g['REL'].db() as conn:
-            row=conn.execute("SELECT a.key FROM verification_audit a JOIN validation v ON v.key=a.key WHERE a.completed=0 AND (v.state='verified' OR v.next_check<=?) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=v.key AND h.expires>unixepoch()) ORDER BY a.priority DESC,COALESCE(json_extract(v.proof,'$.version'),0),a.scheduled LIMIT 1",(time.time(),)).fetchone()
+            row=conn.execute("SELECT a.key FROM verification_audit a JOIN validation v ON v.key=a.key WHERE a.completed=0 AND (v.state='verified' OR v.next_check<=?) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=v.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (v.key=mw.key OR v.key LIKE mw.key||':%')) ORDER BY a.priority DESC,COALESCE(json_extract(v.proof,'$.version'),0),a.scheduled LIMIT 1",(time.time(),)).fetchone()
             if not row and recurring:
-                row=conn.execute("SELECT key FROM validation WHERE state='verified' AND checked<=? AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=validation.key AND h.expires>unixepoch()) ORDER BY checked LIMIT 1",(time.time()-86400,)).fetchone()
+                row=conn.execute("SELECT key FROM validation WHERE state='verified' AND checked<=? AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=validation.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (validation.key=mw.key OR validation.key LIKE mw.key||':%')) ORDER BY checked LIMIT 1",(time.time()-86400,)).fetchone()
         return row
 
     def warm_availability(self,limit=20):
@@ -889,25 +891,25 @@ class Features:
                     self.remember('validation-worker',{'message':blocked+'; resumes automatically','started':time.time()},180)
                     break
                 with self.db() as conn:
-                    row=conn.execute("SELECT v.key FROM manual_rechecks m JOIN validation v ON v.key=m.key WHERE m.status='pending' AND v.next_check<=? AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=v.key AND h.expires>unixepoch()) ORDER BY m.requested LIMIT 1",(time.time(),)).fetchone()
+                    row=conn.execute("SELECT v.key FROM manual_rechecks m JOIN validation v ON v.key=m.key WHERE m.status='pending' AND v.next_check<=? AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=v.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (v.key=mw.key OR v.key LIKE mw.key||':%')) ORDER BY m.requested LIMIT 1",(time.time(),)).fetchone()
                     # Initial audits precede discovery; one in five ordinary
                     # slots subsequently rechecks a success older than 24 hours.
                     if not row:row=self.worker_audit(recurring=slot%5==4)
                     if not row:
-                        work=conn.execute("SELECT w.key,w.value FROM preparation_work w JOIN validation v ON v.key=w.key WHERE (v.state='verified' OR v.next_check<=?) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=v.key AND h.expires>unixepoch()) ORDER BY w.updated LIMIT 1",(time.time(),)).fetchone()
+                        work=conn.execute("SELECT w.key,w.value FROM preparation_work w JOIN validation v ON v.key=w.key WHERE (v.state='verified' OR v.next_check<=?) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=v.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (v.key=mw.key OR v.key LIKE mw.key||':%')) ORDER BY w.updated LIMIT 1",(time.time(),)).fetchone()
                         if work:row=(work[0],)
                     # Reserve one in five probes for due failures so a large
                     # discovery backlog cannot starve the saved retry list.
                     if not row and checked%5==0:
-                        row=conn.execute("SELECT key FROM validation WHERE state='unavailable' AND next_check<=? AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=validation.key AND h.expires>unixepoch()) ORDER BY next_check,priority DESC LIMIT 1",(time.time(),)).fetchone()
+                        row=conn.execute("SELECT key FROM validation WHERE state='unavailable' AND next_check<=? AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=validation.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (validation.key=mw.key OR validation.key LIKE mw.key||':%')) ORDER BY next_check,priority DESC LIMIT 1",(time.time(),)).fetchone()
                     if not row:
                         # Most slots widen the catalogue; one in five grows
                         # episode coverage of shows already visible.
                         breadth="(key LIKE 'movie:%' OR key LIKE 'series:%:1:1')"
                         wanted="NOT "+breadth if checked%5==4 else breadth
-                        row=conn.execute("SELECT key FROM validation WHERE state!='verified' AND next_check<=? AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=validation.key AND h.expires>unixepoch()) AND "+wanted+" ORDER BY priority DESC,next_check,rowid LIMIT 1",(time.time(),)).fetchone()
+                        row=conn.execute("SELECT key FROM validation WHERE state!='verified' AND next_check<=? AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=validation.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (validation.key=mw.key OR validation.key LIKE mw.key||':%')) AND "+wanted+" ORDER BY priority DESC,next_check,rowid LIMIT 1",(time.time(),)).fetchone()
                     if not row:
-                        row=conn.execute("SELECT key FROM validation WHERE state!='verified' AND next_check<=? AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=validation.key AND h.expires>unixepoch()) ORDER BY priority DESC,next_check,rowid LIMIT 1",(time.time(),)).fetchone()
+                        row=conn.execute("SELECT key FROM validation WHERE state!='verified' AND next_check<=? AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=validation.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (validation.key=mw.key OR validation.key LIKE mw.key||':%')) ORDER BY priority DESC,next_check,rowid LIMIT 1",(time.time(),)).fetchone()
                 if not row:break
                 key=row[0]
                 if self.verification_held(key):continue
@@ -939,6 +941,14 @@ class Features:
                             self.enqueue_many(aired,30)
                         except Exception:self.log('Episode verification queue expansion deferred')
                 except Exception as error:
+                    # A lease held by the metadata PC is a scheduling wait, not
+                    # a source failure. Its short SQL exclusion lets this batch
+                    # continue checking other titles rather than stalling.
+                    pending=self.g.get('MetadataPending')
+                    if pending and isinstance(error,pending):
+                        checked+=1
+                        self.remember('validation-worker',{'message':'Metadata pending on helper; checking other titles','started':time.time()},180)
+                        continue
                     transient=tuple(self.g[name] for name in ('ClientCancelled','PlaybackBusy','Checkpoint') if isinstance(self.g.get(name),type))
                     if transient and isinstance(error,transient):
                         self.remember('validation-worker',{'message':'Work checkpointed; resumes after foreground activity or next batch','started':time.time()},180)
@@ -979,7 +989,10 @@ class Features:
         changed=0
         for imdb,raw in rows:
             try:
-                with self.db() as conn:conn.execute('DELETE FROM cache WHERE key=?',('meta:series:'+imdb,))
+                # The helper supplies the normal six-hour metadata cache. Do
+                # not invalidate fresh leased results during routine refresh.
+                if not (self.g['DATA']/'metadata-helper.enabled').is_file():
+                    with self.db() as conn:conn.execute('DELETE FROM cache WHERE key=?',('meta:series:'+imdb,))
                 meta=self.g['metadata']('series',imdb)
                 old=json.loads(raw)
                 if meta.get('videos')!=old.get('videos'):

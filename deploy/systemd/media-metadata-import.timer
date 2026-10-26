@@ -1,0 +1,11 @@
+[Unit]
+Description=Maintain the Windows metadata queue and apply its results
+
+[Timer]
+OnBootSec=3min
+OnUnitInactiveSec=30s
+AccuracySec=3s
+Unit=media-metadata-import.service
+
+[Install]
+WantedBy=timers.target

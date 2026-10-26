@@ -24,9 +24,11 @@ import time
 import urllib.error
 import urllib.parse as U
 import urllib.request as R
+import uuid
 import xml.etree.ElementTree as ET
 import zipfile
 from features import Features
+from metadata_jobs import MetadataJobs, MetadataBusy, from_marker as metadata_coordinator
 from reliability import Reliability, Checkpoint, VERSION, rank, METADATA_SECONDS, WORK_SECONDS
 
 DATA = Path(os.getenv('CATALOGUE_DATA', '/data'))
@@ -65,6 +67,7 @@ FIRST_DATA_SECONDS = 15
 
 class PlaybackBusy(RuntimeError): pass
 class ClientCancelled(RuntimeError): pass
+class MetadataPending(Checkpoint): pass
 
 
 def remaining(maximum):
@@ -161,11 +164,27 @@ def remember(key, value, ttl):
 
 
 def fetch(url, data=None, headers=None, timeout=20, raw=False, method=None):
+    # Background catalogue-page requests share the helper's provider budget.
+    # Per-title metadata calls have already reserved their slot with a lease.
+    parsed=U.urlsplit(url)
+    provider=parsed.hostname=='v3-cinemeta.strem.io'
+    jobs=metadata_coordinator(DATA) if provider and getattr(BUDGET,'metadata_background',False) else None
+    if jobs and parsed.path.startswith('/catalog/'):
+        until=time.monotonic()+30
+        while True:
+            wait=jobs.reserve_provider()
+            if wait<=0:break
+            if wait>10 or time.monotonic()>=until:raise Checkpoint('Metadata provider budget deferred')
+            time.sleep(min(wait,remaining(1)))
     body = json.dumps(data).encode() if data is not None else None
     request = R.Request(url, data=body, headers={'User-Agent':'HomeMediaCatalogue/1.0', 'Content-Type':'application/json', **(headers or {})}, method=method)
-    with R.urlopen(request, timeout=remaining(timeout)) as response:
-        result = read_bounded(response,12*1024*1024)
-        return result if raw else (json.loads(result) if result else None)
+    try:
+        with R.urlopen(request, timeout=remaining(timeout)) as response:
+            result = read_bounded(response,12*1024*1024)
+            return result if raw else (json.loads(result) if result else None)
+    except urllib.error.HTTPError as error:
+        if jobs:jobs.provider_backoff(error.code)
+        raise
 
 
 def jf(path, data=None, method=None, timeout=20):
@@ -203,11 +222,28 @@ def signed_path(route,key):
 def metadata(kind,imdb):
     key=f'meta:{kind}:{imdb}'
     saved=cached(key)
+    jobs=metadata_coordinator(DATA)
+    lease=None
+    if saved is None and jobs:
+        metadata_import(limit=1,key=kind+':'+imdb)
+        saved=cached(key)
+    if saved is None and jobs and getattr(BUDGET,'metadata_background',False):
+        jobs.enqueue([(kind,imdb,2000)])
+        lease=jobs.claim('server','server',kind,imdb)
+        if lease is None:
+            with F.db() as conn:
+                conn.execute('INSERT OR REPLACE INTO metadata_waits VALUES (?,?)',(kind+':'+imdb,time.time()+30))
+            raise MetadataPending('Metadata assigned elsewhere or waiting for provider budget')
     if saved is None:
         try:
             saved=fetch(f'{CINEMETA}/meta/{kind}/{imdb}.json',timeout=8)['meta']
             if not isinstance(saved,dict):raise ValueError('Metadata not found')
-        except Exception:
+        except Exception as provider_error:
+            if jobs and lease:
+                jobs.release(lease,getattr(provider_error,'code',None))
+                # A metadata API timeout is not a failed media-source proof.
+                if kind=='series':raise Checkpoint('Metadata provider deferred; source result retained') from None
+                lease=None
             index=DATA/'imdb/catalogue.sqlite'
             if not index.exists():raise
             conn=sqlite3.connect('file:'+str(index)+'?mode=ro',uri=True)
@@ -217,9 +253,52 @@ def metadata(kind,imdb):
             saved={'id':imdb,'name':row[0],'originalName':row[2],'releaseInfo':str(row[1]),'type':kind,
                 'poster':f'https://images.metahub.space/poster/medium/{imdb}/img'}
         if not isinstance(saved,dict):raise ValueError('Metadata not found')
-        remember(key,saved,21600)
+        if jobs and lease:
+            result={'result_id':uuid.uuid4().hex,'source':'cinemeta','fetched_at':time.time(),
+                    'status':'ok','metadata':saved}
+            ack=jobs.receive('server','server',lease,result)
+            if ack not in ('accepted','duplicate'):
+                raise Checkpoint('Metadata lease expired; work retained for retry')
+            metadata_import(limit=1,key=kind+':'+imdb)
+            saved=cached(key)
+            if saved is None:raise Checkpoint('Metadata import awaiting retry')
+        else:remember(key,saved,21600)
     F.record_dates(kind,[saved])
     return F.localize(saved)
+
+
+def metadata_import(limit=20,key=None,seed=False):
+    """Apply durable metadata handoffs. No source proofs/native userdata writes."""
+    jobs=metadata_coordinator(DATA)
+    if not jobs:return 0
+    if seed:
+        jobs.seed(DATA/'catalogue.sqlite')
+        with F.db() as conn:conn.execute('DELETE FROM metadata_waits WHERE expires<?',(time.time()-3600,))
+    applied=0
+    for receipt in jobs.pending_imports(limit=limit,key=key):
+        kind,imdb=receipt['job_id'].split(':')
+        if kind not in ('movie','series') or not re.fullmatch(r'tt\d{5,12}',imdb):
+            jobs.imported(receipt['result_id'],'rejected');continue
+        meta=json.loads(receipt['metadata'])
+        expires=receipt['fetched']+21600
+        if (meta.get('id')!=imdb or meta.get('type')!=kind or expires<=time.time()
+                or receipt['generation']!=jobs.generation()):
+            jobs.imported(receipt['result_id'],'rejected');continue
+        with F.db() as conn:
+            row=conn.execute('SELECT expires FROM cache WHERE key=?',('meta:'+kind+':'+imdb,)).fetchone()
+            if row and row[0]>=expires:outcome='kept_newer'
+            else:
+                conn.execute('INSERT OR REPLACE INTO cache VALUES (?,?,?)',
+                             ('meta:'+kind+':'+imdb,json.dumps(meta,ensure_ascii=False),expires))
+                outcome='applied'
+            conn.execute('DELETE FROM metadata_waits WHERE key=?',(kind+':'+imdb,))
+        # If interrupted between these databases, the cache expiry comparison
+        # makes replay a no-op; native import/watch state is never changed here.
+        jobs.imported(receipt['result_id'],outcome)
+        if outcome=='applied':
+            F.record_dates(kind,[meta],apply=False)
+            applied+=1
+    return applied
 
 
 def poster_status(kind,imdb):
@@ -1450,10 +1529,14 @@ def main():
     # its native metadata and downloaded sidecar subtitles beside STRM files.
     os.umask(0o002)
     parser=argparse.ArgumentParser()
-    parser.add_argument('command',choices=('serve','sync','collections','badges','trailers','discovery-sync','availability','downloads','imdb-sync'),default='serve',nargs='?')
+    parser.add_argument('command',choices=('serve','sync','collections','badges','trailers','discovery-sync','availability','downloads','imdb-sync','metadata-import'),default='serve',nargs='?')
     parser.add_argument('--movies',type=int,default=1000)
     parser.add_argument('--shows',type=int,default=200)
     args=parser.parse_args()
+    BUDGET.metadata_background=args.command!='serve'
+    if args.command=='metadata-import':
+        log('LAN metadata imports applied: '+str(metadata_import(seed=True)))
+        return
     if args.command=='sync': return sync(args.movies,args.shows)
     if args.command=='collections': return update_collections()
     if args.command=='badges': return refresh_subtitle_badges()

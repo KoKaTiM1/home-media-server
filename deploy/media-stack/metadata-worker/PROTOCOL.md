@@ -1,7 +1,7 @@
-# Proposed LAN metadata protocol: home-media-metadata/1
+# LAN metadata protocol: home-media-metadata/1
 
-Client implementation is included. The production server implementation is
-pending. Do not point it at the existing Jellyfin or catalogue bridge ports.
+Client and server implementations are included. The receiver uses its own
+restricted HTTPS endpoint, separate from Jellyfin and the catalogue bridge.
 
 ## Transport
 
@@ -52,7 +52,7 @@ Provider HTTP failures also include `provider_status` and a bounded numeric
 Respond with the exact `result_id` and `ack` in `accepted`, `duplicate`, `stale`
 or `rejected`. Unknown/wrong IDs must not acknowledge unrelated submissions.
 
-## Required server invariants before activation
+## Server invariants
 
 - Use a durable queue/lease registry. Background metadata work on both machines
   must claim through the same registry, including any existing server sync paths
@@ -84,6 +84,8 @@ or `rejected`. Unknown/wrong IDs must not acknowledge unrelated submissions.
   lease expiry, failed metadata import and restart with retained receipts.
   Operational counters must distinguish fetched, accepted, applied and failed.
 
-Server behavior, lease claims and the production receiving port remain inactive
-until that integration is implemented and verified. This file is the contract
-for the next phase, not proof those guarantees exist on the server today.
+The production coordinator/importer is installed. Physical Windows connection
+and a measured first batch are tracked in issue #2. The receiver commits a
+receipt and import handoff together; the separate trusted importer applies the
+normal cache idempotently. Background full-title fetches use shared leases and
+provider budget, and background catalogue pages share that rate budget.

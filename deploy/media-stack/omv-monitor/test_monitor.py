@@ -9,6 +9,12 @@ spec=importlib.util.spec_from_file_location('monitor',Path(__file__).with_name('
 m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 
 class MonitorTests(unittest.TestCase):
+    def test_continuous_metadata_receiver_has_no_timer_requirement(self):
+        units={'media-metadata-coordinator.service':{'ActiveState':'active','Result':'success','UnitFileState':'enabled'}}
+        with patch.object(m,'systemd',return_value=units),patch.object(m,'context',return_value={}):rows=m.workers()
+        row=next(r for r in rows if r['id']=='media-metadata-coordinator')
+        self.assertIn('Running',row['health']);self.assertEqual(row['next_run'],'Continuous service')
+
     def test_running_oneshot_is_running_not_failure_and_disabled_timer_warns(self):
         units={}
         for base,_,_ in m.JOBS:

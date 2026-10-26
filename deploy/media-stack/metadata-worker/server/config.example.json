@@ -1,0 +1,7 @@
+{
+  "queue_path": "<STORAGE_ROOT>/appdata/metadata-coordinator/queue.sqlite",
+  "generation": "<GENERATE_ONCE_QUEUE_GENERATION>",
+  "bind": "<SERVER_LAN_IP>",
+  "port": 8094,
+  "allowed_clients": ["<WINDOWS_METADATA_HELPER_IP>", "<SERVER_LAN_IP>"]
+}

@@ -5,4 +5,5 @@ WORKDIR /app
 COPY app.py /app/app.py
 COPY features.py /app/features.py
 COPY reliability.py /app/reliability.py
+COPY metadata_jobs.py /app/metadata_jobs.py
 ENTRYPOINT ["python", "-u", "/app/app.py"]

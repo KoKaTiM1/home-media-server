@@ -9,11 +9,13 @@ The offline demonstration simulates a failed acknowledgement and a restart.
 It checks that the fetched metadata survives and is submitted once with the
 same result identity. Docker runs it with networking disabled.
 
-**The production server coordinator is not installed. LAN mode is not ready.**
-See [NEXT-SESSION.md](NEXT-SESSION.md) for the server work needed before use.
-The USB delivers the software; future results travel directly over LAN or
-Tailscale, not on the USB. Existing server jobs, databases, mounts and playback
-services have not been changed for this package.
+The production LAN coordinator and importer are installed. The owner confirmed
+that installation and the offline demo passed on Windows. Copy the private
+connection file from the server user's home into `config/config.local.json`,
+then run `04-START.cmd`. The USB delivered the client; assignments and results
+travel over the LAN. See [server/README.md](server/README.md) for enrollment,
+server operation, safety boundaries and recovery. Physical PC upload counters
+confirm a live connection; an offline demo alone does not.
 
 ## Commands
 
@@ -21,8 +23,8 @@ services have not been changed for this package.
 | --- | --- |
 | `01-INSTALL.cmd` | Check and load the included image archive |
 | `02-OFFLINE-DEMO.cmd` | Run the isolated, network-disabled demonstration |
-| `03-CONFIGURE.cmd` | Later: save coordinator address, certificate pin and scoped worker token locally |
-| `04-START.cmd` | Later: start the metadata-only worker in Docker |
+| `03-CONFIGURE.cmd` | Save coordinator address, certificate pin and scoped worker token locally |
+| `04-START.cmd` | Start the metadata-only worker in Docker |
 | `05-STATUS.cmd` | Read local pending/completed counters and container state |
 | `06-LOGS.cmd` | Show the last 60 worker messages |
 | `07-STOP.cmd` | Stop the worker without removing pending metadata |
@@ -78,4 +80,4 @@ The image is built from the available Python 3.13 slim base, with no additional
 packages. `SHA256SUMS.json` records package file hashes for transfer checking.
 The manifest is an integrity check, not a software publisher signature.
 See `VALIDATION.txt` for the checks performed on the server and the remaining
-physical Windows checks. No production receiver is bundled or auto-started.
+physical Windows checks. The server receiver and 30-second importer are installed separately as systemd services.

@@ -20,6 +20,8 @@ JOBS=[
  ('media-catalogue-collections','Jellyfin collections','Every 30 minutes'),
  ('media-cleanup','Download retention cleanup','Hourly'),
  ('media-worker-status','Worker status counters','1 minute after previous snapshot'),
+ ('media-metadata-coordinator','LAN metadata receiver','Continuous; receives metadata from the Windows helper'),
+ ('media-metadata-import','LAN metadata import','Every 30 seconds; source verification remains separate'),
 ]
 PROPS='Id,ActiveState,SubState,Result,ExecMainStatus,ExecMainStartTimestamp,ExecMainExitTimestamp,InactiveEnterTimestamp,LastTriggerUSec,NextElapseUSecRealtime,NextElapseUSecMonotonic,UnitFileState'
 
@@ -33,7 +35,7 @@ def span(seconds):
     return f'{seconds//3600}h {(seconds%3600)//60}m'
 
 def systemd():
-    units=[base+suffix for base,_,_ in JOBS for suffix in ('.service','.timer')]
+    units=[base+suffix for base,_,_ in JOBS for suffix in (('.service',) if base=='media-metadata-coordinator' else ('.service','.timer'))]
     run=subprocess.run(['systemctl','show',*units,'--property='+PROPS],capture_output=True,text=True,timeout=8,check=True)
     result={}
     for block in run.stdout.strip().split('\n\n'):
@@ -65,9 +67,10 @@ def workers():
         service=units.get(base+'.service',{});timer=units.get(base+'.timer',{})
         running=service.get('ActiveState') in ('active','activating','deactivating')
         failed=service.get('ActiveState')=='failed' or service.get('Result','success')!='success'
-        enabled=timer.get('UnitFileState')=='enabled' and timer.get('ActiveState')=='active'
+        continuous=base=='media-metadata-coordinator'
+        enabled=(service.get('UnitFileState')=='enabled' and running) if continuous else (timer.get('UnitFileState')=='enabled' and timer.get('ActiveState')=='active')
         if failed:health='🔴 Failed'
-        elif not enabled:health='🟠 Timer disabled / stopped'
+        elif not enabled:health='🟠 Service disabled / stopped' if continuous else '🟠 Timer disabled / stopped'
         elif running:health='🔵 Running'
         else:health='🟢 Healthy — waiting'
         detail=''
@@ -101,6 +104,9 @@ def workers():
                 next_run=stamp(time.time()+max(0,remaining));countdown=span(remaining)
             elif running:next_run='After current batch / run';countdown='Running now'
             else:next_run='Waiting for scheduler'
+        if continuous:
+            next_run='Continuous service';countdown='Running now' if running else 'Stopped'
+            detail='Metadata assignments and uploads only; playback verification stays on server'
         rows.append({'id':base,'name':name,'health':health,'schedule':schedule,
             'last_run':service.get('ExecMainStartTimestamp') or timer.get('LastTriggerUSec') or 'Never',
             'last_result':'In progress' if running else service.get('Result','Not run'),
@@ -210,6 +216,20 @@ def counts(data=DATA,refresh=False):
                     query+=" AND (t.year<CAST(strftime('%Y','now','localtime') AS INTEGER) OR t.votes>0 OR EXISTS(SELECT 1 FROM release_dates d WHERE d.kind=t.kind AND d.imdb=t.imdb AND d.released<=date('now','localtime')))"
             visible=conn.execute(query,(kind,)).fetchone()[0]
             add('Verified indexed '+('movies' if kind=='movie' else 'shows'),visible,'Excludes known future releases and newer failed checks; saved-only media excluded')
+    helper=data.parent/'metadata-coordinator/queue.sqlite'
+    if helper.is_file():
+        try:
+            with closing(sqlite3.connect(helper.as_uri()+'?mode=ro',uri=True,timeout=1)) as remote:
+                states=dict(remote.execute('SELECT state,COUNT(*) FROM jobs GROUP BY state'))
+                receipts=dict(remote.execute("SELECT applied,COUNT(*) FROM receipts WHERE owner='windows' GROUP BY applied"))
+                seen=remote.execute("SELECT seen FROM clients WHERE name='windows'").fetchone()
+            add('LAN metadata awaiting fetch',states.get('pending',0)+states.get('retry',0),'Metadata only; separate from playable-source checks')
+            add('LAN metadata currently leased',states.get('leased',0),'Exclusive background metadata ownership')
+            add('LAN metadata uploads awaiting import',receipts.get('pending',0),'Durable results retained until server import')
+            add('LAN metadata imported',receipts.get('applied',0),'Does not mark movies or episodes playable')
+            add('LAN metadata kept newer local data',receipts.get('kept_newer',0),'Older uploaded metadata did not overwrite newer cache')
+            add('Windows metadata helper last seen',stamp(seen[0]) if seen and seen[0] else 'Not connected','Start the Windows worker after configuring its scoped connection')
+        except (sqlite3.Error,OSError):pass
     c=context(data)
     if c.get('message'):add('Validator activity',c.get('name') or c.get('key') or c['message'],c['message'])
     if data==DATA:

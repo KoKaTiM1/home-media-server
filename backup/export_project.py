@@ -24,6 +24,7 @@ METADATA_WORKER_FILES = (
     '04-START.cmd', '05-STATUS.cmd', '06-LOGS.cmd', '07-STOP.cmd',
     'config/config.example.json', 'worker/worker.py', 'worker/demo.py',
     'checks/test_worker.py',
+    'server/coordinator.py', 'server/README.md', 'server/config.example.json',
 )
 
 

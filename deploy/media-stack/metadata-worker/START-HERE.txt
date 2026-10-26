@@ -1,6 +1,6 @@
 HOME MEDIA METADATA WORKER - WINDOWS PACKAGE 0.1.0
 
-USB PHASE 1: OFFLINE DEMONSTRATION READY; SERVER CONNECTION NOT ACTIVATED.
+WINDOWS CLIENT READY; SERVER COORDINATOR INSTALLED.
 
 This USB carries the application to Windows. Once the server coordinator has
 been installed in a later phase, work and results will travel over LAN or
@@ -16,18 +16,17 @@ Tailscale. You will not carry the USB back and forth with result files.
    image; there is no image or dependency download for this installation.
 4. Double-click 02-OFFLINE-DEMO.cmd. It should print PASS. The demo has no
    network and uses temporary example data, not real movies or episodes.
-5. Stop here for now. The live server has not been changed or given a receiving
-   endpoint. 03-CONFIGURE.cmd and 04-START.cmd are for the later connection phase.
+5. The server coordinator is now installed. Use authenticated SCP/SFTP to
+   copy home-media-worker-config.json from the server account home into this
+   local folder as config\config.local.json. Then run 04-START.cmd. The file
+   already contains the scoped token and pinned certificate settings.
 
-NEXT PHASE (requires server-side work, not completed by this USB package):
-The server will need an HTTPS coordinator, a trusted certificate/fingerprint,
-a dedicated metadata-only token, exclusive batch assignments and a validated
-import path. Its own background metadata work must honor those assignments.
-Do not enter a Jellyfin API key, torrent password, SSH password or GitHub token.
-The intended initial partition is series on Windows; movies remain on server.
-This is proposed partitioning, not a configuration already applied to the server.
+The owner confirmed install/demo passed on Windows. The connection uses its
+own metadata token; keep config\config.local.json private. LAN metadata
+uploads do not perform playback verification or make unverified media visible.
+See server/README.md for connection, operation and recovery.
 
-After provisioning, use 03-CONFIGURE.cmd, then 04-START.cmd. It runs in the
+With the private config copied, use 04-START.cmd. It runs in the
 background while Docker Desktop runs. 05-STATUS.cmd shows local progress;
 06-LOGS.cmd shows recent messages. 07-STOP.cmd stops it and keeps progress.
 After a reboot, start Docker Desktop and run 04-START.cmd again. Automatic
@@ -46,8 +45,7 @@ Stale/rejected assignments are retained in data\quarantine for review. They are
 not imported as fresh results. Stop after reviewing any fatal configuration
 error; do not delete data to bypass a connection or identity warning.
 
-Keep config\config.local.json and data private. They are not present on the USB
-in this phase. Data contains metadata/progress when the real worker is used.
+Keep config\config.local.json and data private. They were not provisioned on the original USB. Data contains metadata/progress when the real worker is used.
 No server address, account identifier, credentials or live database is included.
 
 See README.md for operation details, PROTOCOL.md for the LAN contract and
