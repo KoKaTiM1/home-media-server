@@ -9,7 +9,7 @@ data:
       type: datatable
       config:
         autoReload: 10000
-        limit: 10
+        limit: 20
         hasFooter: false
         selectionType: none
         columns:
@@ -78,7 +78,7 @@ data:
       type: datatable
       config:
         autoReload: 15000
-        limit: 30
+        limit: 60
         hasFooter: false
         selectionType: none
         columns:

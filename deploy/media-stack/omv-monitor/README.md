@@ -9,10 +9,12 @@ It provides two read-only tabs:
   due retries, passed source checks, distinct movies/shows, visible indexed
   counts, metadata outside the queue, recent activity and audio resync progress.
 
-The optional Windows rows separate metadata imports from actual source checks.
-The source verifier reports PC heartbeat, active operation, title passes,
-unavailable outcomes and checkpoints. A successful probe or sample operation
-alone does not count as a fully verified title.
+The active Windows LAN source verifier and its gateway appear ahead of routine
+jobs. Retired metadata-only helper rows are omitted from this page. The source
+verifier reports PC heartbeat, active operation, title passes, unavailable
+outcomes and checkpoints. A successful probe or sample operation alone does not
+count as a fully verified title. Both tables display all current rows without
+silently cutting off the verification status at the old page limit.
 
 Worker rows refresh every 10 seconds. A separate worker prepares counters two
 minutes after boot and then one minute after each completed snapshot. The page

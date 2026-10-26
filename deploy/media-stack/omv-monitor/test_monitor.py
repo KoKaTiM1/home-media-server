@@ -9,11 +9,14 @@ spec=importlib.util.spec_from_file_location('monitor',Path(__file__).with_name('
 m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 
 class MonitorTests(unittest.TestCase):
-    def test_continuous_metadata_receiver_has_no_timer_requirement(self):
-        units={'media-metadata-coordinator.service':{'ActiveState':'active','Result':'success','UnitFileState':'enabled'}}
+    def test_lan_page_prioritizes_current_verifier_and_gateway(self):
+        units={'media-verification-coordinator.service':{'ActiveState':'active','Result':'success','UnitFileState':'enabled'}}
         with patch.object(m,'systemd',return_value=units),patch.object(m,'context',return_value={}):rows=m.workers()
-        row=next(r for r in rows if r['id']=='media-metadata-coordinator')
+        row=next(r for r in rows if r['id']=='media-verification-coordinator')
         self.assertIn('Running',row['health']);self.assertEqual(row['next_run'],'Continuous service')
+        self.assertLessEqual(len(rows),10)
+        self.assertEqual(rows[1]['name'],'Windows LAN source verification')
+        self.assertFalse(any('LAN metadata' in r['name'] for r in rows))
 
     def test_running_oneshot_is_running_not_failure_and_disabled_timer_warns(self):
         units={}

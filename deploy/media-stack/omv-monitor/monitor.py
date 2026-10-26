@@ -14,17 +14,15 @@ import time
 DATA=Path('/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>/appdata/catalogue')
 JOBS=[
  ('media-source-availability','Stream verification','Repeated batches; 1 minute between batches'),
+ ('media-remote-availability','Windows LAN source verification','Optional parallel worker; 15 seconds between batches'),
+ ('media-verification-coordinator','LAN media verification gateway','Continuous; sends exact-source media samples to the Windows worker'),
+ ('media-verification-guard','Windows verification memory gate','Every 15 seconds; protects server memory'),
  ('media-catalogue-sync','New-title discovery','00:00, 06:00, 12:00, 18:00; up to 2 minutes jitter'),
  ('media-saved-downloads','Saved downloads and watched-file cleanup','Every minute'),
  ('media-catalogue-badges','Hebrew / English subtitle badges','Hourly'),
  ('media-catalogue-collections','Jellyfin collections','Every 30 minutes'),
  ('media-cleanup','Download retention cleanup','Hourly'),
  ('media-worker-status','Worker status counters','1 minute after previous snapshot'),
- ('media-metadata-coordinator','LAN metadata receiver','Continuous; receives metadata from the Windows helper'),
- ('media-metadata-import','LAN metadata import','Every 30 seconds; source verification remains separate'),
- ('media-verification-coordinator','Windows verification gateway','Continuous; fixed media decoding tasks over LAN'),
- ('media-verification-guard','Windows verification memory gate','Every 15 seconds; protects server memory'),
- ('media-remote-availability','Windows source verification','Optional parallel worker; 15 seconds between batches'),
 ]
 PROPS='Id,ActiveState,SubState,Result,ExecMainStatus,ExecMainStartTimestamp,ExecMainExitTimestamp,InactiveEnterTimestamp,LastTriggerUSec,NextElapseUSecRealtime,NextElapseUSecMonotonic,UnitFileState'
 
@@ -38,7 +36,7 @@ def span(seconds):
     return f'{seconds//3600}h {(seconds%3600)//60}m'
 
 def systemd():
-    units=[base+suffix for base,_,_ in JOBS for suffix in (('.service',) if base in ('media-metadata-coordinator','media-verification-coordinator') else ('.service','.timer'))]
+    units=[base+suffix for base,_,_ in JOBS for suffix in (('.service',) if base=='media-verification-coordinator' else ('.service','.timer'))]
     run=subprocess.run(['systemctl','show',*units,'--property='+PROPS],capture_output=True,text=True,timeout=8,check=True)
     result={}
     for block in run.stdout.strip().split('\n\n'):
@@ -70,7 +68,7 @@ def workers():
         service=units.get(base+'.service',{});timer=units.get(base+'.timer',{})
         running=service.get('ActiveState') in ('active','activating','deactivating')
         failed=service.get('ActiveState')=='failed' or service.get('Result','success')!='success'
-        continuous=base in ('media-metadata-coordinator','media-verification-coordinator')
+        continuous=base=='media-verification-coordinator'
         enabled=(service.get('UnitFileState')=='enabled' and running) if continuous else (timer.get('UnitFileState')=='enabled' and timer.get('ActiveState')=='active')
         if failed:health='🔴 Failed'
         elif not enabled:health='🟠 Service disabled / stopped' if continuous else '🟠 Timer disabled / stopped'
@@ -111,10 +109,11 @@ def workers():
             remote=context(cache_key='remote-validation-worker')
             detail=remote.get('message','Waiting for the enrolled Windows PC and resource gate')
             if running and remote.get('key'):
-                detail='Windows: '+remote.get('name',remote['key'])+' · '+remote.get('preparation',{}).get('phase',detail)
+                phase=remote.get('preparation',{}).get('phase',detail)
+                detail='Windows: '+remote.get('name',remote['key'])+' · '+('Title details' if phase=='metadata' else phase)
         if continuous:
             next_run='Continuous service';countdown='Running now' if running else 'Stopped'
-            detail='Metadata assignments and uploads only; playback verification stays on server' if base=='media-metadata-coordinator' else 'Windows decodes exact selected-source samples; server validates and commits proofs'
+            detail='Windows decodes exact selected-source samples; server validates and commits proofs'
         rows.append({'id':base,'name':name,'health':health,'schedule':schedule,
             'last_run':service.get('ExecMainStartTimestamp') or timer.get('LastTriggerUSec') or 'Never',
             'last_result':'In progress' if running else service.get('Result','Not run'),
@@ -224,20 +223,6 @@ def counts(data=DATA,refresh=False):
                     query+=" AND (t.year<CAST(strftime('%Y','now','localtime') AS INTEGER) OR t.votes>0 OR EXISTS(SELECT 1 FROM release_dates d WHERE d.kind=t.kind AND d.imdb=t.imdb AND d.released<=date('now','localtime')))"
             visible=conn.execute(query,(kind,)).fetchone()[0]
             add('Verified indexed '+('movies' if kind=='movie' else 'shows'),visible,'Excludes known future releases and newer failed checks; saved-only media excluded')
-    helper=data.parent/'metadata-coordinator/queue.sqlite'
-    if helper.is_file():
-        try:
-            with closing(sqlite3.connect(helper.as_uri()+'?mode=ro',uri=True,timeout=1)) as remote:
-                states=dict(remote.execute('SELECT state,COUNT(*) FROM jobs GROUP BY state'))
-                receipts=dict(remote.execute("SELECT applied,COUNT(*) FROM receipts WHERE owner='windows' GROUP BY applied"))
-                seen=remote.execute("SELECT seen FROM clients WHERE name='windows'").fetchone()
-            add('LAN metadata awaiting fetch',states.get('pending',0)+states.get('retry',0),'Metadata only; separate from playable-source checks')
-            add('LAN metadata currently leased',states.get('leased',0),'Exclusive background metadata ownership')
-            add('LAN metadata uploads awaiting import',receipts.get('pending',0),'Durable results retained until server import')
-            add('LAN metadata imported',receipts.get('applied',0),'Does not mark movies or episodes playable')
-            add('LAN metadata kept newer local data',receipts.get('kept_newer',0),'Older uploaded metadata did not overwrite newer cache')
-            add('Windows metadata helper last seen',stamp(seen[0]) if seen and seen[0] else 'Not connected','PC heartbeat; playback verification continues on the server')
-        except (sqlite3.Error,OSError):pass
     verification=data.parent/'verification-worker/queue.sqlite'
     if verification.is_file():
         try:
