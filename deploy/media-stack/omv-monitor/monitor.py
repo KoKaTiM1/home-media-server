@@ -228,7 +228,7 @@ def counts(data=DATA,refresh=False):
             add('LAN metadata uploads awaiting import',receipts.get('pending',0),'Durable results retained until server import')
             add('LAN metadata imported',receipts.get('applied',0),'Does not mark movies or episodes playable')
             add('LAN metadata kept newer local data',receipts.get('kept_newer',0),'Older uploaded metadata did not overwrite newer cache')
-            add('Windows metadata helper last seen',stamp(seen[0]) if seen and seen[0] else 'Not connected','Start the Windows worker after configuring its scoped connection')
+            add('Windows metadata helper last seen',stamp(seen[0]) if seen and seen[0] else 'Not connected','PC heartbeat; playback verification continues on the server')
         except (sqlite3.Error,OSError):pass
     c=context(data)
     if c.get('message'):add('Validator activity',c.get('name') or c.get('key') or c['message'],c['message'])

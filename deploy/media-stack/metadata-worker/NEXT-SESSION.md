@@ -4,11 +4,10 @@ The owner confirmed Windows install and offline demo passed. Server coordinator,
 shared leases/provider budget, durable receipts, 30-second importer and OMV
 telemetry are installed. The Windows private connection JSON is in the existing
 server account home for authenticated SCP/SFTP transfer; no token is public.
-Copy it into config/config.local.json and run 04-START.cmd, The physical PC is now enrolled and its first67metadata records were received
-and applied (~16/min). Keep issue #2 open for the corrected launcher copy and
+The physical PC is now enrolled. Its first 67 metadata records were received
+and applied at about 16 results/minute. Keep issue #2 open for the corrected launcher copy and
 physical restart check. The updated worker.ps1 is also in the server account
-home for SCP transfer; it fixes first-start native Docker inspect errors. Source verification still
-runs on the server, and metadata does not mark media playable.
+home for SCP transfer; it fixes first-start native Docker inspect errors. Source verification still runs on the server, and metadata does not mark media playable.
 
 Check all open GitHub issues before starting work. Issue #1 still depends on
 completion of the initial verification audit. Issue #3 records a confirmed

@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-10-26T09:11:38.271278+00:00",
+  "created_utc": "2026-10-26T09:14:41.475373+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -58,10 +58,10 @@
     "deploy/media-stack/metadata-worker/06-LOGS.cmd": "805077d59c9af041f694f1dd0057d1b67333e1ddf8bdf7ebaf13d6b59caacd7e",
     "deploy/media-stack/metadata-worker/07-STOP.cmd": "d11160886fb4639fee87360bd9d4187ff515e19d9eebb48ef4abea0e9119ea2b",
     "deploy/media-stack/metadata-worker/Dockerfile": "ad8403d01c50c6090cea4a1959bea27ea5d4906363c59ffbdf72e37fefcc14d0",
-    "deploy/media-stack/metadata-worker/NEXT-SESSION.md": "13e64d2660dba84bcd4b4035d26060c9d704896b16c74d83bd7733d331774ee7",
+    "deploy/media-stack/metadata-worker/NEXT-SESSION.md": "4acecf0ab20f63f61e29de38222354b8a23beeb20ec239b890445e3b251648db",
     "deploy/media-stack/metadata-worker/PROTOCOL.md": "f3d1b543bfe460b927d6bce02d252144679eac97582a0ec68010ff1263f00644",
     "deploy/media-stack/metadata-worker/README.md": "2b8eee97168074cd4ad0b017a157ab36d6b12e3a0bbfddb949e655cb9d17e0a3",
-    "deploy/media-stack/metadata-worker/START-HERE.txt": "2313e1ba39d493222a1201c70b9b891d0c48cfbb2f81b4b7408a9a26d07e7096",
+    "deploy/media-stack/metadata-worker/START-HERE.txt": "5051e3a927e86ea7317e9f724af58241d78574a4dd889b104f1544323a57c454",
     "deploy/media-stack/metadata-worker/VALIDATION.txt": "6b95e020072497f692f71738bdd8db290a26c7f6443bfa5182e0ee61658e2192",
     "deploy/media-stack/metadata-worker/checks/test_worker.py": "2ca983462133c969bfb0ecfbfcbfbd9cdddd9430cb5db21d2ca6df6b7a976f7f",
     "deploy/media-stack/metadata-worker/config/config.example.json": "700b4f0bfd40bf62c59df6e12c01d3a103ec44b745e10cad4b3e4b6ee2f98076",
@@ -84,7 +84,7 @@
     "deploy/media-stack/omv-monitor/install.py": "07d416936612844fa5fd6b434743660aaa384034d63d579334704c2da774b36c",
     "deploy/media-stack/omv-monitor/media-worker-status.service": "1eb94831c9bc38de5fc25247c314345b293e5881c711d1c02cf07da4d8fea0f4",
     "deploy/media-stack/omv-monitor/media-worker-status.timer": "ff774eb1055241aaa89926e44f0016fa74999da29a14a661e3cf42b897e1c40b",
-    "deploy/media-stack/omv-monitor/monitor.py": "f11ee002ca3fb30c8cfb90b6940beb0f8fcc0b5a6d3c21f38cde2a10d4e37c98",
+    "deploy/media-stack/omv-monitor/monitor.py": "f0caa34638ead4084924e5a836b2b7293ba3d0c54a990a8ca97dba4f62c21761",
     "deploy/media-stack/omv-monitor/navigation.yaml": "c5b3c25f85ac7f5c8fb80f905d0d45789b62712a312e7f49c03f6531e0ec6576",
     "deploy/media-stack/omv-monitor/route.yaml": "59159d3a649c96e19e2af8b7a1e6b79d05228a9a195718cc2be9e63afe6b8544",
     "deploy/media-stack/omv-monitor/test_monitor.py": "f652df031f57bf43ac991147383b907093f3243414a3671bb079afe51d04b9ad",
