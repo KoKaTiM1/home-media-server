@@ -10,6 +10,7 @@ if source!=Path('/opt/media-stack/omv-monitor'):raise SystemExit('Restore this d
 for name,target in [
  ('home-media-workers.inc','/usr/share/openmediavault/engined/rpc/home-media-workers.inc'),
  ('component.yaml','/usr/share/openmediavault/workbench/component.d/omv-home-media-workers-page.yaml'),
+ ('dashboard.yaml','/usr/share/openmediavault/workbench/dashboard.d/home-media-verification.yaml'),
  ('navigation.yaml','/usr/share/openmediavault/workbench/navigation.d/diagnostics.media-workers.yaml'),
  ('route.yaml','/usr/share/openmediavault/workbench/route.d/diagnostics.media-workers.yaml')]:
  shutil.copyfile(source/name,target)
@@ -18,6 +19,6 @@ for name in ('media-worker-status.service','media-worker-status.timer'):
  shutil.copyfile(source/name,Path('/etc/systemd/system')/name)
 subprocess.run(['systemctl','daemon-reload'],check=True)
 subprocess.run(['systemctl','enable','--now','media-worker-status.timer'],check=True)
-for task in ('navigation','route'):subprocess.run(['omv-mkworkbench',task],check=True)
+for task in ('dashboard','navigation','route'):subprocess.run(['omv-mkworkbench',task],check=True)
 subprocess.run(['systemctl','restart','openmediavault-engined'],check=True)
 print('Installed OMV Diagnostics > Media workers')

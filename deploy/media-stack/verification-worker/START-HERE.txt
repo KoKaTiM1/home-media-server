@@ -8,11 +8,17 @@ The server still owns source selection, all library data and final proofs.
 3. Copy the private verification connection JSON from the server user home
    into config/verification.local.json using the authenticated SCP login.
    Do not paste the token into chat or GitHub.
-4. Run 04-START.cmd. It shows live progress. Waiting on the server memory gate
-   is normal until the bounded parallel pilot is enabled.
+4. Run 04-START.cmd. It shows live progress. The OMV Media workers overview
+   shows final verified counts, the current operation and its decoder stage.
 5. 05-STATUS.cmd shows counters; 06-LOGS.cmd follows live activity.
    Ctrl+C closes the activity view only. 07-STOP.cmd stops the worker.
 
 Windows is optional: stopping it or shutting down the PC leaves the server
 working. Keep data/ for identity and retained results across restarts.
 No inbound Windows port, SSH account or shared network database is needed.
+
+To update an already running worker to the included image: extract this archive
+over the existing folder without deleting config/ or data/, run 01-INSTALL.cmd,
+then 07-STOP.cmd and 04-START.cmd. Stopping waits for the current operation to
+checkpoint; the server continues verifying throughout. Keep data/ so the worker
+retains its identity and any unacknowledged result.

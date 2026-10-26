@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import sqlite3
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 spec=importlib.util.spec_from_file_location('monitor',Path(__file__).with_name('monitor.py'))
@@ -76,5 +77,32 @@ class MonitorTests(unittest.TestCase):
         row=next(r for r in rows if r['id']=='media-source-availability')
         text=str(row)
         for word in ('later sample','12,345','4,096','AAC-LC conversion'):self.assertIn(word,text)
+
+    def test_overview_uses_final_title_counts_and_live_lease_progress(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);data=root/'catalogue';data.mkdir();queue=root/'verification-worker';queue.mkdir()
+            snapshot=root/'snapshot.json';now=time.time()
+            snapshot.write_text(json.dumps({'time':now,'summary':{'total':100,'pending':75,'unavailable':5,
+                'playable':20,'v5':12,'v5_hour':3,'audit_done':7,'audit_total':10}}))
+            with sqlite3.connect(queue/'queue.sqlite') as c:
+                c.execute('CREATE TABLE totals(key TEXT,value INTEGER)')
+                c.execute("INSERT INTO totals VALUES('windows_titles_verified',4)")
+                c.execute('CREATE TABLE control(key TEXT,value TEXT)')
+                c.executemany('INSERT INTO control VALUES (?,?)',[('enabled','true'),('reason','"Verification permitted"')])
+                c.execute('CREATE TABLE client(id INTEGER,seen REAL)');c.execute('INSERT INTO client VALUES(1,?)',(now,))
+                c.execute('CREATE TABLE decode_jobs(key TEXT,operation TEXT,params TEXT,state TEXT,created REAL,stream_started REAL,phase TEXT,phase_at REAL,controller REAL,outcome TEXT,reason_code TEXT,finished REAL,url TEXT)')
+                c.execute('INSERT INTO decode_jobs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',('series:tt1234567:1:2','sample',json.dumps({'position':140}),'leased',now-20,now-15,'sample decode',now-10,now+30,'','',0,'private-signed-url'))
+                c.execute('INSERT INTO decode_jobs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',('movie:tt1234568','probe','{}','consumed',now-120,0,'video probe',now-100,0,'checkpoint','transport',now-90,''))
+            activity={'key':'series:tt1234567:1:2','name':'Example Show S1E2','position':2,'batch':8,'preparation':{'received_bytes':3145728}}
+            with patch.object(m,'context',return_value=activity):rows=m.overview(data,snapshot)
+            values={row['name']:row for row in rows}
+            self.assertEqual(values['Final v5 verified']['value'],'12')
+            self.assertEqual(values['Not yet v5 verified']['value'],'88')
+            self.assertEqual(values['Windows final passes']['value'],'4')
+            self.assertIn('Decoding later sample',values['Windows working on']['detail'])
+            self.assertIn('3.0 MiB received',values['Windows working on']['detail'])
+            self.assertIn('Run 8',values['Windows batch']['value'])
+            self.assertIn('transport',values['Latest PC operation issue']['detail'])
+            self.assertNotIn('private-signed-url',str(rows))
 
 if __name__=='__main__':unittest.main()

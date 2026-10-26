@@ -54,7 +54,7 @@ class Handler(BaseHTTPRequestHandler):
             worker=p.get('worker_id');q=self.server.jobs;q.seen(worker)
             if self.path==PREFIX+'/claim':
                 task=q.claim(worker);return self.reply(200,{'task':task,'status':q.status()})
-            if self.path==PREFIX+'/renew':return self.reply(200,{'active':q.renew(worker,p.get('task',{}))})
+            if self.path==PREFIX+'/renew':return self.reply(200,{'active':q.renew(worker,p.get('task',{}),p.get('phase'))})
             if self.path==PREFIX+'/result':
                 result=p.get('result',{});ack=q.receive(worker,p.get('task',{}),result)
                 return self.reply(200,{'ack':ack,'result_id':result['result_id']})

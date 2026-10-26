@@ -59,6 +59,23 @@ class QueueTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):self.submit()
     def test_cannot_submit_commands_or_arbitrary_recipes(self):
         with self.assertRaises(ValueError):self.q.submit(KEY,SID,'command',{'shell':'whoami'},'http://127.0.0.1/raw/x',30)
+    def test_progress_is_lease_bound_and_retains_only_fixed_outcomes(self):
+        job=self.submit();task=self.q.claim(WORKER)
+        self.assertTrue(self.q.renew(WORKER,task,'video probe'))
+        with self.q.db() as c:
+            self.assertEqual(c.execute('SELECT phase FROM decode_jobs WHERE id=?',(job,)).fetchone()[0],'video probe')
+        with self.assertRaises(InvalidJob):self.q.renew(WORKER,task,'arbitrary log text')
+        stale={**task,'lease_id':'0'*32}
+        self.assertFalse(self.q.renew(WORKER,stale,'sample decode'))
+        with self.q.db() as c:
+            self.assertEqual(c.execute('SELECT phase FROM decode_jobs WHERE id=?',(job,)).fetchone()[0],'video probe')
+        result={'result_id':uuid.uuid4().hex,'status':'checkpoint','reason':'transport'}
+        self.assertEqual(self.q.receive(WORKER,task,result),'accepted');self.q.finish(job)
+        with self.q.db() as c:
+            row=c.execute('SELECT outcome,reason_code,url,result FROM decode_jobs WHERE id=?',(job,)).fetchone()
+        self.assertEqual(tuple(row[:2]),('checkpoint','transport'));self.assertEqual(row[2:4],('' ,None))
+        with self.assertRaises(InvalidJob):
+            self.q.receive(WORKER,task,{'result_id':uuid.uuid4().hex,'status':'checkpoint','reason':'private error or URL'})
     def test_catalogue_lock_during_preparation_is_a_checkpoint(self):
         with patch.object(a,'prepare_locked',side_effect=sqlite3.OperationalError('database is locked')),patch.object(a.F,'verification_held',return_value=False),patch.object(a.F,'validation_result') as failure,patch.object(a.REL,'checkpoint') as checkpoint:
             with self.assertRaises(a.Checkpoint):a.prepared(KEY,background=True)
@@ -148,6 +165,10 @@ class RealDecoderTests(unittest.TestCase):
             for op,params in [('probe',{}),('sample',self.params(True))]:
                 job=q.submit(KEY,SID,op,params,server.bridge+'/raw/'+KEY,120)
                 task=api.request('/claim',{'worker_id':WORKER})['task']
+                phase='video probe' if op=='probe' else 'sample decode'
+                self.assertTrue(api.request('/renew',{'worker_id':WORKER,'task':task,'phase':phase})['active'])
+                with q.db() as conn:
+                    self.assertEqual(conn.execute('SELECT phase FROM decode_jobs WHERE id=?',(job,)).fetchone()[0],phase)
                 result=client.run_task(api,WORKER,task,lambda message:None);self.assertEqual(result['status'],'ok',result)
                 proof=validate_result(op,params,result['data'])
                 if op=='sample':self.assertGreater(proof['video_frames'],10)

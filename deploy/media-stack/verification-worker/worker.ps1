@@ -1,7 +1,7 @@
 param([ValidateSet('Install','Start','Status','Logs','Stop')][string]$Action='Status')
 $ErrorActionPreference='Stop'
 $Root=$PSScriptRoot
-$Image='home-media-verification-worker:0.1.0'
+$Image='home-media-verification-worker:0.2.0'
 $Name='home-media-verification-worker'
 function Docker { & docker @args; if($LASTEXITCODE -ne 0){throw 'Docker failed. See the message above.'} }
 function Existing {
@@ -26,6 +26,7 @@ try {
   if(-not (Test-Path (Join-Path $Root 'config\verification.local.json'))){throw 'Copy verification.local.json into config first. See START-HERE.txt.'}
   $Current=Existing
   if($Current -and $Current.Config.Labels.'home-media.component' -ne 'verification-worker'){throw 'Container name is occupied by another application.'}
+  if($Current -and $Current.State.Running -and $Current.Config.Image -ne $Image){throw 'Old worker is running. Use 07-STOP.cmd, then 04-START.cmd to keep the existing data and use this image.'}
   if($Current -and -not $Current.State.Running){Docker rm $Name;$Current=$null}
   if(-not $Current){
    New-Item -ItemType Directory -Force (Join-Path $Root 'data')|Out-Null

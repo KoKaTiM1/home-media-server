@@ -12,6 +12,8 @@ from verification_media import validate_recipe
 
 PROTOCOL = 'home-media-verification/1'
 PREFIX = '/v1/verification-worker'
+PHASES = frozenset(('video probe','audio conversion','conversion probe','sample decode'))
+REASONS = frozenset(('interrupted','resource','transport','decoder','validation'))
 
 class InvalidJob(ValueError): pass
 class WorkerWait(RuntimeError): pass
@@ -38,6 +40,10 @@ class DecodeJobs:
             CREATE INDEX IF NOT EXISTS decode_due ON decode_jobs(state,created);
             CREATE TABLE IF NOT EXISTS totals(key TEXT PRIMARY KEY,value INTEGER NOT NULL DEFAULT 0);''')
             if 'stream_started' not in {r[1] for r in c.execute('PRAGMA table_info(decode_jobs)')}:c.execute('ALTER TABLE decode_jobs ADD COLUMN stream_started REAL DEFAULT 0')
+            columns={r[1] for r in c.execute('PRAGMA table_info(decode_jobs)')}
+            for name,definition in (('phase',"TEXT DEFAULT ''"),('phase_at','REAL DEFAULT 0'),
+                                    ('outcome',"TEXT DEFAULT ''"),('reason_code',"TEXT DEFAULT ''"),('finished','REAL DEFAULT 0')):
+                if name not in columns:c.execute('ALTER TABLE decode_jobs ADD COLUMN '+name+' '+definition)
             c.execute("INSERT OR IGNORE INTO control VALUES('enabled','false')")
             c.execute("INSERT OR IGNORE INTO control VALUES('generation',?)",(json.dumps(uuid.uuid4().hex),))
     def set(self,key,value):
@@ -70,8 +76,8 @@ class DecodeJobs:
             if not self.setting(c,'enabled',False) or c.execute('SELECT seen FROM client WHERE id=1').fetchone()[0]<now-45:raise WorkerWait('Windows verification worker offline or gated')
             c.execute("DELETE FROM decode_jobs WHERE created<? AND state IN ('consumed','cancelled')",(now-7*86400,))
             if c.execute("SELECT COUNT(*) FROM decode_jobs WHERE state IN ('pending','leased','result')").fetchone()[0]>=16:raise WorkerWait('Decode work capacity reached')
-            c.execute('INSERT INTO decode_jobs(id,key,sid,operation,params,url,state,created,controller,deadline) VALUES(?,?,?,?,?,?,?,?,?,?)',
-                      (job,key,sid,operation,json.dumps(params),url,'pending',now,now+30,now+min(480,max(1,seconds))))
+            c.execute('INSERT INTO decode_jobs(id,key,sid,operation,params,url,state,created,controller,deadline,phase,phase_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
+                      (job,key,sid,operation,json.dumps(params),url,'pending',now,now+30,now+min(480,max(1,seconds)),'queued',now))
         return job
     def claim(self,worker):
         self.seen(worker);now=time.time()
@@ -85,7 +91,7 @@ class DecodeJobs:
             r=c.execute("SELECT * FROM decode_jobs WHERE state='pending' ORDER BY created LIMIT 1").fetchone()
             if not r:return None
             lease=uuid.uuid4().hex
-            c.execute("UPDATE decode_jobs SET state='leased',worker=?,lease=?,expires=? WHERE id=?",(worker,lease,now+180,r['id']))
+            c.execute("UPDATE decode_jobs SET state='leased',worker=?,lease=?,expires=?,phase='claimed',phase_at=? WHERE id=?",(worker,lease,now+180,now,r['id']))
             return self.public(c.execute('SELECT * FROM decode_jobs WHERE id=?',(r['id'],)).fetchone())
     def public(self,r):
         return {'job_id':r['id'],'key':r['key'],'source_id':r['sid'],'operation':r['operation'],'params':json.loads(r['params']),
@@ -98,11 +104,16 @@ class DecodeJobs:
         if task.get('generation')!=self.setting(c,'generation'):return None
         return c.execute("SELECT * FROM decode_jobs WHERE id=? AND lease=? AND worker=? AND state='leased' AND expires>? AND controller>? AND deadline>?",
                          (task.get('job_id'),task.get('lease_id'),worker,now,now,now)).fetchone()
-    def renew(self,worker,task):
+    def renew(self,worker,task,phase=None):
+        if phase is not None and phase not in PHASES:raise InvalidJob('Invalid progress phase')
         self.seen(worker)
         with self.db(True) as c:
             r=self.owned(c,worker,task)
-            if r:c.execute('UPDATE decode_jobs SET expires=? WHERE id=?',(time.time()+180,r['id']))
+            if r:
+                now=time.time()
+                if phase and phase!=r['phase']:
+                    c.execute('UPDATE decode_jobs SET expires=?,phase=?,phase_at=? WHERE id=?',(now+180,phase,now,r['id']))
+                else:c.execute('UPDATE decode_jobs SET expires=? WHERE id=?',(now+180,r['id']))
             return bool(r)
     def mark_stream(self,job,lease):
         with self.db(True) as c:
@@ -117,6 +128,8 @@ class DecodeJobs:
             return r['url'] if r else None
     def receive(self,worker,task,result):
         if not isinstance(result,dict) or not re.fullmatch('[a-f0-9]{32}',str(result.get('result_id',''))) or result.get('status') not in ('ok','checkpoint','decode_failure'):raise InvalidJob('Invalid result')
+        reason=result.get('reason','')
+        if reason and (reason not in REASONS or result['status']=='ok'):raise InvalidJob('Invalid result reason')
         raw=json.dumps(result,sort_keys=True,separators=(',',':'),allow_nan=False)
         if len(raw.encode())>2*1024*1024:raise InvalidJob('Result too large')
         digest=hashlib.sha256(raw.encode()).hexdigest();self.seen(worker)
@@ -127,7 +140,8 @@ class DecodeJobs:
                 return 'duplicate'
             r=self.owned(c,worker,task)
             if not r:return 'stale'
-            c.execute("UPDATE decode_jobs SET state='result',result=?,result_id=?,result_hash=? WHERE id=?",(raw,result['result_id'],digest,r['id']))
+            c.execute("UPDATE decode_jobs SET state='result',result=?,result_id=?,result_hash=?,outcome=?,reason_code=?,finished=? WHERE id=?",
+                      (raw,result['result_id'],digest,result['status'],reason,time.time(),r['id']))
             c.execute("INSERT INTO totals VALUES('windows_operations',1) ON CONFLICT(key) DO UPDATE SET value=value+1")
             return 'accepted'
     def poll(self,job):
@@ -137,6 +151,7 @@ class DecodeJobs:
             if r['state'] not in ('cancelled','consumed'):c.execute('UPDATE decode_jobs SET controller=? WHERE id=?',(time.time()+30,job))
             return r['state'],json.loads(r['result']) if r['result'] else None
     def finish(self,job,consumed=False):
-        with self.db(True) as c:c.execute("UPDATE decode_jobs SET state=?,url='',params='{}',result=NULL WHERE id=?",('consumed' if consumed else 'cancelled',job))
+        with self.db(True) as c:c.execute("UPDATE decode_jobs SET state=?,url='',params='{}',result=NULL,outcome=CASE WHEN outcome='' THEN ? ELSE outcome END,finished=? WHERE id=?",
+                                       ('consumed' if consumed else 'cancelled','ok' if consumed else 'cancelled',time.time(),job))
     def count(self,label):
         with self.db(True) as c:c.execute('INSERT INTO totals VALUES(?,1) ON CONFLICT(key) DO UPDATE SET value=value+1',(label,))

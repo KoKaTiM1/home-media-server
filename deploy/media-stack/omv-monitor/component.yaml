@@ -5,6 +5,34 @@ data:
   type: tabsPage
   config:
     tabs:
+    - label: Progress overview
+      type: datatable
+      config:
+        autoReload: 10000
+        limit: 20
+        hasFooter: false
+        selectionType: none
+        columns:
+        - name: Metric
+          prop: name
+          flexGrow: 1.7
+          sortable: false
+          cellTemplateName: text
+        - name: Now
+          prop: value
+          flexGrow: 1.4
+          sortable: false
+          cellTemplateName: text
+        - name: Meaning / current stage
+          prop: detail
+          flexGrow: 3
+          sortable: false
+          cellTemplateName: text
+        store:
+          proxy:
+            service: HomeMediaWorkers
+            get:
+              method: getOverview
     - label: Workers and schedules
       type: datatable
       config:

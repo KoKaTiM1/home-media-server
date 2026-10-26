@@ -27,11 +27,26 @@ identity and durable unacknowledged result. There is no Windows auto-start;
 start Docker Desktop and the launcher when assistance is wanted. The server
 continues when Windows is absent.
 
+For the 0.2.0 progress update, extract the new package over the existing local
+folder without deleting `config/` or `data/`. Run `01-INSTALL.cmd`, then
+`07-STOP.cmd` and `04-START.cmd`. The new image retains the same worker identity
+and pending-result database. If a title is active, stop it after the viewing
+session; the server verification worker remains independent.
+
 A probe or sample is one operation; it is not one fully verified title. OMV has
 separate counts for Windows titles passed/unavailable/checkpointed, active
 operations and heartbeat. Metadata counts and the initial audit are separate
 from the large validation backlog. The owner decides when to turn Windows off;
 there is no automatic stop at a remaining-title threshold.
+
+OMV's Media workers **Progress overview** uses a cached catalogue snapshot for
+final v5 passes, remaining source keys, retries and initial-audit progress.
+Live queue state shows the title, batch position, probe/beginning/later sample,
+elapsed time and useful source bytes. Version 0.2.0 also reports fixed decoder
+phases on lease renewals every 10 seconds and a small fixed reason category for
+checkpoints or decoder rejections. The earlier PC image remains compatible but
+only the server-inferred operation stage appears until it is updated. No raw
+FFmpeg output, signed source URL or unrestricted error text reaches OMV.
 
 ## Restricted transport and evidence
 

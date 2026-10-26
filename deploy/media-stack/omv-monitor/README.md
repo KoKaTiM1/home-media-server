@@ -1,8 +1,11 @@
 # OMV media worker monitor
 
 The installed OMV administrator page is **Diagnostics > Media workers**.
-It provides two read-only tabs:
+It provides three read-only tabs:
 
+- **Progress overview**: final v5 verified titles, keys still lacking v5 proof,
+  retries, initial-audit progress, final passes in the last hour, PC contribution,
+  current Windows operation and the most recent categorized PC issue.
 - **Workers and schedules**: server and optional Windows jobs, health, running/waiting/disabled
   state, schedule, next run/countdown, last start/result and current check.
 - **Catalogue queue and progress**: pending movies/shows/episodes, failed and
@@ -15,6 +18,15 @@ verifier reports PC heartbeat, active operation, title passes, unavailable
 outcomes and checkpoints. A successful probe or sample operation alone does not
 count as a fully verified title. Both tables display all current rows without
 silently cutting off the verification status at the old page limit.
+
+The optional **Media verification** widget uses OMV's supported dashboard grid
+to show the same overview as compact cards on the OMV home page. Enable it in
+the dashboard's widget selection if it does not appear automatically. The
+overview reads the existing background counter snapshot and a small live job
+record; opening OMV does not recount the large catalogue. The Windows 0.2.0
+worker reports fixed decoder phases every 10 seconds. Until the PC image is
+updated, the overview still shows its claimed probe/sample stage and progress
+observed at the server. Error reasons are fixed categories, not raw logs.
 
 Worker rows refresh every 10 seconds. A separate worker prepares counters two
 minutes after boot and then one minute after each completed snapshot. The page

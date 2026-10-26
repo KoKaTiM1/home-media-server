@@ -111,6 +111,7 @@ def workers():
             if running and remote.get('key'):
                 phase=remote.get('preparation',{}).get('phase',detail)
                 detail='Windows: '+remote.get('name',remote['key'])+' · '+('Title details' if phase=='metadata' else phase)
+                if remote.get('batch'):detail+=f" · run {remote['batch']} item {remote.get('position',0)}/20"
         if continuous:
             next_run='Continuous service';countdown='Running now' if running else 'Stopped'
             detail='Windows decodes exact selected-source samples; server validates and commits proofs'
@@ -136,11 +137,14 @@ def counts(data=DATA,refresh=False):
         except (OSError,ValueError,KeyError):pass
     if data==DATA and not refresh:
         return [{'id':'initializing','name':'Counter snapshot','value':'Initializing','detail':'Background counter job is preparing the first snapshot','updated':'Waiting for first snapshot'}]
-    rows=[]
+    rows=[];summary={}
     def add(name,value,detail=''):rows.append({'id':str(len(rows)),'name':name,'value':f'{value:,}' if isinstance(value,int) else str(value),'detail':detail,'updated':stamp(now)})
     with closing(sqlite3.connect('file:'+str(data/'catalogue.sqlite')+'?mode=ro',uri=True,timeout=3)) as conn:
         conn.set_progress_handler(lambda:int(foreground_busy(data)),10000)
         grouped=dict(conn.execute('SELECT state,COUNT(*) FROM validation GROUP BY state'))
+        summary.update(total=sum(grouped.values()),pending=grouped.get('pending',0),
+                       unavailable=grouped.get('unavailable',0),playable=grouped.get('verified',0),v5=0,
+                       audit_done=0,audit_total=0)
         add('Waiting for verification / recheck',grouped.get('pending',0),'Movie, first-episode and additional-episode source keys')
         add('Failed / not passed — retained for retry',grouped.get('unavailable',0),'Not deleted; retry waits increase up to 30 days')
         due=conn.execute("SELECT COUNT(*) FROM validation WHERE state='unavailable' AND next_check<=?",(now,)).fetchone()[0]
@@ -150,9 +154,11 @@ def counts(data=DATA,refresh=False):
         add('Passed sources using verified AAC-LC conversion',converted,'Video stays unchanged; sources with direct AAC-LC do not need conversion')
         if conn.execute("SELECT 1 FROM sqlite_master WHERE name='verification_audit'").fetchone():
             audit=dict(conn.execute("SELECT CASE WHEN completed=0 THEN 'pending' ELSE result END,COUNT(*) FROM verification_audit GROUP BY 1"))
+            summary.update(audit_done=sum(n for state,n in audit.items() if state!='pending'),audit_total=sum(audit.values()))
             for status,label in [('pending','awaiting check'),('passed','passed'),('failed','failed')]:
                 add('Initial stronger-verification audit — '+label,audit.get(status,0),'Existing titles remain visible until a fresh failure; reports run first')
-            v5=conn.execute("SELECT COUNT(*),SUM(CASE WHEN json_extract(proof,'$.audio_conversion')=1 THEN 1 ELSE 0 END) FROM validation WHERE state='verified' AND json_extract(proof,'$.version')=5").fetchone()
+            v5=conn.execute("SELECT COUNT(*),SUM(CASE WHEN json_extract(proof,'$.audio_conversion')=1 THEN 1 ELSE 0 END),SUM(CASE WHEN checked>? THEN 1 ELSE 0 END) FROM validation WHERE state='verified' AND json_extract(proof,'$.version')=5",(now-3600,)).fetchone()
+            summary.update(v5=v5[0],v5_hour=v5[2] or 0)
             add('Passed stronger video/audio checks',v5[0],'Decoded beginning and later samples from the exact selected torrent/file')
             add('Stronger checks — direct audio',v5[0]-(v5[1] or 0))
             add('Stronger checks — AAC-LC conversion',v5[1] or 0,'Video copied; conversion samples actually decoded')
@@ -243,13 +249,75 @@ def counts(data=DATA,refresh=False):
     if data==DATA:
         import tempfile
         with tempfile.NamedTemporaryFile(mode='w',dir='/run',prefix='media-worker-counts-',delete=False) as output:
-            json.dump({'time':now,'rows':rows},output);temporary=Path(output.name)
+            json.dump({'time':now,'rows':rows,'summary':summary},output);temporary=Path(output.name)
         temporary.replace(cache)
     return rows
 
+def overview(data=DATA,snapshot=None):
+    """Small cached summary plus live, scoped Windows operation state."""
+    now=time.time();snapshot=snapshot or Path('/run/media-worker-counts.json')
+    try:saved=json.loads(snapshot.read_text())
+    except (OSError,ValueError):saved={}
+    values=saved.get('summary') or {}
+    updated=stamp(saved.get('time',0)) if values else 'Waiting for snapshot'
+    rows=[]
+    def add(name,value,detail,tone='muted'):
+        rows.append({'id':str(len(rows)),'name':name,'value':str(value),'detail':detail,'tone':tone,'updated':updated})
+    if not values:
+        add('Verification overview','Preparing','The background counter snapshot is still running')
+    else:
+        total=max(0,values.get('total',0));verified=max(0,values.get('v5',0))
+        add('Final v5 verified',f'{verified:,}',f'{100*verified/total:.2f}% of {total:,} source keys; full beginning and later sample proof' if total else 'Full beginning and later sample proof','success')
+        add('Not yet v5 verified',f'{max(0,total-verified):,}',f"Includes {values.get('pending',0):,} awaiting a check, retries and older proof versions")
+        add('Unavailable / retry',f"{values.get('unavailable',0):,}",'Failed outcomes are retained and retried on schedule','error' if values.get('unavailable') else 'muted')
+        audit_total=values.get('audit_total',0);audit_done=values.get('audit_done',0)
+        add('Initial v5 audit',f'{audit_done:,} / {audit_total:,}',f'{100*audit_done/audit_total:.1f}% complete' if audit_total else 'No initial audit scheduled')
+        add('Final passes in last hour',f"{values.get('v5_hour',0):,}",'Latest verified state per title; not a count of decoder operations','success')
+    queue=data.parent/'verification-worker/queue.sqlite'
+    try:
+        with closing(sqlite3.connect('file:'+str(queue)+'?mode=ro',uri=True,timeout=1)) as conn:
+            conn.row_factory=sqlite3.Row
+            totals=dict(conn.execute('SELECT key,value FROM totals'))
+            control={key:json.loads(value) for key,value in conn.execute("SELECT key,value FROM control WHERE key IN ('enabled','reason')")}
+            seen=conn.execute('SELECT seen FROM client WHERE id=1').fetchone()
+            active=conn.execute("SELECT key,operation,params,state,created,stream_started,phase,phase_at FROM decode_jobs WHERE state IN ('pending','leased','result') AND controller>? ORDER BY created LIMIT 1",(now,)).fetchone()
+            problem=conn.execute("SELECT operation,outcome,reason_code,finished FROM decode_jobs WHERE outcome IN ('checkpoint','decode_failure') AND finished>? ORDER BY finished DESC LIMIT 1",(now-3600,)).fetchone()
+        add('Windows final passes',f"{totals.get('windows_titles_verified',0):,}",'Completed full title checks on the PC; probes and samples excluded','success')
+        connected=bool(seen and seen[0]>now-45)
+        add('Windows worker','Connected' if connected else 'Offline',control.get('reason','Waiting for resource gate') if connected else 'Server verification continues without the PC','success' if connected and control.get('enabled') else 'muted')
+        if active:
+            key=active['key'];details=context(data,cache_key='remote-validation-worker')
+            title=details.get('name') if details.get('key')==key else None
+            if not title:title='Movie' if key.startswith('movie:') else 'Episode'
+            params=json.loads(active['params']) if active['params'] else {}
+            phase=active['phase'] or ''
+            if active['state']=='pending':stage='Queued for Windows'
+            elif active['state']=='result':stage='Result received; server checking'
+            elif phase=='video probe':stage='Probing video/audio'
+            elif phase=='audio conversion':stage='Converting audio sample'
+            elif phase=='conversion probe':stage='Checking converted audio'
+            elif phase=='sample decode':stage='Decoding '+('later' if params.get('position',0)>0 else 'beginning')+' sample'
+            elif active['operation']=='probe':stage='Fetching source for video probe' if active['stream_started'] else 'Starting video probe'
+            else:stage='Fetching source for '+('later' if params.get('position',0)>0 else 'beginning')+' sample' if active['stream_started'] else 'Starting sample'
+            progress=details.get('preparation',{}) if details.get('key')==key else {}
+            extra=f" · {progress['received_bytes']/1048576:.1f} MiB received" if isinstance(progress.get('received_bytes'),(int,float)) else ''
+            add('Windows working on',title,stage+' · '+span(now-active['created'])+' elapsed'+extra,'success')
+            position=details.get('position',0) if details.get('key')==key else 0
+            batch=details.get('batch',0) if details.get('key')==key else 0
+            if position:add('Windows batch',f"Run {batch or '?'} · item {position}/20",'A batch ends after at most 20 title attempts or eight minutes')
+        else:add('Windows working on','Waiting','The next guarded batch starts automatically when work is eligible')
+        if problem:
+            label='Decode rejected' if problem['outcome']=='decode_failure' else 'Checkpoint'
+            reason=problem['reason_code'] or 'source or viewing interruption'
+            add('Latest PC operation issue',label,f"{problem['operation']} · {reason} · {span(now-problem['finished'])} ago",'error')
+        else:add('Latest PC operation issue','None in last hour','Older issues remain in the detailed worker log')
+    except (sqlite3.Error,OSError,ValueError,TypeError):
+        add('Windows worker','Status unavailable','Live operation state will return when the coordinator is readable')
+    return rows
+
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('section',choices=('workers','counts','snapshot'));args=parser.parse_args()
-    try:rows=workers() if args.section=='workers' else counts(refresh=args.section=='snapshot')
+    parser=argparse.ArgumentParser();parser.add_argument('section',choices=('workers','counts','snapshot','overview'));args=parser.parse_args()
+    try:rows=workers() if args.section=='workers' else overview() if args.section=='overview' else counts(refresh=args.section=='snapshot')
     except sqlite3.OperationalError:
         if args.section=='snapshot' and foreground_busy():
             print('Counter snapshot yielded to navigation; previous snapshot retained')

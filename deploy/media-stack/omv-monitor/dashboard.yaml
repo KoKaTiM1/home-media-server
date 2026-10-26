@@ -1,0 +1,27 @@
+version: '1.0'
+type: dashboard-widget
+data:
+  id: 58c3f47f-90e0-4c14-83d5-8137cd4d751a
+  type: grid
+  reloadPeriod: 10000
+  permissions:
+    role:
+    - admin
+  title: Media verification
+  description: Final source-check progress and current Windows verification activity.
+  grid:
+    item:
+      title: '{{ name }}'
+      content: '{{ value }}'
+      tooltip: '{{ detail }}'
+      class: 'omv-text-center omv-background-color-pair-{{ tone }}'
+      contentClass: omv-text-truncate
+      minWidth: 180px
+    store:
+      proxy:
+        service: HomeMediaWorkers
+        get:
+          method: getOverview
+          params:
+            start: 0
+            limit: -1

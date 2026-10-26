@@ -904,6 +904,14 @@ class Features:
             self.seed_validation()
             self.g['REL'].schedule()
             self.repair_cached_series(limit=2)
+            batch_number=0
+            if remote:
+                try:
+                    from verification_remote import jobs
+                    queue=jobs(self.g)
+                    queue.count('windows_batches_started')
+                    batch_number=queue.status()['totals'].get('windows_batches_started',0)
+                except sqlite3.Error:self.log('Windows batch counter deferred')
             started=time.monotonic();checked=0
             self.g['BUDGET'].worker_deadline=started+480
             slot=int((self.cached('verification-v5-slot') or {}).get('slot',0))
@@ -937,7 +945,7 @@ class Features:
                 if self.verification_held(key):continue
                 claim=self.claim_verification(key,'windows' if remote else 'server')
                 if not claim:continue
-                self.remember('remote-validation-worker' if remote else 'validation-worker',{'key':key,'started':time.time(),'position':checked+1,'message':'Video sample validation running'},180)
+                self.remember('remote-validation-worker' if remote else 'validation-worker',{'key':key,'started':time.time(),'position':checked+1,'batch':batch_number,'message':'Video sample validation running'},180)
                 attempt_started=time.time()
                 slot+=1;self.remember('verification-v5-slot',{'slot':slot},10*365*86400)
                 try:
@@ -981,14 +989,14 @@ class Features:
                     pending=self.g.get('MetadataPending')
                     if pending and isinstance(error,pending):
                         checked+=1
-                        self.remember('remote-validation-worker' if remote else 'validation-worker',{'message':'Metadata pending on helper; checking other titles','started':time.time()},180)
+                        self.remember('remote-validation-worker' if remote else 'validation-worker',{'message':'Metadata pending on helper; checking other titles','started':time.time(),'batch':batch_number},180)
                         continue
                     transient=tuple(self.g[name] for name in ('ClientCancelled','PlaybackBusy','Checkpoint') if isinstance(self.g.get(name),type))
                     if isinstance(error,sqlite3.OperationalError) or transient and isinstance(error,transient):
                         if remote:
                             from verification_remote import jobs
                             jobs(self.g).count('windows_title_checkpoints')
-                        self.remember('remote-validation-worker' if remote else 'validation-worker',{'message':'Work checkpointed; resumes after foreground activity or next batch','started':time.time()},180)
+                        self.remember('remote-validation-worker' if remote else 'validation-worker',{'message':'Work checkpointed; resumes after foreground activity or next batch','started':time.time(),'batch':batch_number},180)
                         break
                     if isinstance(error,urllib.error.HTTPError) and (error.code==429 or error.code>=500):
                         self.remember('validation-provider-backoff',True,900 if error.code==429 else 300)
@@ -1002,7 +1010,7 @@ class Features:
                 finally:
                     self.release_verification(key,claim)
                 checked+=1
-                self.remember('remote-validation-worker' if remote else 'validation-worker',{'key':key,'started':time.time(),'position':checked,'message':'Last probe finished; proceeding to next queue entry'},180)
+                self.remember('remote-validation-worker' if remote else 'validation-worker',{'key':key,'started':time.time(),'position':checked,'batch':batch_number,'message':'Last probe finished; proceeding to next queue entry'},180)
                 time.sleep(2)
             self.log(f'Persistent video validation: {checked} checked; unavailable entries retained with backoff')
 

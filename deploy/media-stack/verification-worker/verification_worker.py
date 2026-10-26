@@ -22,7 +22,7 @@ import threading
 import time
 from urllib.parse import urlsplit
 import uuid
-from verification_jobs import PROTOCOL,PREFIX
+from verification_jobs import PROTOCOL,PREFIX,PHASES
 from verification_media import execute,validate_recipe,validate_result
 
 LOG=logging.getLogger('verification-worker');STOP=threading.Event()
@@ -93,14 +93,18 @@ def run_task(api,worker,task,status):
     if not re.fullmatch('[a-f0-9]{32}',task['job_id']) or task['stream_path']!=PREFIX+'/stream/'+task['job_id']+'/'+task['lease_id']:raise ValueError('Invalid task stream')
     cancel=threading.Event();proxy=ProxyServer(('127.0.0.1',0),Proxy);proxy.api=api;proxy.task=task;proxy.cancel=cancel
     threading.Thread(target=proxy.serve_forever,daemon=True).start()
+    current_phase={'value':None}
     def renew():
         while not cancel.wait(10):
             try:
-                if not api.request('/renew',{'worker_id':worker,'task':task})['active']:cancel.set()
+                body={'worker_id':worker,'task':task}
+                if current_phase['value']:body['phase']=current_phase['value']
+                if not api.request('/renew',body)['active']:cancel.set()
             except Exception:cancel.set()
     threading.Thread(target=renew,daemon=True).start()
     def run(command,phase):
         status(phase)
+        if phase in PHASES:current_phase['value']=phase
         with subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.PIPE) as process:
             try:
                 while True:
@@ -119,8 +123,12 @@ def run_task(api,worker,task,status):
         data=execute(task['operation'],task['params'],'http://127.0.0.1:'+str(proxy.server_port)+'/source',run,'/tmp')
         validate_result(task['operation'],task['params'],data)
         return {'status':'ok','data':data}
-    except DecodeRejected:return {'status':'decode_failure'}
-    except (TransportWait,OSError,http.client.HTTPException,ValueError,RuntimeError):return {'status':'checkpoint'}
+    except DecodeRejected:return {'status':'decode_failure','reason':'decoder'}
+    except TransportWait as error:
+        reason='interrupted' if str(error)=='Operation checkpoint' else 'resource' if str(error)=='Output bound exceeded' else 'transport'
+        return {'status':'checkpoint','reason':reason}
+    except (OSError,http.client.HTTPException):return {'status':'checkpoint','reason':'transport'}
+    except (ValueError,RuntimeError):return {'status':'checkpoint','reason':'validation'}
     finally:cancel.set();proxy.shutdown();proxy.server_close()
 
 def main():
