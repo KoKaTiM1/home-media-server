@@ -100,7 +100,10 @@ verification rollout is issue #4. Production PC validation remains required
 before advertising a speedup.
 
 The physical PC completed a probe of a local media canary after the gateway's
-Docker-network allow rule was corrected. It then committed one full v5 episode
-proof from a real selected torrent, with beginning and later samples and fresh
-AAC-LC conversion. The 20-title live pilot remains bounded; completion, offline
-reconnect and throughput still need physical review before continuous assistance.
+Docker-network allow rule was corrected. It then committed v5 proofs from real
+selected torrents, with beginning and later samples and fresh AAC-LC conversion
+when required. The first 20-title pilot completed with 19 verified and one
+unavailable outcome, without a new TorrServer OOM or restart. Continuous PC
+assistance was enabled after that review; the existing memory and playback
+guards still pause it as needed. A physical Windows stop/reconnect and longer
+throughput review remain open in issue #4.

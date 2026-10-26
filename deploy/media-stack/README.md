@@ -182,4 +182,4 @@ Local media deletion retains its native behavior. TV media-management settings
 and existing user permissions determine whether Delete is visible.
 
 
-Optional Windows source verification is implemented separately from metadata fetching. See [worker operation and recovery](verification-worker/README.md). The server remains authoritative; the PC is enrolled and the memory guarded 20-title pilot is running. Issues #3 and #4 track the remaining live checks before continuous assistance.
+Optional Windows source verification is implemented separately from metadata fetching. See [worker operation and recovery](verification-worker/README.md). The server remains authoritative. The first 20-title PC pilot completed with 19 verified and one unavailable result; continuous PC assistance is now enabled under the memory and playback guards. Issues #3 and #4 track the remaining memory investigation and physical offline/reconnect check.
