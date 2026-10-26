@@ -463,3 +463,30 @@ on their next invocation, so adding a hold does not require restarting Jellyfin
 or the catalogue bridge. OMV counters show the number of protected titles and
 the earliest expiry. Native active/paused-session and navigation safeguards
 continue to defer heavy work during detected viewing.
+
+
+## Background metadata recovery and current subtitle findings
+
+Existing series folders created by poster caching can appear in native Jellyfin
+as a bare IMDb number with no episodes. The availability worker hydrates at
+most two such already-present, ready series per batch using cached metadata.
+It writes released episode metadata and reports that exact directory to
+Jellyfin's media-update endpoint so newly created children are discovered.
+Bare parent titles also use a supported metadata update with the existing full
+DTO and UserData omitted. The local native index is read-only; all metadata
+writes go through Jellyfin APIs.
+Unchecked episodes are still filtered; metadata recovery is not a playback pass.
+Work is deferred during navigation. No full-library scan or service restart is
+required; native display refresh may complete asynchronously.
+
+Movie source relevance also accepts current/original English names from the
+local IMDb projection and saved English aliases for the same IMDb identity.
+This handles renamed films whose remote metadata retains a working title,
+while requiring the release year and excluding unrelated titles.
+
+Downloaded Hebrew tracks and embedded Hebrew tracks use different delivery
+paths. Native embedded-track extraction can fail before producing the cached
+SRT; this is distinct from zero provider matches. A working downloaded second
+option is not evidence that the embedded first option extracted successfully.
+That native extraction issue remains under investigation; no subtitle-source
+expansion or playback-service restart was applied as part of this repair.

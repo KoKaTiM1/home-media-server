@@ -60,6 +60,9 @@ in this hardware overview.
   grows as background validation succeeds; saved results persist across syncs.
   Pagination controls how many entries load per request.
 - Hebrew title lookup, related English franchise search and single/range year search.
+- Background recovery of existing IMDb-named blank series from cached metadata,
+  with targeted directory discovery and preserved watch/favorite state. Current
+  IMDb movie names also match sources when remote metadata keeps a working title.
 - Newest production year first, then real release date by default; selected score/name/runtime sorting within years.
 - Month searches such as `2026-07` and `2026-07..2026-09` where real dates are known.
 - Online libraries named סרטים צפייה ישירה and סדרות צפייה ישירה.

@@ -780,6 +780,68 @@ class Features:
             seen.add(imdb);output.append(self.localize(meta))
         return self.decorate_posters(output)
 
+    def repair_stub_title(self,imdb,meta):
+        # Read the local native index only; all metadata writes use Jellyfin's
+        # supported API. Preserve the full existing DTO and never send UserData.
+        path=self.media.parent/'appdata/jellyfin/config/data/jellyfin.db'
+        if not path.is_file():return
+        with closing(sqlite3.connect('file:'+str(path)+'?mode=ro',uri=True,timeout=1)) as native:
+            row=native.execute("SELECT Id,Name FROM BaseItems WHERE Path=? AND Type='MediaBrowser.Controller.Entities.TV.Series'",('/catalogue/shows/'+imdb,)).fetchone()
+        if not row or row[1]!=imdb:return
+        users=self.jf('/Users',timeout=5)
+        user=next((u for u in users if u.get('Policy',{}).get('IsAdministrator')),users[0] if users else None)
+        if not user:raise RuntimeError('No native user for series metadata repair')
+        dto=self.jf('/Users/'+user['Id']+'/Items/'+row[0],timeout=5)
+        if dto.get('Name')!=imdb:return
+        dto=dict(dto);dto.pop('UserData',None)
+        dto['Name']=meta['name']
+        dto['ProviderIds']={**(dto.get('ProviderIds') or {}),'Imdb':imdb}
+        if not dto.get('Overview'):dto['Overview']=meta.get('description')
+        if not dto.get('ProductionYear') and str(meta.get('releaseInfo',''))[:4].isdigit():dto['ProductionYear']=int(str(meta['releaseInfo'])[:4])
+        if dto.get('Tags') is None:dto['Tags']=[]
+        self.jf('/Items/'+row[0],dto,method='POST',timeout=5)
+
+    def repair_cached_series(self,limit=2,only=None):
+        """Hydrate poster-created native series stubs using saved metadata only.
+
+        Video readiness stays independent. Creating released STRM metadata does
+        not mark unchecked episodes playable or change native user data.
+        """
+        if self.foreground_busy():return []
+        root=self.g['LIBRARY']/'shows'
+        if not root.is_dir():return []
+        with self.db() as conn:
+            ready={key.split(':')[1] for key, in conn.execute("SELECT key FROM home_ready WHERE key LIKE 'series:%'")}
+        repaired=[];attempted=0
+        folders=[root/only] if only and re.fullmatch(r'tt[0-9]{5,12}',only) else sorted(root.iterdir()) if only is None else []
+        for folder in folders:
+            imdb=folder.name
+            if attempted>=limit or self.foreground_busy():break
+            if not folder.is_dir() or folder.is_symlink() or imdb not in ready or not re.fullmatch(r'tt[0-9]{5,12}',imdb):continue
+            with self.db() as conn:
+                row=conn.execute('SELECT meta FROM items WHERE key=?',('series:'+imdb,)).fetchone()
+                saved=conn.execute('SELECT value FROM cache WHERE key=?',('meta:series:'+imdb,)).fetchone()
+            pending='series-metadata-refresh:'+imdb
+            needs=not row or not (folder/'tvshow.nfo').is_file()
+            if not needs and not self.cached(pending):continue
+            meta=json.loads(saved[0]) if saved else json.loads(row[0]) if row else {}
+            if meta.get('id',meta.get('imdb_id'))!=imdb or not meta.get('videos') or not meta.get('name') or meta['name']==imdb:continue
+            if not any(isinstance(v.get('season'),int) and isinstance(v.get('episode'),int) and v['episode']>0 and v.get('released') and v['released'][:10]<=dt.date.today().isoformat() for v in meta['videos']):continue
+            attempted+=1
+            try:
+                if needs:
+                    self.g['import_item']('series',meta,'Metadata recovery')
+                    self.remember(pending,True,30*86400)
+                # A metadata refresh does not discover new children. Notify
+                # the native directory monitor to scan this exact series folder.
+                self.jf('/Library/Media/Updated',{'Updates':[{'Path':'/catalogue/shows/'+imdb}]},method='POST',timeout=5)
+                self.repair_stub_title(imdb,meta)
+                with self.db() as conn:conn.execute('DELETE FROM cache WHERE key=?',(pending,))
+                repaired.append(imdb)
+                self.log('Cached series metadata repaired: '+imdb)
+            except Exception as error:self.log('Series metadata repair deferred: '+imdb+' ('+type(error).__name__+')')
+        return repaired
+
     def verification_held(self,key):
         with self.db() as conn:
             return bool(conn.execute('SELECT 1 FROM verification_holds WHERE key=? AND expires>?',(key,time.time())).fetchone())
@@ -817,6 +879,7 @@ class Features:
                 return
             self.seed_validation()
             self.g['REL'].schedule()
+            self.repair_cached_series(limit=2)
             started=time.monotonic();checked=0
             self.g['BUDGET'].worker_deadline=started+480
             slot=int((self.cached('verification-v5-slot') or {}).get('slot',0))

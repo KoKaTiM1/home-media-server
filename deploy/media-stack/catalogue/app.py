@@ -607,6 +607,14 @@ def candidate_matches(candidate,key):
     else:meta=json.loads(row[0])
     def normalized(value):return re.sub(r'[^\w]+',' ',value.casefold()).strip()
     names=[meta.get(n,'') for n in ('name','original_title','originalName')]
+    # Remote metadata can retain a working title after the film is renamed.
+    # The local IMDb projection supplies alternate names for the same identity,
+    # never fuzzy names belonging to another movie.
+    with F.db() as conn:
+        local=conn.execute("SELECT name,original,year FROM home_titles WHERE imdb=? AND kind='movie'",(key.split(':')[1],)).fetchone()
+        alias=conn.execute('SELECT english FROM aliases WHERE imdb=?',(key.split(':')[1],)).fetchone()
+    if local:names.extend(local[:2])
+    if alias:names.append(alias[0])
     text=normalized(title)
     if not any(n and (' '+normalized(n)+' ') in (' '+text+' ') for n in names):return False
     year=str(meta.get('year') or meta.get('releaseInfo') or meta.get('released') or '')[:4]
