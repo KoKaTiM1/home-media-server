@@ -105,12 +105,33 @@ def read_bounded(response,size,deadline=None):
     return bytes(output)
 
 
+def playback_error_details(error):
+    """Return useful error context without exposing exception text or URLs."""
+    details={'error_type':type(error).__name__}
+    if isinstance(error,urllib.error.HTTPError):
+        details.update(error_category='upstream_http',http_status=int(error.code))
+    elif isinstance(error,(ClientCancelled,BrokenPipeError,ConnectionResetError)):
+        details['error_category']='client_disconnect'
+    elif isinstance(error,(TimeoutError,subprocess.TimeoutExpired)):
+        details['error_category']='timeout'
+    elif isinstance(error,sqlite3.OperationalError):
+        details['error_category']='local_database'
+    elif isinstance(error,urllib.error.URLError):
+        details['error_category']='network'
+    elif isinstance(error,OSError):
+        details['error_category']='local_io'
+        if isinstance(error.errno,int):details['error_errno']=error.errno
+    else:details['error_category']='operation'
+    return details
+
+
 def playback_event(key,phase,started,outcome,error=None):
-    # Deliberately log identifiers and exception classes only, never exception
-    # strings: HTTP and ffmpeg errors can contain signed URLs and credentials.
+    # Log only validated title keys and sanitized error fields. Never log
+    # exception strings: HTTP and ffmpeg errors can contain URLs or credentials.
     if not re.fullmatch(r'(movie:tt\d{5,12}|series:tt\d{5,12}:\d+:\d+)',key):return
     event={'key':key,'phase':phase,'seconds':round(time.monotonic()-started,3),
-           'outcome':outcome,'error_type':type(error).__name__ if error else None}
+           'outcome':outcome,**(playback_error_details(error) if error else
+                               {'error_type':None,'error_category':None})}
     log('Playback '+json.dumps(event,sort_keys=True))
 
 
@@ -1510,6 +1531,7 @@ class Handler(BaseHTTPRequestHandler):
         except PlaybackBusy:
             if not response_started:self.reply({'error':'Another playback preparation is in progress; retry shortly.'},409)
         except urllib.error.HTTPError as error:
+            if key:playback_event(key,'request',stream_started,'failed',error)
             if parts and parts[0]=='play' and error.code!=416:F.validation_result(key,False,reason='Upstream HTTP failure')
             if error.code==416 and not response_started:
                 self.send_response(416)

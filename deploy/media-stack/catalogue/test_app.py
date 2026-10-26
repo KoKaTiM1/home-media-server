@@ -21,6 +21,28 @@ class CatalogueTests(unittest.TestCase):
         for target,name,value in [(a.REL,'verify',{'version':5})]:
             handle=patch.object(target,name,return_value=value);handle.start();self.addCleanup(handle.stop)
 
+    def test_playback_error_log_is_sanitized_and_diagnostic_only(self):
+        events=[]
+        secret='signed-token-must-not-appear'
+        error=a.urllib.error.HTTPError(
+            'https://provider.example/stream?token='+secret,503,'private error text',{},None)
+        with patch.object(a,'log',side_effect=events.append):
+            a.playback_event('movie:tt1234567','request',a.time.monotonic()-1,'failed',error)
+        self.assertEqual(len(events),1)
+        self.assertIn('"error_category": "upstream_http"',events[0])
+        self.assertIn('"http_status": 503',events[0])
+        self.assertNotIn(secret,events[0])
+        self.assertNotIn('private error text',events[0])
+        self.assertNotIn('provider.example',events[0])
+
+    def test_playback_event_only_emits_log_for_generic_error(self):
+        events=[]
+        with patch.object(a,'log',side_effect=events.append):
+            a.playback_event('movie:tt1234567','source_probe',a.time.monotonic()-1,'failed',ValueError('private detail'))
+        self.assertEqual(len(events),1)
+        self.assertIn('"error_category": "operation"',events[0])
+        self.assertNotIn('private detail',events[0])
+
     def test_collection_pages_visit_empty_filtered_pages_and_titles_beyond_2000(self):
         offsets=[]
         def page(path,timeout):
