@@ -1,9 +1,9 @@
 {
-  "created_utc": "2026-10-26T23:14:37.237240+00:00",
+  "created_utc": "2026-10-26T23:15:05.948426+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
-    "README.md": "fae4b5da6b82b77393c326e613a0eea156bc7cf8db3d99c6eb9e84fe49d34c9f",
+    "README.md": "c0c4d5f8793f00bcaa0440779978e318064dae926c3f16cbf4a6a5b82a3e8a27",
     "RESTORE.md": "9de0a044ef8f463a434055673243722400994074a40fa259a3b9c09dc1f134d8",
     "artifacts/DynamicLibrary/meta.json": "fb782b38f52df228c7217dc2d66e48ff268b91011435c35f827bb3e3f0eacee6",
     "artifacts/README.md": "8ee172edbc15e2b65dd213d93368f803d858c2f22f1597225e722278445f62e9",
@@ -12,7 +12,7 @@
     "backup/render_deployment.py": "ff3a93a85eb6c958a6e329f1e7c47d151f4db038998634003a867f8bc959c24b",
     "backup/templates/.gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
     "backup/templates/ARTIFACTS.md": "8ee172edbc15e2b65dd213d93368f803d858c2f22f1597225e722278445f62e9",
-    "backup/templates/README.md": "fae4b5da6b82b77393c326e613a0eea156bc7cf8db3d99c6eb9e84fe49d34c9f",
+    "backup/templates/README.md": "c0c4d5f8793f00bcaa0440779978e318064dae926c3f16cbf4a6a5b82a3e8a27",
     "backup/templates/RESTORE.md": "9de0a044ef8f463a434055673243722400994074a40fa259a3b9c09dc1f134d8",
     "backup/test_export_privacy.py": "5c9e19fcbb8d5dbe9832eb552cc0024e3199db0b0b665715c0b8547f1b887a5e",
     "deploy/media-stack/README.md": "a7968c64f9d058ea79fc95b32f0735fb366e1ef8fdb14b8691ea980cc6be9f34",

@@ -35,22 +35,24 @@ criteria are kept in the issue.
 
 ## Hardware currently running this stack
 
-Measured on the source server on 2026-10-25; capacities are rounded. These are
+Measured on the source server on 2026-10-27; capacities are rounded. These are
 reference specs for the existing machine, not minimum requirements.
 
 | Component | Installed hardware / allocation |
 | --- | --- |
 | CPU | Intel Core i3-2120 @ 3.30 GHz, 2 cores / 4 threads, x86-64 |
-| RAM | 2 GB installed; Linux reports 1,952 MiB usable |
-| Swap | 4.0 GB decimal / approximately 3.73 GiB on disk |
-| Disk | Western Digital WD5000AZRX-00A8LB0, 500 GB SATA rotating hard drive |
-| OS partition | EXT4, approximately 50 GB decimal / 46.6 GiB |
-| Media partition | Existing `/dev/sda5`, EXT4, approximately 445.6 GB decimal / 415 GiB raw; `df` reports 408 GiB filesystem capacity |
+| RAM | 16 GB installed; Linux reports about 15 GiB usable |
+| Swap | Existing 3.7 GiB partition on the HDD; active and currently unused |
+| SSD | Kingston SV300S37A240G, 240 GB SATA; Debian root (80 GiB) and service data (142.6 GiB) |
+| HDD | Western Digital WD5000AZRX-00A8LB0, 500 GB SATA rotating hard drive |
+| Media partition | Existing EXT4 partition, approximately 415 GiB raw; holds Media and Downloads |
+| Container memory limits | Jellyfin 2 GiB; TorrServer 768 MiB; catalogue bridge 512 MiB; Transmission 256 MiB |
 | Operating system | Debian 13; OpenMediaVault 8 |
 
-The media partition holds AppData, Downloads, Media, catalogue databases and
-streaming caches. Free space changes during normal use; the download queue
-reserves at least 20 GiB. The stack supports one distinct video stream at a
+The SSD holds the operating system, AppData, catalogue databases and streaming
+cache. The HDD retains the existing Media and Downloads shares. Free space
+changes during normal use; the download queue reserves at least 20 GiB. The
+stack supports one distinct video stream at a
 time, favors H.264 720p/1080p, and uses video copy with AAC-LC audio conversion
 where needed. Video transcoding is not the catalogue playback policy.
 Container and worker resource limits keep background work bounded on this PC;
