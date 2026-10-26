@@ -14,8 +14,9 @@ PASS: corrected shared queue SQLite/WAL/SHM mode0660 for both service/bridge.
 
 The receiver is limited to the enrolled LAN PC and server. Its unprivileged
 process can write only its own queue. The trusted importer runs every30seconds.
-Production Windows claim/upload/throughput confirmation remains in issue #2
-until first receipts are observed. No playback container was restarted for this
+PASS: physical Windows batch67records received and applied, about16/minute.
+PENDING: copy corrected worker.ps1 to Windows and check a later stop/restart;
+first-start missing-container detection now uses an empty-success list query. No playback container was restarted for this
 integration. Source validation remains separate; metadata never proves media.
 
 Original USB client image remains home-media-metadata-worker:0.1.0.

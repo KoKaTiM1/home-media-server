@@ -51,7 +51,7 @@ visibility. Existing verification/import rules decide when Jellyfin shows a
 title and which episodes are available.
 
 Windows fetches series metadata. Server background metadata calls share leases
-and rate budgets; movies stay local. If Windows is not seen for two minutes,
+and rate budgets; movies stay local. If Windows is not seen for two minutes and its active lease has expired,
 the server can fetch missing series metadata itself. If a specific series is
 waiting on the PC, its short metadata wait lets verification continue with
 other titles. Background catalogue-page requests share the provider budget;
@@ -100,4 +100,6 @@ rebuild after losing the server:
 
 Stopping the helper does not require stopping Jellyfin or torrents. Retain
 unacknowledged results on Windows until the server has acknowledged them.
-See issue #2 for the first physical PC connection and throughput follow-up.
+The first physical PC batch completed: 67 Windows metadata records accepted and
+imported at about 16 results/minute. Issue #2 retains the launcher update and
+physical restart check. The running PC can stay on and poll for new work.

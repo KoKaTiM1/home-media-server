@@ -84,8 +84,8 @@ or `rejected`. Unknown/wrong IDs must not acknowledge unrelated submissions.
   lease expiry, failed metadata import and restart with retained receipts.
   Operational counters must distinguish fetched, accepted, applied and failed.
 
-The production coordinator/importer is installed. Physical Windows connection
-and a measured first batch are tracked in issue #2. The receiver commits a
+The production coordinator/importer is installed. Physical Windows connection and first batch are confirmed: 67 records applied
+at about 16 results/minute. Launcher/restart follow-up is tracked in issue #2. The receiver commits a
 receipt and import handoff together; the separate trusted importer applies the
 normal cache idempotently. Background full-title fetches use shared leases and
 provider budget, and background catalogue pages share that rate budget.

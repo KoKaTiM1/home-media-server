@@ -14,8 +14,9 @@ that installation and the offline demo passed on Windows. Copy the private
 connection file from the server user's home into `config/config.local.json`,
 then run `04-START.cmd`. The USB delivered the client; assignments and results
 travel over the LAN. See [server/README.md](server/README.md) for enrollment,
-server operation, safety boundaries and recovery. Physical PC upload counters
-confirm a live connection; an offline demo alone does not.
+server operation, safety boundaries and recovery. The first physical PC batch was confirmed: 67 records received and applied,
+about 16 results/minute. A corrected first-start container check is available
+in the current worker.ps1; update that local launcher for fresh installations.
 
 ## Commands
 

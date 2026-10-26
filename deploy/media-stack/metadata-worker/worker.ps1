@@ -31,8 +31,15 @@ function Assert-Image {
 }
 
 function Get-Container {
-    $Raw = & docker container inspect $Container 2>$null
-    if ($LASTEXITCODE -ne 0) { return $null }
+    # A first start has no container yet. Windows PowerShell can turn native
+    # inspect stderr into a terminating error even when redirected. Listing
+    # an absent name succeeds with empty output, so absence is normal here.
+    $NameFilter = 'name=^/' + $Container + '$'
+    $ContainerId = & docker container ls --all --filter $NameFilter --format '{{.ID}}'
+    if ($LASTEXITCODE -ne 0) { throw 'Could not list Docker containers.' }
+    if (-not $ContainerId) { return $null }
+    $Raw = & docker container inspect $ContainerId
+    if ($LASTEXITCODE -ne 0) { throw 'Could not inspect the existing worker container.' }
     return @($Raw | ConvertFrom-Json)[0]
 }
 
