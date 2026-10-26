@@ -3,7 +3,7 @@ Description=Jellyfin and Transmission media stack
 Requires=docker.service
 After=docker.service network-online.target
 Wants=network-online.target
-RequiresMountsFor=/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>
+RequiresMountsFor=/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID> /srv/dev-disk-by-uuid-bd267f22-f18a-4966-94ae-409a27252905
 
 [Service]
 Type=oneshot

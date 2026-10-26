@@ -9,15 +9,15 @@ services:
       TZ: Asia/Jerusalem
       JELLYFIN_PublishedServerUrl: http://<SERVER_LAN_IP>:8096
     volumes:
-      - /srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>/appdata/jellyfin/config:/config
-      - /srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>/appdata/jellyfin/cache:/cache
+      - /srv/dev-disk-by-uuid-bd267f22-f18a-4966-94ae-409a27252905/appdata/jellyfin/config:/config
+      - /srv/dev-disk-by-uuid-bd267f22-f18a-4966-94ae-409a27252905/appdata/jellyfin/cache:/cache
       - /srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>/media:/media:ro
       - /srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>/downloads/complete:/downloads:ro
-      - /srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>/catalogue:/catalogue
+      - /srv/dev-disk-by-uuid-bd267f22-f18a-4966-94ae-409a27252905/catalogue:/catalogue
     ports:
       - "<SERVER_LAN_IP>:8096:8096/tcp"
       - "<SERVER_LAN_IP>:7359:7359/udp"
-    mem_limit: 768m
+    mem_limit: 2g
     cpus: 1.5
     restart: unless-stopped
     stop_grace_period: 30s
@@ -37,7 +37,7 @@ services:
     secrets:
       - transmission_password
     volumes:
-      - /srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>/appdata/transmission/config:/config
+      - /srv/dev-disk-by-uuid-bd267f22-f18a-4966-94ae-409a27252905/appdata/transmission/config:/config
       - /srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>/downloads:/downloads
       - /srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>/downloads/watch:/watch
     ports:
@@ -61,11 +61,11 @@ services:
       TS_HTTPAUTH: "1"
       TS_DONTKILL: "1"
     volumes:
-      - /srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>/appdata/torrserver:/opt/ts
-      - /srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>/streaming-cache:/streaming-cache
+      - /srv/dev-disk-by-uuid-bd267f22-f18a-4966-94ae-409a27252905/appdata/torrserver:/opt/ts
+      - /srv/dev-disk-by-uuid-bd267f22-f18a-4966-94ae-409a27252905/streaming-cache:/streaming-cache
     ports:
       - "<SERVER_LAN_IP>:8090:8090/tcp"
-    mem_limit: 320m
+    mem_limit: 768m
     cpus: 1.0
     restart: unless-stopped
 
@@ -81,8 +81,8 @@ services:
       MEDIA_ROOT: /storage/media
       DOWNLOADS_ROOT: /storage/downloads/complete
     volumes:
-      - /srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>/appdata/catalogue:/data
-      - /srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>/catalogue:/catalogue
+      - /srv/dev-disk-by-uuid-bd267f22-f18a-4966-94ae-409a27252905/appdata/catalogue:/data
+      - /srv/dev-disk-by-uuid-bd267f22-f18a-4966-94ae-409a27252905/catalogue:/catalogue
       - ./catalogue/app.py:/app/app.py:ro
       - ./catalogue/features.py:/app/features.py:ro
       - /srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>:/storage
@@ -93,7 +93,7 @@ services:
       - opensubtitles
     ports:
       - "<SERVER_LAN_IP>:8092:8092/tcp"
-    mem_limit: 256m
+    mem_limit: 512m
     cpus: 1.0
     cap_drop:
       - ALL

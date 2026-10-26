@@ -2,7 +2,7 @@
 Description=Restricted Windows media verification gateway
 Wants=network-online.target
 After=network-online.target media-stack.service
-RequiresMountsFor=/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>
+RequiresMountsFor=/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID> /srv/dev-disk-by-uuid-bd267f22-f18a-4966-94ae-409a27252905
 [Service]
 Type=simple
 User=server
@@ -26,7 +26,7 @@ ProtectKernelModules=true
 ProtectControlGroups=true
 CapabilityBoundingSet=
 RestrictAddressFamilies=AF_INET AF_UNIX
-ReadWritePaths=/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>/appdata/verification-worker
+ReadWritePaths=/srv/dev-disk-by-uuid-bd267f22-f18a-4966-94ae-409a27252905/appdata/verification-worker
 IPAddressDeny=any
 IPAddressAllow=<WINDOWS_METADATA_HELPER_IP>/32
 IPAddressAllow=<SERVER_LAN_IP>/32

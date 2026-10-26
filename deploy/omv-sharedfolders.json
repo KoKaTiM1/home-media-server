@@ -23,7 +23,7 @@
     "uuid": "<OMV_APPDATA_SHARE_ID>",
     "name": "AppData",
     "comment": "Persistent container application data",
-    "mntentref": "<OMV_MOUNT_ID_1>",
+    "mntentref": "7dfa8b20-848d-42aa-8bb5-45ff953657f8",
     "reldirpath": "appdata/",
     "privileges": {
       "privilege": []

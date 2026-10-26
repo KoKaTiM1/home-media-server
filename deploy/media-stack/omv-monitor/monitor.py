@@ -11,7 +11,7 @@ import sqlite3
 import subprocess
 import time
 
-DATA=Path('/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>/appdata/catalogue')
+DATA=Path('/srv/dev-disk-by-uuid-bd267f22-f18a-4966-94ae-409a27252905/appdata/catalogue')
 JOBS=[
  ('media-source-availability','Stream verification','Repeated batches; 1 minute between batches'),
  ('media-remote-availability','Windows LAN source verification','Optional parallel worker; 15 seconds between batches'),
