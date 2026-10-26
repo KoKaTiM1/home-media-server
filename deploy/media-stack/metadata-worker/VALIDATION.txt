@@ -1,0 +1,24 @@
+USB PHASE 1 VALIDATION - 2026-10-26
+
+PASS: 17 isolated Python regression tests.
+PASS: exact-source metadata identity, partition rejection and single-instance lock.
+PASS: durable outbox across restart and lost acknowledgement; no second fetch.
+PASS: wrong result acknowledgement retains pending data.
+PASS: expired assignments retained without fetching.
+PASS: provider 429 cooldown persisted and reported for shared rate limiting.
+PASS: real TLS pin mismatch sends no token or HTTP request.
+PASS: normal TLS rejects untrusted certificates.
+PASS: allowed Cinemeta redirect retains the exact title ID/path.
+PASS: arbitrary redirect host, port, path, query or downgrade rejected.
+PASS: real metadata smoke check returned Money Trap with eight episodes.
+PASS: final Docker image offline demonstration with network disabled, read-only
+      root, no capabilities, unprivileged user and 128 MiB memory limit.
+
+NOT TESTED: physical Windows PowerShell 5.1 launchers / Docker Desktop execution.
+NOT ACTIVATED: server coordinator, production claims/uploads, library imports,
+               server partitioning, new schedules, tokens or receiving ports.
+No Jellyfin/bridge/TorrServer/Transmission restart was performed for this work.
+
+Image tag: home-media-metadata-worker:0.1.0
+Image platform: linux/amd64
+Image ID: sha256:9f42593e65d1c85062d815eda94f36028595d87c6b625edcf727d903de67dc23

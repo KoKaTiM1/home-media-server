@@ -1,0 +1,7 @@
+config/config.local.json
+config/*.tmp
+data/*
+!data/.gitkeep
+metadata-worker-image.tar.gz
+SHA256SUMS.json
+__pycache__/

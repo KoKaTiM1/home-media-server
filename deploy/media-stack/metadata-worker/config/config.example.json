@@ -1,0 +1,7 @@
+{
+  "server_url": "",
+  "tls_sha256": "",
+  "token": "",
+  "kind": "series",
+  "request_interval_seconds": 3
+}

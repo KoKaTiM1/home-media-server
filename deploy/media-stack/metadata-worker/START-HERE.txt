@@ -1,0 +1,56 @@
+HOME MEDIA METADATA WORKER - WINDOWS PACKAGE 0.1.0
+
+USB PHASE 1: OFFLINE DEMONSTRATION READY; SERVER CONNECTION NOT ACTIVATED.
+
+This USB carries the application to Windows. Once the server coordinator has
+been installed in a later phase, work and results will travel over LAN or
+Tailscale. You will not carry the USB back and forth with result files.
+
+1. Copy the entire HomeMediaMetadataWorker folder to a local folder on the PC,
+   for example C:\HomeMediaMetadataWorker. Keep all files together. Do not run
+   the active worker from the USB, a network share or a synchronized folder.
+2. Start Docker Desktop and select Linux containers. No Python installation,
+   SSH server, Windows remote-control account or administrator shell is needed.
+   Docker Desktop itself must already be installed and working for your user.
+3. Double-click 01-INSTALL.cmd. This checks and loads the included Linux/amd64
+   image; there is no image or dependency download for this installation.
+4. Double-click 02-OFFLINE-DEMO.cmd. It should print PASS. The demo has no
+   network and uses temporary example data, not real movies or episodes.
+5. Stop here for now. The live server has not been changed or given a receiving
+   endpoint. 03-CONFIGURE.cmd and 04-START.cmd are for the later connection phase.
+
+NEXT PHASE (requires server-side work, not completed by this USB package):
+The server will need an HTTPS coordinator, a trusted certificate/fingerprint,
+a dedicated metadata-only token, exclusive batch assignments and a validated
+import path. Its own background metadata work must honor those assignments.
+Do not enter a Jellyfin API key, torrent password, SSH password or GitHub token.
+The intended initial partition is series on Windows; movies remain on server.
+This is proposed partitioning, not a configuration already applied to the server.
+
+After provisioning, use 03-CONFIGURE.cmd, then 04-START.cmd. It runs in the
+background while Docker Desktop runs. 05-STATUS.cmd shows local progress;
+06-LOGS.cmd shows recent messages. 07-STOP.cmd stops it and keeps progress.
+After a reboot, start Docker Desktop and run 04-START.cmd again. Automatic
+Windows startup is intentionally not configured by this first package.
+
+Metadata fetching uses the same Cinemeta source as the server. It fetches title
+descriptions and episode metadata; it does not download posters or videos,
+run torrents, convert audio, verify playback or mark titles playable. The
+large basic IMDb index is already on the server. Its source verification queue
+is a different workload and cannot be completed by a metadata-only helper.
+Only the server may decide what enters Jellyfin and which sources are playable.
+
+The worker saves pending results locally before uploading. It retries the same
+result identity after a network interruption and keeps unacknowledged metadata.
+Stale/rejected assignments are retained in data\quarantine for review. They are
+not imported as fresh results. Stop after reviewing any fatal configuration
+error; do not delete data to bypass a connection or identity warning.
+
+Keep config\config.local.json and data private. They are not present on the USB
+in this phase. Data contains metadata/progress when the real worker is used.
+No server address, account identifier, credentials or live database is included.
+
+See README.md for operation details, PROTOCOL.md for the LAN contract and
+NEXT-SESSION.md for the remaining integration work. Windows launchers have
+been prepared for PowerShell 5.1; actual Windows execution still needs checking
+on your PC. Do not treat a Linux demo pass as a Windows compatibility test.

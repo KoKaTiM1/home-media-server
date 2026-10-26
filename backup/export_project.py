@@ -17,6 +17,14 @@ import xml.etree.ElementTree as ET
 STACK = Path('/opt/media-stack')
 STORAGE = Path('/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>')
 SKIP = {'.git', '__pycache__', 'obj', 'bin', 'build', '.claude', '.github'}
+METADATA_WORKER_FILES = (
+    '.gitignore', '.dockerignore', 'Dockerfile', 'README.md', 'START-HERE.txt',
+    'PROTOCOL.md', 'NEXT-SESSION.md', 'VALIDATION.txt', 'worker.ps1',
+    '01-INSTALL.cmd', '02-OFFLINE-DEMO.cmd', '03-CONFIGURE.cmd',
+    '04-START.cmd', '05-STATUS.cmd', '06-LOGS.cmd', '07-STOP.cmd',
+    'config/config.example.json', 'worker/worker.py', 'worker/demo.py',
+    'checks/test_worker.py',
+)
 
 
 def private_replacements():
@@ -160,6 +168,12 @@ def export(destination):
                 if source.suffix in {'.pyc', '.log', '.pdb', '.cache'}:
                     continue
                 copy(source, relative / source.relative_to(folder))
+    # Optional Windows helper: exact source/docs allowlist. Never export its
+    # image archive, provisioned token/config, upload outbox or local databases.
+    worker = STACK / 'metadata-worker'
+    if worker.is_dir():
+        for name in METADATA_WORKER_FILES:
+            copy(worker / name, Path('deploy/media-stack/metadata-worker') / name)
     for source in Path('/etc/systemd/system').glob('media-*'):
         if source.is_file() and source.suffix in {'.service', '.timer'}:
             copy(source, Path('deploy/systemd') / source.name)

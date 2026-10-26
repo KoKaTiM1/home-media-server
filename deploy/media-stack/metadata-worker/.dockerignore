@@ -1,0 +1,8 @@
+**/__pycache__
+**/*.pyc
+config/config.local.json
+config/*.tmp
+data/**
+metadata-worker-image.tar.gz
+SHA256SUMS.json
+.git

@@ -197,3 +197,16 @@ is configured. Without one, a lost disk means recreating accounts, credentials
 and library configuration, rebuilding metadata/verification, and downloading
 media again. For state recovery, maintain a separate encrypted off-server
 backup; never commit that unencrypted data here.
+
+## Optional Windows metadata helper — USB preparation
+
+A [Windows Docker helper](deploy/media-stack/metadata-worker/README.md) has been
+prepared for offline installation from USB. It fetches title/episode metadata
+for leased assignments and retains pending results locally. This is staged
+work: the server coordinator/importer is not installed and LAN synchronization
+is not enabled. Existing playback verification and sync schedules continue.
+Follow [issue #2](../../issues/2) for physical Windows validation, server-side
+lease coordination, authenticated HTTPS and a measured first metadata batch.
+Metadata enrichment does not mark torrent sources playable or complete the
+initial verification audit. The source/protocol/launchers are backed up here;
+the USB's compiled image archive and all live credentials/state are excluded.
