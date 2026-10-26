@@ -100,6 +100,7 @@ verification rollout is issue #4. Production PC validation remains required
 before advertising a speedup.
 
 The physical PC completed a probe of a local media canary after the gateway's
-Docker-network allow rule was corrected. This confirms the decoder transport and
-result handoff, but it is not a proof for a torrent title. The 20-title live
-pilot remains bounded while real torrent samples and final proofs are checked.
+Docker-network allow rule was corrected. It then committed one full v5 episode
+proof from a real selected torrent, with beginning and later samples and fresh
+AAC-LC conversion. The 20-title live pilot remains bounded; completion, offline
+reconnect and throughput still need physical review before continuous assistance.
