@@ -83,8 +83,10 @@ checkpoint, not a failed source. Lost replies replay the same result identity.
    Configure one server and one Windows dispatcher, a bounded 20-title pilot,
    baseline restart/OOM counters and a host-memory floor. The guard pauses the
    optional worker if status is unavailable, a restart/OOM occurs, host available
-   RAM falls below 256 MiB, or TorrServer approaches its cap (80% pause / 70%
-   resume hysteresis). Review the completed pilot before enabling continuous
+   RAM falls below 256 MiB, or TorrServer's cgroup working memory approaches
+   its cap (80% pause / 70% resume hysteresis). The guard subtracts reclaimable
+   inactive file cache from raw cgroup usage and still pauses on a new OOM or
+   restart. Review the completed pilot before enabling continuous
    Windows assistance. The normal server worker remains available throughout.
 7. Deliver a regenerated private PC JSON, enroll its persisted identity, verify
    real PC results and fallback on stopping the PC. Preserve protected titles,
