@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-10-26T08:56:12.426195+00:00",
+  "created_utc": "2026-10-26T09:02:34.974435+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -18,7 +18,7 @@
     "deploy/media-stack/README.md": "227b30281ad063cc1179ea38eadca571a6eeda03a02ef9d43276a3fa613f4218",
     "deploy/media-stack/catalogue/Dockerfile": "e7b71a01824fdce8cfffa4cc2e669f9406eca50682fb5d68d8ebfed0ea95dc38",
     "deploy/media-stack/catalogue/README.md": "b39e9cd892e02d1902077c8c97f9f20e56da9edcd1d8be101713d4d3b40d1f52",
-    "deploy/media-stack/catalogue/app.py": "1e23195fde915c9b1c00414bd66070511d139f731b7c30f8138db180600cd737",
+    "deploy/media-stack/catalogue/app.py": "dfee14649adc326991407202d76ebfa1a5e96c20acc0cc8d44762e6edb4cd1bb",
     "deploy/media-stack/catalogue/bootstrap.py": "002cb58a203f36b9ee66d83900cf939a273e73e75637dfd8b342a67b48edfad9",
     "deploy/media-stack/catalogue/check_audio_conversion.py": "669463dd9be988b0becf34db0014739e559e2f1fa6c350be11d5dd4a81c4a899",
     "deploy/media-stack/catalogue/check_audio_subtitles.py": "f89e81cd25fa7767dddef438e63e8155a92e8689e5aeeaf5e27af306ed4eb02f",
@@ -38,7 +38,7 @@
     "deploy/media-stack/catalogue/test_features.py": "f80a03e2cd616aebd7e99e640c31b98f9adff2f77d7fc4900de9390fae2fe981",
     "deploy/media-stack/catalogue/test_feedback.py": "a6ba64b1d253e985880ef2ea3c1fd1e0ff2315201dc322f905ecd0a4a1f91ff1",
     "deploy/media-stack/catalogue/test_holds.py": "f3198fc27c4d422b199577ce11798486df691bd32e4dfc302ce30a64a8bff607",
-    "deploy/media-stack/catalogue/test_metadata_lan.py": "6658a929de9506856fba9a1efa2d72164ffbd85752791e690ece611159b184e0",
+    "deploy/media-stack/catalogue/test_metadata_lan.py": "52c2baa73576e20a844ed5a27a4a7d744a66bac29ecc6c2a6c438809e2d8249a",
     "deploy/media-stack/catalogue/test_multi_subtitles.py": "d44fad794d4295d97f9cedd3c0f5dd9261576e6b77a03b0164388cbf1d8e7613",
     "deploy/media-stack/catalogue/test_playback_deadlines.py": "f72077f10c227414c3a8096254df26680b3156eb9c0d7581a1234482cbdbded7",
     "deploy/media-stack/catalogue/test_recheck.py": "626214995e3ac3696dee65b7eaa985474755b6c7cdd57456b8e72c6ab533469d",
@@ -62,7 +62,7 @@
     "deploy/media-stack/metadata-worker/PROTOCOL.md": "ef21c634780e058bd00f83e996ea448f7671fb45ddfcd5a9953af0de3f8018d8",
     "deploy/media-stack/metadata-worker/README.md": "8d6fb6b9d51c030951b8f81fbe6f60b528a6fb3ae4fb54e21e2b3512e932de66",
     "deploy/media-stack/metadata-worker/START-HERE.txt": "2313e1ba39d493222a1201c70b9b891d0c48cfbb2f81b4b7408a9a26d07e7096",
-    "deploy/media-stack/metadata-worker/VALIDATION.txt": "0d5eefd0ae472bf7464a263156c1e1aea8a914e24837e4bdfc3eef7f835fabdf",
+    "deploy/media-stack/metadata-worker/VALIDATION.txt": "d74c8ab0a27c014614e347273a7d408713749de1d010bf731d78f20f892498a0",
     "deploy/media-stack/metadata-worker/checks/test_worker.py": "2ca983462133c969bfb0ecfbfcbfbd9cdddd9430cb5db21d2ca6df6b7a976f7f",
     "deploy/media-stack/metadata-worker/config/config.example.json": "700b4f0bfd40bf62c59df6e12c01d3a103ec44b745e10cad4b3e4b6ee2f98076",
     "deploy/media-stack/metadata-worker/server/README.md": "a20667cf405b1fb4a15a2d2bc8335230efb42df5f9d677ef9850cd52e78d2c44",

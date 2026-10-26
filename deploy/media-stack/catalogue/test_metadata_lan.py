@@ -164,6 +164,14 @@ class ImportTests(unittest.TestCase):
         with patch.object(app,'fetch',side_effect=AssertionError('Unexpected duplicate provider fetch')):
             with self.assertRaises(app.Checkpoint):app.metadata('series','tt0000001')
 
+    def test_real_preparation_preserves_metadata_wait_signal(self):
+        app.BUDGET.metadata_background=True;self.jobs.seen()
+        def resolve(*args,**kwargs):return app.metadata('series','tt0000001')
+        with patch.object(app,'resolve',side_effect=resolve):
+            with self.assertRaises(app.MetadataPending):app.prepared('series:tt0000001:1:1',background=True)
+        with app.REL.db() as conn:
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM preparation_work').fetchone()[0],0)
+
     def test_background_movie_uses_local_lease_and_normal_metadata_api(self):
         app.BUDGET.metadata_background=True
         with patch.object(app,'fetch',return_value={'meta':result(kind='movie',imdb='tt0000002')['metadata']}):

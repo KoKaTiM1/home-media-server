@@ -1040,6 +1040,10 @@ def prepared(key,background=False,audio_index=None,cancel=None):
                 if deadline-time.monotonic()<.1:raise PlaybackBusy('Preparation already in progress')
         try:
             with REL.lock(key):return prepare_locked(key,background,audio_index,deadline)
+        except MetadataPending:
+            # Preserve the scheduling signal through the real preparation
+            # wrapper; it must reach the worker's continue-with-other-title path.
+            raise
         except (Checkpoint,TimeoutError,subprocess.TimeoutExpired,ClientCancelled) as error:
             if not speculative:
                 F.enqueue(key,200)

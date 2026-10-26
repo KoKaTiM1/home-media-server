@@ -1,7 +1,7 @@
 LAN METADATA INTEGRATION VALIDATION - 2026-10-26
 
 PASS: owner confirmed Windows image installation and offline demo.
-PASS: 138 isolated catalogue regressions, including 22 coordinator/import tests.
+PASS: 139 isolated catalogue regressions, including 23 coordinator/import tests.
 PASS: 5 OMV monitor regressions; continuous receiver shown without a timer.
 PASS: real isolated HTTPS claim/upload, lost reply/restart, duplicate receipt,
       token revocation, exact metadata identity, expired leases and generations.
@@ -20,3 +20,7 @@ integration. Source validation remains separate; metadata never proves media.
 
 Original USB client image remains home-media-metadata-worker:0.1.0.
 No client image update is required for this connection protocol.
+
+PASS: actual preparation wrapper preserves metadata-wait scheduling signal.
+PASS: live server-only Money Trap metadata handoff accepted/imported (8 episodes);
+      this is not counted as a Windows upload.
