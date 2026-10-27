@@ -29,6 +29,25 @@ LOG=logging.getLogger('verification-worker');STOP=threading.Event()
 class TransportWait(Exception):pass
 class DecodeRejected(Exception):pass
 
+class ProgressLog:
+    """Persist every heartbeat, but repeat an unchanged console line at most once/minute."""
+    def __init__(self,emit,clock=time.monotonic):
+        self.emit=emit;self.clock=clock;self.previous=None;self.last=0
+    def write(self,message,job=None):
+        now=self.clock();event=(message,job)
+        if event!=self.previous or now-self.last>=60:
+            self.emit(message);self.previous=event;self.last=now
+
+def waiting_message(server):
+    if not server.get('enabled'):return 'Paused by server: '+server.get('reason','verification gate')
+    counts=server.get('jobs',{});active=counts.get('leased',0);ready=counts.get('pending',0)
+    limit=server.get('windows_capacity',1)
+    if active>=limit:return f'Waiting for decode slot: {active}/{limit} active; {ready} ready operations'
+    producers=server.get('producer_activity',{}).values()
+    preparing=sum(p.get('phase') in ('preparation','source preparation','torrent_resolution','video_probe') for p in producers)
+    if preparing:return f'Waiting for server source preparation: {preparing} titles preparing; {ready} ready operations'
+    return f'Waiting for ready operation: {active}/{limit} active; {ready} ready operations'
+
 def archive_stale_result(folder,task,result):
     quarantine=folder/'quarantine'
     quarantine.mkdir(exist_ok=True)
@@ -162,23 +181,30 @@ def main():
         if get('origin') not in (None,origin):raise ValueError('Use a new data folder for a new server')
         put('origin',origin)
         summary={'role':'actual-media-verification','completed_operations':get('completed',0),'last_update':time.time()}
+        progress_log=ProgressLog(lambda message:LOG.info('%s',message))
         def status(message):
+            if message in PHASES:
+                message+=f" | {summary.get('title_key','')} | worker acknowledged operations: {summary['completed_operations']}"
             summary.update(message=message,last_update=time.time())
             temporary=folder/'status.tmp';temporary.write_text(json.dumps(summary,indent=2));temporary.replace(folder/'status.json')
-            LOG.info('%s',message)
+            progress_log.write(message,summary.get('job_id'))
         while not STOP.is_set():
             try:
                 row=db.execute('SELECT task,result FROM current WHERE id=1').fetchone()
                 if not row:
-                    reply=api.request('/claim',{'worker_id':worker});task=reply.get('task')
+                    reply=api.request('/claim',{'worker_id':worker,'wait_seconds':15});task=reply.get('task')
                     server_status=reply.get('status',{});summary['server']=server_status
+                    totals=server_status.get('totals',{})
+                    summary['server_final_titles']={'verified':totals.get('windows_titles_verified',0),'unavailable':totals.get('windows_titles_unavailable',0)}
                     if not task:
-                        status('Waiting for work' if server_status.get('enabled') else 'Waiting: '+server_status.get('reason','server gate'))
-                        STOP.wait(10);continue
+                        summary.update(title_key=None,operation=None,job_id=None)
+                        finals=summary['server_final_titles']
+                        status(waiting_message(server_status)+f" | server final titles: {finals['verified']} verified, {finals['unavailable']} unavailable")
+                        STOP.wait(1 if server_status.get('enabled') else 10);continue
                     with db:db.execute('INSERT INTO current VALUES(1,?,NULL)',(json.dumps(task),))
                     row=(json.dumps(task),None)
                 task=json.loads(row[0]);result=json.loads(row[1]) if row[1] else None
-                summary['title_key']=task['key'];summary['operation']=task['operation']
+                summary.update(title_key=task['key'],last_title_key=task['key'],operation=task['operation'],job_id=task['job_id'])
                 if result is None:
                     if not api.request('/renew',{'worker_id':worker,'task':task})['active']:result={'status':'checkpoint'}
                     else:result=run_task(api,worker,task,status)
@@ -191,7 +217,7 @@ def main():
                         completed=get('completed',0)+1
                         db.execute('INSERT OR REPLACE INTO settings VALUES (?,?)',('completed',json.dumps(completed)))
                         db.execute('DELETE FROM current WHERE id=1')
-                    summary['completed_operations']=completed;status('Server acknowledged '+task['operation']+' ('+result['status']+')')
+                    summary['completed_operations']=completed;status('Server acknowledged '+task['operation']+' ('+result['status']+'); '+str(completed)+' operations acknowledged on this worker (not final titles)')
                 elif reply.get('ack')=='stale':
                     try:
                         archive_stale_result(folder,task,result)

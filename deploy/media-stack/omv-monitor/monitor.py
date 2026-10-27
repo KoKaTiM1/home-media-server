@@ -286,7 +286,8 @@ def overview(data=DATA,snapshot=None):
         with closing(sqlite3.connect('file:'+str(queue)+'?mode=ro',uri=True,timeout=1)) as conn:
             conn.row_factory=sqlite3.Row
             totals=dict(conn.execute('SELECT key,value FROM totals'))
-            control={key:json.loads(value) for key,value in conn.execute("SELECT key,value FROM control WHERE key IN ('enabled','reason','max_windows_jobs')")}
+            control={key:json.loads(value) for key,value in conn.execute("SELECT key,value FROM control WHERE key IN ('enabled','reason','max_windows_jobs','prefetch_per_lane') OR key LIKE 'producer:%'")}
+            queue_counts=dict(conn.execute("SELECT state,COUNT(*) FROM decode_jobs WHERE controller>? AND deadline>? GROUP BY state",(now,now)))
             seen=[]
             # Count every separately enrolled Windows lane. Older dashboard
             # code only read the original two tables and reported 2/2 even
@@ -302,6 +303,9 @@ def overview(data=DATA,snapshot=None):
         add('Windows worker','Connected' if connected else 'Offline',control.get('reason','Waiting for resource gate') if connected else 'Server verification continues without the PC','success' if connected and control.get('enabled') else 'muted')
         capacity=max(1,min(4,int(control.get('max_windows_jobs',1))))
         add('Windows lanes',f'{online} / {capacity}','Connected verifier containers / allowed simultaneous Windows operations','success' if online and control.get('enabled') else 'muted')
+        queue_capacity=capacity*max(1,min(2,int(control.get('prefetch_per_lane',1))))
+        preparing=sum(k.startswith('producer:') and v.get('updated',0)>now-45 and v.get('phase') in ('source preparation','preparation','torrent_resolution','video_probe') for k,v in control.items() if isinstance(v,dict))
+        add('Windows decode queue',f"{queue_counts.get('leased',0)} active / {queue_counts.get('pending',0)} ready",f'Active limit {capacity}; total queue limit {queue_capacity}; server preparing {preparing} titles')
         if active:
             key=active['key'];details=context(data,cache_key='remote-validation-worker')
             title=details.get('name') if details.get('key')==key else None

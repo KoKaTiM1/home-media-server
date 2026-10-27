@@ -93,12 +93,15 @@ class MonitorTests(unittest.TestCase):
                 c.execute('CREATE TABLE decode_jobs(key TEXT,operation TEXT,params TEXT,state TEXT,created REAL,stream_started REAL,phase TEXT,phase_at REAL,controller REAL,outcome TEXT,reason_code TEXT,finished REAL,url TEXT)')
                 c.execute('INSERT INTO decode_jobs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',('series:tt1234567:1:2','sample',json.dumps({'position':140}),'leased',now-20,now-15,'sample decode',now-10,now+30,'','',0,'private-signed-url'))
                 c.execute('INSERT INTO decode_jobs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',('movie:tt1234568','probe','{}','consumed',now-120,0,'video probe',now-100,0,'checkpoint','transport',now-90,''))
+            with sqlite3.connect(queue/'queue.sqlite') as c:
+                c.execute('ALTER TABLE decode_jobs ADD COLUMN deadline REAL DEFAULT 9999999999')
             activity={'key':'series:tt1234567:1:2','name':'Example Show S1E2','position':2,'batch':8,'preparation':{'received_bytes':3145728}}
             with patch.object(m,'context',return_value=activity):rows=m.overview(data,snapshot)
             values={row['name']:row for row in rows}
             self.assertEqual(values['Final v5 verified']['value'],'12')
             self.assertEqual(values['Not yet v5 verified']['value'],'88')
             self.assertEqual(values['Windows final passes']['value'],'4')
+            self.assertEqual(values['Windows decode queue']['value'],'1 active / 0 ready')
             self.assertIn('Decoding later sample',values['Windows working on']['detail'])
             self.assertIn('3.0 MiB received',values['Windows working on']['detail'])
             self.assertIn('Run 8',values['Windows batch']['value'])

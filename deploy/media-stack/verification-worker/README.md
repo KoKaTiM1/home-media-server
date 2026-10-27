@@ -39,11 +39,12 @@ requests new work. Older versions stop progressing when the local stale-result
 archive reaches 64 files. Update the image over the existing folder and retain
 `config/` and `data/` so the worker identity and pending result survive.
 
-Additional Windows lanes use the same installed 0.2.1 image and private
+Additional Windows lanes use the same installed image and private
 connection file, each with a separate `data-N/` identity and container. The
 server supports up to four Windows jobs, but the live resource gate is raised in
-stages: keep the current two lanes, add lane three and review its bounded pilot,
-then add lane four only if TorrServer memory and reliability remain healthy.
+stages: review three active lanes before enabling a fourth. Connected containers are
+consumers of a shared queue; four connected containers do not mean four active
+decode slots. The guard independently caps simultaneous leases.
 Never copy a `data/` folder between lanes; each identity owns its checkpoint and
 pending result. The launchers are `08-START-SECOND.cmd`, `11-START-THIRD.cmd`,
 and `14-START-FOURTH.cmd`, with matching stop/status commands. The first lane
@@ -68,6 +69,31 @@ phases on lease renewals every 10 seconds and a small fixed reason category for
 checkpoints or decoder rejections. The earlier PC image remains compatible but
 only the server-inferred operation stage appears until it is updated. No raw
 FFmpeg output, signed source URL or unrestricted error text reaches OMV.
+
+## Queue and progress update (0.2.2)
+
+The server can stage up to two operations per active lane, with a maximum of
+three active leases during the current pilot. Extra producers resolve independent
+titles ahead of time; a queued operation retains its server controller, exact
+source binding, deadline and exclusive title claim. No whole-title batch is
+handed to a PC. Each container runs one operation at a time. Expired leases are
+fenced and the server resumes the title later; a late result cannot overwrite a
+new lease. The existing progress/foreground/resource guards remain in force.
+
+Claims can wait up to 15 seconds on the gateway, checking for new ready work
+within that period. Queue waiting does not consume the source download stall
+clock. The 0.2.2 client immediately asks again after an enabled empty claim.
+Repeated identical idle messages are logged at most once per minute; local
+status continues updating. Messages distinguish source preparation, a busy
+decode slot, no ready operation and a paused resource gate. Acknowledged
+operations are explicitly separate from the server's final title totals.
+
+To update, extract the private 0.2.2 package over the existing folder, run
+`01-INSTALL.cmd`, then `17-UPDATE-RUNNING.cmd`. The latter restarts only verifier
+containers that were running, retaining all `data/`, `data-N/` and `config/`
+folders and leaving stopped lanes stopped. Older clients remain compatible;
+new console messages require the new image. Physical Windows installation must
+be checked separately from server-side deployment.
 
 ## Restricted transport and evidence
 

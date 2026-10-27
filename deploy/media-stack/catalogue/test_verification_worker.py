@@ -55,6 +55,52 @@ class QueueTests(unittest.TestCase):
         self.q.submit('movie:tt0000002',SID,'probe',{},'http://127.0.0.1:8092/raw/movie:tt0000002',120)
         with self.assertRaises(WorkerWait):
             self.q.submit('movie:tt0000003',SID,'probe',{},'http://127.0.0.1:8092/raw/movie:tt0000003',120)
+    def test_prefetched_queue_cannot_exceed_active_limit_with_four_clients(self):
+        self.q.set('max_windows_jobs',3);self.q.set('prefetch_per_lane',2)
+        workers=[WORKER,'pc-two','pc-three','pc-four']
+        for worker in workers:self.q.seen(worker)
+        for n in range(6):self.q.submit(f'movie:tt00000{n:02}',SID,'probe',{},f'http://127.0.0.1:8092/raw/movie:tt00000{n:02}',120)
+        self.assertEqual(self.q.status()['windows_queue_capacity'],6)
+        with self.assertRaises(WorkerWait):self.submit()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:tasks=list(pool.map(self.q.claim,workers))
+        self.assertEqual(sum(t is not None for t in tasks),3)
+        owner,task=next((w,t) for w,t in zip(workers,tasks) if t)
+        idle=next(w for w,t in zip(workers,tasks) if t is None)
+        self.assertEqual(self.q.receive(owner,task,self.result()),'accepted')
+        following=self.q.claim(idle)
+        self.assertIsNotNone(following)
+        self.assertNotEqual(following['job_id'],task['job_id'])
+        self.assertEqual(self.q.status()['jobs']['leased'],3)
+    def test_waiting_claim_gets_fresh_job_and_stops_at_gate(self):
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            waiting=pool.submit(gateway.claim_wait,self.q,WORKER,2)
+            time.sleep(.1);job=self.submit()
+            self.assertEqual(waiting.result(timeout=1)['job_id'],job)
+        self.q.finish(job);self.q.set('enabled',False)
+        self.assertIsNone(gateway.claim_wait(self.q,WORKER,15))
+    def test_queue_wait_does_not_consume_source_stall_clock(self):
+        import verification_remote as remote
+        from reliability import Checkpoint,SourceStalled
+        selected={'hash':'a'*40,'index':1,'filename':'file.mkv','length':100}
+        real_poll=self.q.poll;polls=[0]
+        def poll(job):
+            polls[0]+=1
+            if polls[0]>=3:raise Checkpoint('test queue wait ended')
+            return real_poll(job)
+        with patch.object(remote,'jobs',return_value=self.q),patch.object(self.q,'poll',side_effect=poll),patch.object(remote,'STALL_SECONDS',.001),patch.object(remote.time,'sleep',side_effect=lambda _:None),patch.object(a.REL,'source_url',return_value='http://127.0.0.1:8092/raw/'+KEY),patch.object(a.REL,'cache_state',return_value={}),patch.object(a.REL,'checkpoint'),patch.object(a,'remaining',return_value=1),patch.object(a,'cached',return_value=None):
+            with self.assertRaisesRegex(Checkpoint,'test queue wait ended'):
+                remote.execute(a.__dict__,KEY,selected,'probe',{},time.monotonic()+5)
+        self.assertEqual(polls[0],3)
+    def test_progress_logs_suppress_idle_spam_but_show_new_jobs(self):
+        messages=[];clock=[0]
+        progress=client.ProgressLog(messages.append,lambda:clock[0])
+        for at in (0,10,20,59,60):clock[0]=at;progress.write('waiting')
+        self.assertEqual(messages,['waiting','waiting'])
+        progress.write('video probe','job-one');progress.write('video probe','job-two')
+        self.assertEqual(messages[-2:],['video probe','video probe'])
+        self.assertIn('Paused by server',client.waiting_message({'enabled':False,'reason':'pilot complete'}))
+        self.assertIn('source preparation',client.waiting_message({'enabled':True,'producer_activity':{'1':{'phase':'torrent_resolution'}}}))
+        self.assertIn('decode slot',client.waiting_message({'enabled':True,'windows_capacity':3,'jobs':{'leased':3,'pending':2}}))
     def test_receipt_replay_after_consumption_and_conflict_rejected(self):
         job=self.submit();task=self.q.claim(WORKER);result=self.result()
         self.assertEqual(self.q.receive(WORKER,task,result),'accepted');self.q.finish(job,True)

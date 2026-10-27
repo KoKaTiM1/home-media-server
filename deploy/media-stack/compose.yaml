@@ -87,6 +87,7 @@ services:
       - ./catalogue/app.py:/app/app.py:ro
       - ./catalogue/features.py:/app/features.py:ro
       - ./catalogue/verification_jobs.py:/app/verification_jobs.py:ro
+      - ./catalogue/verification_remote.py:/app/verification_remote.py:ro
       - /srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>:/storage
     secrets:
       - catalogue_signing

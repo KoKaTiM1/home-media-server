@@ -12,11 +12,24 @@ import select
 import socket
 import ssl
 import threading
+import time
 from urllib.parse import urlsplit
 from verification_jobs import DecodeJobs,InvalidJob,PROTOCOL,PREFIX
 
+def claim_wait(jobs,worker,seconds):
+    task=jobs.claim(worker);end=time.monotonic()+seconds
+    while task is None and time.monotonic()<end:
+        status=jobs.status()
+        if not status['enabled']:break
+        if status['jobs'].get('pending',0) and status['jobs'].get('leased',0)<status['windows_capacity']:
+            task=jobs.claim(worker)
+            if task:break
+        time.sleep(min(.25,max(0,end-time.monotonic())))
+    return task
+
 class Server(ThreadingHTTPServer):
     daemon_threads=True
+    request_queue_size=16
     def verify_request(self,request,address):return address[0] in self.allowed and self.slots.acquire(blocking=False)
     def process_request_thread(self,request,address):
         try:
@@ -55,7 +68,10 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(p,dict) or p.get('protocol')!=PROTOCOL:raise InvalidJob('Invalid protocol')
             worker=p.get('worker_id');q=self.server.jobs;q.seen(worker)
             if self.path==PREFIX+'/claim':
-                task=q.claim(worker);return self.reply(200,{'task':task,'status':q.status()})
+                wait=p.get('wait_seconds',10)
+                if not isinstance(wait,(int,float)) or not 0<=wait<=15:raise InvalidJob('Invalid claim wait')
+                task=claim_wait(q,worker,wait)
+                return self.reply(200,{'task':task,'status':q.status()})
             if self.path==PREFIX+'/renew':return self.reply(200,{'active':q.renew(worker,p.get('task',{}),p.get('phase'))})
             if self.path==PREFIX+'/result':
                 result=p.get('result',{});ack=q.receive(worker,p.get('task',{}),result)
@@ -116,7 +132,7 @@ def main():
     cfg=json.loads(Path(args.config).read_text());creds=Path(os.environ['CREDENTIALS_DIRECTORY'])
     q=DecodeJobs(cfg['queue_path']);q.initialize()
     server=Server((cfg['bind'],cfg['port']),Handler);server.jobs=q;server.allowed=set(cfg['allowed_clients']);server.bridge=cfg['bridge_url']
-    server.slots=threading.BoundedSemaphore(12)
+    server.slots=threading.BoundedSemaphore(16)
     server.auth=hashlib.sha256(('Bearer '+(creds/'verification-token').read_text().strip()).encode()).digest()
     ctx=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);ctx.minimum_version=ssl.TLSVersion.TLSv1_2
     ctx.load_cert_chain(creds/'tls-cert',creds/'tls-key');server.context=ctx

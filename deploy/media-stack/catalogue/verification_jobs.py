@@ -63,12 +63,23 @@ class DecodeJobs:
         with self.db() as c:
             seen=[row[0] for table in CLIENT_TABLES for row in c.execute('SELECT seen FROM '+table)]
             online=sum(value>now-45 for value in seen)
+            capacity=max(1,min(4,int(self.setting(c,'max_windows_jobs',1))))
+            producers={k.removeprefix('producer:'):json.loads(v) for k,v in c.execute("SELECT key,value FROM control WHERE key LIKE 'producer:%'")}
+            producers={k:v for k,v in producers.items() if v.get('updated',0)>now-45}
             return {'protocol':PROTOCOL,'enabled':self.setting(c,'enabled',False),'reason':self.setting(c,'reason','Awaiting memory gate / Windows pilot'),
                     'windows_seen':max(seen,default=0), 'windows_online':online>0,'windows_slots_online':online,
-                    'windows_capacity':max(1,min(4,int(self.setting(c,'max_windows_jobs',1)))),
+                    'windows_capacity':capacity,'windows_queue_capacity':self.queue_capacity(c),
+                    'producer_activity':producers,
                     'activity':self.setting(c,'activity',{}),'backlog':self.setting(c,'backlog',{}),
                     'jobs':dict(c.execute('SELECT state,COUNT(*) FROM decode_jobs GROUP BY state').fetchall()),
                     'totals':dict(c.execute('SELECT key,value FROM totals').fetchall())}
+    def queue_capacity(self,c):
+        capacity=max(1,min(4,int(self.setting(c,'max_windows_jobs',1))))
+        return capacity*max(1,min(2,int(self.setting(c,'prefetch_per_lane',1))))
+    def producer(self,slot,key,phase):
+        if slot not in range(1,9) or not re.fullmatch('(movie:tt[0-9]{5,12}|series:tt[0-9]{5,12}:[0-9]+:[0-9]+)',key):raise InvalidJob('Invalid producer')
+        if phase not in ('source preparation','torrent_resolution','video_probe','preparation','waiting for decoder','probe','sample','finished'):raise InvalidJob('Invalid producer phase')
+        self.set('producer:'+str(slot),{'key':key,'phase':phase,'updated':time.time()})
     def seen(self,worker):
         if not isinstance(worker,str) or not re.fullmatch('[a-zA-Z0-9_.:-]{1,128}',worker):raise InvalidJob('Invalid worker')
         with self.db(True) as c:
@@ -88,7 +99,7 @@ class DecodeJobs:
             if not self.setting(c,'enabled',False) or seen<now-45:raise WorkerWait('Windows verification worker offline or gated')
             c.execute("DELETE FROM decode_jobs WHERE created<? AND state IN ('consumed','cancelled')",(now-7*86400,))
             active=c.execute("SELECT COUNT(*) FROM decode_jobs WHERE state IN ('pending','leased') AND controller>?",(now,)).fetchone()[0]
-            if active>=max(1,min(4,int(self.setting(c,'max_windows_jobs',1)))):raise WorkerWait('Windows decode lanes busy')
+            if active>=self.queue_capacity(c):raise WorkerWait('Windows ready queue full')
             if c.execute("SELECT COUNT(*) FROM decode_jobs WHERE state IN ('pending','leased','result')").fetchone()[0]>=16:raise WorkerWait('Decode work capacity reached')
             c.execute('INSERT INTO decode_jobs(id,key,sid,operation,params,url,state,created,controller,deadline,phase,phase_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
                       (job,key,sid,operation,json.dumps(params),url,'pending',now,now+30,now+min(480,max(1,seconds)),'queued',now))
@@ -102,6 +113,10 @@ class DecodeJobs:
             if old:return self.public(old)
             # An expired lease is fenced; its controller must restart this operation.
             c.execute("UPDATE decode_jobs SET state='cancelled' WHERE state='leased' AND expires<=?",(now,))
+            # Queue capacity and active decode capacity are independent. Extra
+            # ready work never lets a fourth client bypass a three-slot gate.
+            active=c.execute("SELECT COUNT(*) FROM decode_jobs WHERE state='leased'").fetchone()[0]
+            if active>=max(1,min(4,int(self.setting(c,'max_windows_jobs',1)))):return None
             r=c.execute("SELECT * FROM decode_jobs WHERE state='pending' ORDER BY created LIMIT 1").fetchone()
             if not r:return None
             lease=uuid.uuid4().hex

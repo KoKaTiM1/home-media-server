@@ -879,10 +879,12 @@ class Features:
         if remote:
             from verification_remote import ready,jobs
             status=jobs(self.g).status()
-            if not ready(self.g) or status.get('windows_slots_online',0)<slot or status.get('windows_capacity',1)<slot:return
+            if (not ready(self.g) or status.get('windows_slots_online',0)<min(slot,status.get('windows_capacity',1))
+                or status.get('windows_queue_capacity',status.get('windows_capacity',1))<slot):return
         worker_key=('remote-validation-worker' if slot==1 else 'remote-validation-worker-'+str(slot)) if remote else 'validation-worker'
         lock_name=('remote-validation.lock' if slot==1 else 'remote-validation-'+str(slot)+'.lock') if remote else 'validation.lock'
         self.g['BUDGET'].remote_verification=remote
+        self.g['BUDGET'].remote_slot=slot
         self.consume_rechecks()
         # flock survives separate cron/docker exec processes. Interrupted rows
         # remain due and resume automatically; no in-memory-only work cursor.
@@ -964,6 +966,9 @@ class Features:
                         if time.monotonic()-last_claim_renew[0]>=10:
                             if not self.renew_verification(key,claim):return True
                             last_claim_renew[0]=time.monotonic()
+                            if remote:
+                                from verification_remote import producer_phase
+                                producer_phase(self.g,key)
                         if remote:
                             from verification_remote import ready
                             if not ready(self.g):return True
@@ -1012,6 +1017,9 @@ class Features:
                         jobs(self.g).count('windows_titles_unavailable')
                 finally:
                     self.release_verification(key,claim)
+                    if remote:
+                        from verification_remote import producer_phase
+                        producer_phase(self.g,key,'finished')
                 checked+=1
                 self.remember(worker_key,{'key':key,'started':time.time(),'position':checked,'batch':batch_number,'message':'Last probe finished; proceeding to next queue entry'},180)
                 time.sleep(2)

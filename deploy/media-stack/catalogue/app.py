@@ -138,6 +138,9 @@ def playback_event(key,phase,started,outcome,error=None):
 @contextmanager
 def playback_phase(key,phase):
     started=time.monotonic()
+    if getattr(BUDGET,'remote_verification',False) and phase in ('preparation','torrent_resolution','video_probe'):
+        from verification_remote import producer_phase
+        producer_phase(globals(),key,phase)
     try:
         yield
     except Exception as error:
@@ -1626,7 +1629,7 @@ def main():
     parser.add_argument('command',choices=('serve','sync','collections','badges','trailers','discovery-sync','availability','downloads','imdb-sync','metadata-import','remote-availability'),default='serve',nargs='?')
     parser.add_argument('--movies',type=int,default=1000)
     parser.add_argument('--shows',type=int,default=200)
-    parser.add_argument('--slot',type=int,choices=(1,2,3,4),default=1)
+    parser.add_argument('--slot',type=int,choices=range(1,9),default=1)
     args=parser.parse_args()
     BUDGET.metadata_background=args.command!='serve'
     if args.command=='metadata-import':
