@@ -1,0 +1,10 @@
+[Unit]
+Description=Dispatch optional Windows verification lane 4
+
+[Timer]
+OnBootSec=5min
+OnUnitInactiveSec=15s
+AccuracySec=3s
+
+[Install]
+WantedBy=timers.target

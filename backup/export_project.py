@@ -33,6 +33,8 @@ VERIFICATION_WORKER_FILES = (
     'coordinator.py', 'resource_guard.py', 'verification_worker.py', 'worker.ps1',
     '01-INSTALL.cmd', '04-START.cmd', '05-STATUS.cmd', '06-LOGS.cmd', '07-STOP.cmd',
     '08-START-SECOND.cmd', '09-STOP-SECOND.cmd', '10-STATUS-SECOND.cmd',
+    '11-START-THIRD.cmd', '12-STOP-THIRD.cmd', '13-STATUS-THIRD.cmd',
+    '14-START-FOURTH.cmd', '15-STOP-FOURTH.cmd', '16-STATUS-FOURTH.cmd',
 )
 
 

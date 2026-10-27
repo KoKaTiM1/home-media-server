@@ -878,9 +878,10 @@ class Features:
     def warm_availability(self,limit=20,remote=False,slot=1):
         if remote:
             from verification_remote import ready,jobs
-            if not ready(self.g) or (slot==2 and jobs(self.g).status().get('windows_slots_online',0)<2):return
-        worker_key=('remote-validation-worker'+('-2' if slot==2 else '')) if remote else 'validation-worker'
-        lock_name=('remote-validation-2.lock' if slot==2 else 'remote-validation.lock') if remote else 'validation.lock'
+            status=jobs(self.g).status()
+            if not ready(self.g) or status.get('windows_slots_online',0)<slot or status.get('windows_capacity',1)<slot:return
+        worker_key=('remote-validation-worker' if slot==1 else 'remote-validation-worker-'+str(slot)) if remote else 'validation-worker'
+        lock_name=('remote-validation.lock' if slot==1 else 'remote-validation-'+str(slot)+'.lock') if remote else 'validation.lock'
         self.g['BUDGET'].remote_verification=remote
         self.consume_rechecks()
         # flock survives separate cron/docker exec processes. Interrupted rows

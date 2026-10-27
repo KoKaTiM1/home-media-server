@@ -39,15 +39,15 @@ requests new work. Older versions stop progressing when the local stale-result
 archive reaches 64 files. Update the image over the existing folder and retain
 `config/` and `data/` so the worker identity and pending result survive.
 
-The optional second-lane launcher uses the same installed 0.2.1 image and
-private connection file, but a separate `data-2/` identity and container.
-Overlay `verification-worker-second-lane-launcher.zip` on the existing Windows
-folder, preserving `config/` and `data/`. `08-START-SECOND.cmd` starts that lane;
-`09-STOP-SECOND.cmd` stops only it; `10-STATUS-SECOND.cmd` reads its status.
-The first lane keeps its original commands and data folder. The server's resource
-gate remains at one Windows operation until both containers are connected and
-the bounded two-lane pilot is enabled. Do not copy `data/` into `data-2/` because
-that would reuse the same worker identity and pending result.
+Additional Windows lanes use the same installed 0.2.1 image and private
+connection file, each with a separate `data-N/` identity and container. The
+server supports up to four Windows jobs, but the live resource gate is raised in
+stages: keep the current two lanes, add lane three and review its bounded pilot,
+then add lane four only if TorrServer memory and reliability remain healthy.
+Never copy a `data/` folder between lanes; each identity owns its checkpoint and
+pending result. The launchers are `08-START-SECOND.cmd`, `11-START-THIRD.cmd`,
+and `14-START-FOURTH.cmd`, with matching stop/status commands. The first lane
+keeps the original `data/` folder and commands.
 Newly created containers use Docker's `unless-stopped` policy: after Docker
 Desktop starts following an outage, a previously running worker resumes using
 its saved result. A deliberate `07-STOP.cmd` or `09-STOP-SECOND.cmd` keeps that
@@ -116,8 +116,9 @@ checkpoint, not a failed source. Lost replies replay the same result identity.
    resource gate starts unapproved. New background commands use the installed
    source; apply updated HTTP reader cleanup in a confirmed safe viewing window.
 6. Investigate and approve the memory gate before allowing parallel source reads.
-   Configure one server and one Windows dispatcher, a bounded 20-title pilot,
-   baseline restart/OOM counters and a host-memory floor. The guard pauses the
+   Configure one server and staged Windows dispatchers, beginning with a
+   bounded pilot and baseline restart/OOM counters. Enable Windows lanes one at
+   a time only after checking TorrServer working memory and host headroom. The guard pauses the
    optional worker if status is unavailable, a restart/OOM occurs, host available
    RAM falls below 256 MiB, or TorrServer's cgroup working memory approaches
    its cap (80% pause / 70% resume hysteresis). The guard subtracts reclaimable

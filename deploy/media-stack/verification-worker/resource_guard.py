@@ -34,11 +34,11 @@ def main():
         elif working>limit*(.8 if status['enabled'] else .7):reason='TorrServer memory pressure; Windows verification paused'
         else:
             permitted=True
-            lanes=max(1,min(2,int(cfg.get('max_windows_jobs',1))))
+            lanes=max(1,min(4,int(cfg.get('max_windows_jobs',1))))
             reason=f'Parallel verification permitted: one server and up to {lanes} Windows '+('job' if lanes==1 else 'jobs')
     except Exception:reason='Resource status unavailable; Windows verification paused'
     q.set('enabled',permitted);q.set('reason',reason);q.set('health',health)
-    q.set('max_windows_jobs',max(1,min(2,int(cfg.get('max_windows_jobs',1)))))
+    q.set('max_windows_jobs',max(1,min(4,int(cfg.get('max_windows_jobs',1)))))
     print(reason)
 
 if __name__=='__main__':main()

@@ -12,6 +12,8 @@ The server still owns source selection, all library data and final proofs.
    shows final verified counts, the current operation and its decoder stage.
 5. 05-STATUS.cmd shows counters; 06-LOGS.cmd follows live activity.
    Ctrl+C closes the activity view only. 07-STOP.cmd stops the worker.
+6. Optional lanes 2–4 have separate START/STOP/STATUS launchers. Start a new
+   lane only when the server owner enables it; preserve each data-N folder.
 
 Windows is optional: stopping it or shutting down the PC leaves the server
 working. Keep data/ for identity and retained results across restarts.

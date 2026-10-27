@@ -1,10 +1,10 @@
 param([ValidateSet('Install','Start','Status','Logs','Stop')][string]$Action='Status',
-      [ValidateSet(1,2)][int]$Slot=1)
+      [ValidateSet(1,2,3,4)][int]$Slot=1)
 $ErrorActionPreference='Stop'
 $Root=$PSScriptRoot
 $Image='home-media-verification-worker:0.2.1'
-$Name=if($Slot -eq 2){'home-media-verification-worker-2'}else{'home-media-verification-worker'}
-$DataLeaf=if($Slot -eq 2){'data-2'}else{'data'}
+$Name=if($Slot -eq 1){'home-media-verification-worker'}else{'home-media-verification-worker-'+$Slot}
+$DataLeaf=if($Slot -eq 1){'data'}else{'data-'+$Slot}
 $DataDirectory=Join-Path $Root $DataLeaf
 function Invoke-DockerExecutable { & docker.exe @args; if($LASTEXITCODE -ne 0){throw 'Docker failed. See the message above.'} }
 function Existing {

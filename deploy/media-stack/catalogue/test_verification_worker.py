@@ -37,23 +37,24 @@ class QueueTests(unittest.TestCase):
         job=self.submit()
         with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:tasks=list(pool.map(lambda _:self.q.claim(WORKER),range(6)))
         self.assertEqual({t['job_id'] for t in tasks},{job});self.assertEqual(len({t['lease_id'] for t in tasks}),1)
-    def test_two_enrolled_windows_workers_claim_distinct_operations(self):
+    def test_four_enrolled_windows_workers_claim_distinct_operations(self):
+        workers=[WORKER,'isolated-windows-2','isolated-windows-3','isolated-windows-4']
+        for worker in workers[1:]:self.q.seen(worker)
+        self.q.set('max_windows_jobs',4)
+        self.assertEqual(self.q.status()['windows_slots_online'],4)
+        with self.assertRaises(InvalidJob):self.q.seen('unapproved-fifth-worker')
+        jobs=[self.submit()]
+        for n in range(2,5):jobs.append(self.q.submit(f'movie:tt000000{n}',SID,'probe',{},f'http://127.0.0.1:8092/raw/movie:tt000000{n}',120))
+        tasks=[self.q.claim(worker) for worker in workers]
+        self.assertEqual([task['job_id'] for task in tasks],jobs)
+        self.assertEqual(len({task['lease_id'] for task in tasks}),4)
+        for worker,task in zip(workers,tasks):self.assertEqual(self.q.receive(worker,task,self.result()),'accepted')
+    def test_lanes_above_guard_limit_are_not_queued(self):
         second='isolated-windows-2';self.q.seen(second);self.q.set('max_windows_jobs',2)
-        self.assertEqual(self.q.status()['windows_slots_online'],2)
-        with self.assertRaises(InvalidJob):self.q.seen('unapproved-third-worker')
-        first_job=self.submit()
-        second_job=self.q.submit('movie:tt0000002',SID,'probe',{},'http://127.0.0.1:8092/raw/movie:tt0000002',120)
-        first_task=self.q.claim(WORKER);second_task=self.q.claim(second)
-        self.assertEqual(first_task['job_id'],first_job)
-        self.assertEqual(second_task['job_id'],second_job)
-        self.assertNotEqual(first_task['lease_id'],second_task['lease_id'])
-        self.assertEqual(self.q.receive(WORKER,first_task,self.result()),'accepted')
-        self.assertEqual(self.q.receive(second,second_task,self.result()),'accepted')
-    def test_second_lane_stays_closed_until_resource_gate_approves_it(self):
-        self.q.seen('isolated-windows-2')
         self.submit()
+        self.q.submit('movie:tt0000002',SID,'probe',{},'http://127.0.0.1:8092/raw/movie:tt0000002',120)
         with self.assertRaises(WorkerWait):
-            self.q.submit('movie:tt0000002',SID,'probe',{},'http://127.0.0.1:8092/raw/movie:tt0000002',120)
+            self.q.submit('movie:tt0000003',SID,'probe',{},'http://127.0.0.1:8092/raw/movie:tt0000003',120)
     def test_receipt_replay_after_consumption_and_conflict_rejected(self):
         job=self.submit();task=self.q.claim(WORKER);result=self.result()
         self.assertEqual(self.q.receive(WORKER,task,result),'accepted');self.q.finish(job,True)
