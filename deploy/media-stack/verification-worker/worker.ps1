@@ -35,7 +35,7 @@ try {
    New-Item -ItemType Directory -Force $DataDirectory|Out-Null
    $Cfg='type=bind,source='+(Join-Path $Root 'config')+',target=/config,readonly'
    $Data='type=bind,source='+$DataDirectory+',target=/data'
-   Invoke-DockerExecutable run --detach --name $Name --label 'home-media.component=verification-worker' --restart no --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 96 --memory 512m --cpus 2 --log-opt max-size=2m --log-opt max-file=2 --tmpfs '/tmp:rw,nosuid,nodev,size=128m' --mount $Cfg --mount $Data $Image run
+   Invoke-DockerExecutable run --detach --name $Name --label 'home-media.component=verification-worker' --restart unless-stopped --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 96 --memory 512m --cpus 2 --log-opt max-size=2m --log-opt max-file=2 --tmpfs '/tmp:rw,nosuid,nodev,size=128m' --mount $Cfg --mount $Data $Image run
   }
   Write-Host 'Verification worker is running. Live activity follows; Ctrl+C closes this view while the worker continues.'
   & docker logs --follow --tail 12 $Name

@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-10-27T05:30:42.135576+00:00",
+  "created_utc": "2026-10-27T05:34:50.618209+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -104,13 +104,13 @@
     "deploy/media-stack/verification-worker/09-STOP-SECOND.cmd": "9f8b2eeecfb3fd0300e39a02eb90468e48b89969c86f9567f9e25398c53f9deb",
     "deploy/media-stack/verification-worker/10-STATUS-SECOND.cmd": "5271281a72b2a8dd9e67aa0192354f10b6c0a23a74aa4aeaff42f10b3c5d8710",
     "deploy/media-stack/verification-worker/Dockerfile": "8427129ff91b5770865b325c8de840dc2ca8b0013f42b29dbd8dd9d3fde0c19b",
-    "deploy/media-stack/verification-worker/README.md": "4d636bc57c022f882583c762405af2e2c191a9ada011ce393d14c8015919f37f",
+    "deploy/media-stack/verification-worker/README.md": "9f3c9eecc36a5b8e148423acb26c2da727f2244f79b67d17ff6cd2411ee0ad42",
     "deploy/media-stack/verification-worker/START-HERE.txt": "f67b693dbeb2cbb7b5f9bd17b2184eecba95f47b3910b1f859902e1b4da9c2b1",
     "deploy/media-stack/verification-worker/config.example.json": "110d37e93171a6f327d55c17ce13014cc8033ecdace6d55e465844754e07b5cf",
     "deploy/media-stack/verification-worker/coordinator.py": "f45ca65019b24e79a0e79e0e171e0c7e2c3d8080236dd4484f67c07fb6e42fd6",
     "deploy/media-stack/verification-worker/resource_guard.py": "ddd937196140f38e223b8bb8cf14eddb6c9cfb80b415472da5ba410a968d1821",
     "deploy/media-stack/verification-worker/verification_worker.py": "dc51ec84a05c5e5adec7bd08a26cef19b22525b610f11a4b4beb233449429861",
-    "deploy/media-stack/verification-worker/worker.ps1": "442d604ec590885a61f65cce48d419363f7f9c0276737bf81e454e839e444e71",
+    "deploy/media-stack/verification-worker/worker.ps1": "c045316b357dd2d4c26edb538e104086ea890c1f7fa7c23678a9ec9ec1b0edd4",
     "deploy/omv-sharedfolders.json": "9ad80848d00a1a14581a799eb7443dbdc1cfda6a6b3a3716a1beb21a018457f5",
     "deploy/systemd/docker.service.d/media-storage.conf": "ef9bfd74bfa545fc3050572a6ceb329dd7f6e826186e5dd8bced0cdcca18f431",
     "deploy/systemd/media-catalogue-badges.service": "03f33413d5b99c50a44088004935909d0cf44eb64d22959e1e8f85ad7d7c93e8",

@@ -48,6 +48,11 @@ The first lane keeps its original commands and data folder. The server's resourc
 gate remains at one Windows operation until both containers are connected and
 the bounded two-lane pilot is enabled. Do not copy `data/` into `data-2/` because
 that would reuse the same worker identity and pending result.
+Newly created containers use Docker's `unless-stopped` policy: after Docker
+Desktop starts following an outage, a previously running worker resumes using
+its saved result. A deliberate `07-STOP.cmd` or `09-STOP-SECOND.cmd` keeps that
+lane stopped. Existing containers retain their old restart policy until they
+are recreated or changed with `docker update --restart unless-stopped`.
 
 A probe or sample is one operation; it is not one fully verified title. OMV has
 separate counts for Windows titles passed/unavailable/checkpointed, active
