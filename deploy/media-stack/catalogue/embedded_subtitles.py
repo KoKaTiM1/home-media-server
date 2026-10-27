@@ -17,7 +17,7 @@ import time
 import urllib.error
 
 TEXT_CODECS={'subrip','srt','ass','ssa','webvtt','mov_text','text'}
-WINDOW=120
+WINDOW=30
 
 class SubtitleCheckpoint(RuntimeError):pass
 
@@ -187,7 +187,11 @@ class EmbeddedSubtitles:
                         with self.db() as c:c.execute("UPDATE embedded_subtitles SET state='none',updated=? WHERE key=? AND sid=?",(time.time(),key,sid))
                 return True
         except Exception as error:
-            delay=15 if time.monotonic()>=deadline-.5 else 300
+            # Playback/resource cancellation is an ordinary scheduling yield,
+            # not a broken source. Recheck soon, with the same busy guards,
+            # instead of unnecessarily parking saved work for five minutes.
+            cancelled=isinstance(error,self.g.get('ClientCancelled',SubtitleCheckpoint))
+            delay=15 if cancelled or time.monotonic()>=deadline-.5 else 300
             with self.db() as c:c.execute('UPDATE embedded_subtitles SET attempts=attempts+1,next_try=?,updated=? WHERE key=? AND sid=?',(time.time()+delay,time.time(),key,sid))
             code=' HTTP '+str(error.code) if isinstance(error,urllib.error.HTTPError) else ''
             self.g['log']('Embedded subtitle checkpoint ('+type(error).__name__+code+')')

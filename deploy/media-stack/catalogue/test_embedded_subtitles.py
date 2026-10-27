@@ -53,6 +53,8 @@ class EmbeddedTests(unittest.TestCase):
         with patch.object(self.worker,'extract',side_effect=a.ClientCancelled('new playback')),patch.object(a.F,'validation_result') as invalidated:
             self.assertFalse(self.worker.once(time.monotonic()+15));invalidated.assert_not_called()
         self.assertEqual(self.row()[:2],('queued',10));self.assertEqual(self.worker.ready(KEY,self.selected),[])
+        with self.worker.db() as c:retry=c.execute('SELECT next_try FROM embedded_subtitles WHERE key=?',(KEY,)).fetchone()[0]
+        self.assertGreater(retry,time.time());self.assertLess(retry,time.time()+20)
     def test_new_validation_source_fences_queued_job(self):
         self.seed();a.F.validation_result(KEY,True,proof={'version':5,'source_id':'b'*64})
         with patch.object(self.worker,'extract') as extract:self.assertTrue(self.worker.once(time.monotonic()+15));extract.assert_not_called()

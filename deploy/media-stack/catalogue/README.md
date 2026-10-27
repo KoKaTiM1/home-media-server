@@ -182,7 +182,7 @@ already open during an update must be stopped/reopened to use changed metadata.
 
 Native extraction cannot read the virtual dynamic catalogue path. Instead,
 foreground preparation queues an on-demand exact-source extraction job; Play
-never waits for it. The idle worker reads two-minute windows with preroll,
+never waits for it. The idle worker reads thirty-second windows with preroll,
 converts a Hebrew text stream to SRT and checks copied video packet timestamps
 for window coverage. It saves cues and a durable cursor, not a full video file.
 This can still require reading much of the source over the torrent transport.
@@ -195,6 +195,9 @@ unavailable. Only one embedded Hebrew text track is extracted per source;
 bitmap subtitles are unsupported. Exact-source extraction improves release
 matching but cannot correct timing errors already inside the original track.
 
+Each window covers30seconds, limiting work lost to a playback/resource yield.
+Ordinary cancellation retries after15seconds; source errors retain their longer
+backoff. The same playback and memory guards are checked before reading again.
 `media-embedded-subtitles.timer` resumes up to four windows within a110-second
 slice and checks again15seconds after a slice ends. Source stalls retry later;
 ordinary slice exhaustion retains the last completed window and resumes soon.
