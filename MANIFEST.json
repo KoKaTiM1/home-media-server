@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-10-27T05:29:29.983353+00:00",
+  "created_utc": "2026-10-27T05:30:42.135576+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -108,7 +108,7 @@
     "deploy/media-stack/verification-worker/START-HERE.txt": "f67b693dbeb2cbb7b5f9bd17b2184eecba95f47b3910b1f859902e1b4da9c2b1",
     "deploy/media-stack/verification-worker/config.example.json": "110d37e93171a6f327d55c17ce13014cc8033ecdace6d55e465844754e07b5cf",
     "deploy/media-stack/verification-worker/coordinator.py": "f45ca65019b24e79a0e79e0e171e0c7e2c3d8080236dd4484f67c07fb6e42fd6",
-    "deploy/media-stack/verification-worker/resource_guard.py": "980d89b3f70f64444ffacd05331fdefbedb93fd00419068763a46e5b2dad495a",
+    "deploy/media-stack/verification-worker/resource_guard.py": "ddd937196140f38e223b8bb8cf14eddb6c9cfb80b415472da5ba410a968d1821",
     "deploy/media-stack/verification-worker/verification_worker.py": "dc51ec84a05c5e5adec7bd08a26cef19b22525b610f11a4b4beb233449429861",
     "deploy/media-stack/verification-worker/worker.ps1": "442d604ec590885a61f65cce48d419363f7f9c0276737bf81e454e839e444e71",
     "deploy/omv-sharedfolders.json": "9ad80848d00a1a14581a799eb7443dbdc1cfda6a6b3a3716a1beb21a018457f5",
