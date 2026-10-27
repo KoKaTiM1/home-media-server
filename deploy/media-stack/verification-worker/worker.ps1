@@ -1,8 +1,11 @@
-param([ValidateSet('Install','Start','Status','Logs','Stop')][string]$Action='Status')
+param([ValidateSet('Install','Start','Status','Logs','Stop')][string]$Action='Status',
+      [ValidateSet(1,2)][int]$Slot=1)
 $ErrorActionPreference='Stop'
 $Root=$PSScriptRoot
 $Image='home-media-verification-worker:0.2.1'
-$Name='home-media-verification-worker'
+$Name=if($Slot -eq 2){'home-media-verification-worker-2'}else{'home-media-verification-worker'}
+$DataLeaf=if($Slot -eq 2){'data-2'}else{'data'}
+$DataDirectory=Join-Path $Root $DataLeaf
 function Invoke-DockerExecutable { & docker.exe @args; if($LASTEXITCODE -ne 0){throw 'Docker failed. See the message above.'} }
 function Existing {
  $Id=& docker container ls --all --filter ('name=^/'+$Name+'$') --format '{{.ID}}'
@@ -29,9 +32,9 @@ try {
   if($Current -and $Current.State.Running -and $Current.Config.Image -ne $Image){throw 'Old worker is running. Use 07-STOP.cmd, then 04-START.cmd to keep the existing data and use this image.'}
   if($Current -and -not $Current.State.Running){Invoke-DockerExecutable rm $Name;$Current=$null}
   if(-not $Current){
-   New-Item -ItemType Directory -Force (Join-Path $Root 'data')|Out-Null
+   New-Item -ItemType Directory -Force $DataDirectory|Out-Null
    $Cfg='type=bind,source='+(Join-Path $Root 'config')+',target=/config,readonly'
-   $Data='type=bind,source='+(Join-Path $Root 'data')+',target=/data'
+   $Data='type=bind,source='+$DataDirectory+',target=/data'
    Invoke-DockerExecutable run --detach --name $Name --label 'home-media.component=verification-worker' --restart no --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 96 --memory 512m --cpus 2 --log-opt max-size=2m --log-opt max-file=2 --tmpfs '/tmp:rw,nosuid,nodev,size=128m' --mount $Cfg --mount $Data $Image run
   }
   Write-Host 'Verification worker is running. Live activity follows; Ctrl+C closes this view while the worker continues.'
@@ -46,6 +49,6 @@ try {
  }
  $Current=Existing
  if($Current){Write-Host ('Container: '+$Current.State.Status)}else{Write-Host 'Container has not started.'}
- $Status=Join-Path $Root 'data\status.json'
+ $Status=Join-Path $DataDirectory 'status.json'
  if(Test-Path $Status){Get-Content $Status}else{Write-Host 'No progress yet. Start the worker first.'}
 } catch {Write-Host ('ERROR: '+$_.Exception.Message) -ForegroundColor Red;exit 1}

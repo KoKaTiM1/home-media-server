@@ -155,8 +155,9 @@ def counts(data=DATA,refresh=False):
         if conn.execute("SELECT 1 FROM sqlite_master WHERE name='verification_audit'").fetchone():
             audit=dict(conn.execute("SELECT CASE WHEN completed=0 THEN 'pending' ELSE result END,COUNT(*) FROM verification_audit GROUP BY 1"))
             summary.update(audit_done=sum(n for state,n in audit.items() if state!='pending'),audit_total=sum(audit.values()))
-            for status,label in [('pending','awaiting check'),('passed','passed'),('failed','failed')]:
-                add('Initial stronger-verification audit — '+label,audit.get(status,0),'Existing titles remain visible until a fresh failure; reports run first')
+            if audit.get('pending',0):
+                for status,label in [('pending','awaiting check'),('passed','passed'),('failed','failed')]:
+                    add('Initial stronger-verification audit — '+label,audit.get(status,0),'Existing titles remain visible until a fresh failure; reports run first')
             v5=conn.execute("SELECT COUNT(*),SUM(CASE WHEN json_extract(proof,'$.audio_conversion')=1 THEN 1 ELSE 0 END),SUM(CASE WHEN checked>? THEN 1 ELSE 0 END) FROM validation WHERE state='verified' AND json_extract(proof,'$.version')=5",(now-3600,)).fetchone()
             summary.update(v5=v5[0],v5_hour=v5[2] or 0)
             add('Passed stronger video/audio checks',v5[0],'Decoded beginning and later samples from the exact selected torrent/file')
@@ -228,6 +229,7 @@ def counts(data=DATA,refresh=False):
                 if {'year','votes'}<=columns:
                     query+=" AND (t.year<CAST(strftime('%Y','now','localtime') AS INTEGER) OR t.votes>0 OR EXISTS(SELECT 1 FROM release_dates d WHERE d.kind=t.kind AND d.imdb=t.imdb AND d.released<=date('now','localtime')))"
             visible=conn.execute(query,(kind,)).fetchone()[0]
+            summary['ready_'+('movies' if kind=='movie' else 'shows')]=visible
             add('Verified indexed '+('movies' if kind=='movie' else 'shows'),visible,'Excludes known future releases and newer failed checks; saved-only media excluded')
     verification=data.parent/'verification-worker/queue.sqlite'
     if verification.is_file():
@@ -235,13 +237,15 @@ def counts(data=DATA,refresh=False):
             with closing(sqlite3.connect(verification.as_uri()+'?mode=ro',uri=True,timeout=1)) as remote:
                 totals=dict(remote.execute('SELECT key,value FROM totals'))
                 controls={k:json.loads(v) for k,v in remote.execute('SELECT key,value FROM control')}
-                seen=remote.execute('SELECT seen FROM client WHERE id=1').fetchone()
+                seen=[row[0] for row in remote.execute('SELECT seen FROM client')]
+                if remote.execute("SELECT 1 FROM sqlite_master WHERE name='second_client'").fetchone():
+                    seen += [row[0] for row in remote.execute('SELECT seen FROM second_client')]
                 inflight=remote.execute("SELECT COUNT(*) FROM decode_jobs WHERE state IN ('pending','leased') AND controller>?",(now,)).fetchone()[0]
             add('Windows source checks passed',totals.get('windows_titles_verified',0),'Actual v5 verification runs; distinct from metadata uploads')
             add('Windows source checks unavailable',totals.get('windows_titles_unavailable',0),'Failures retained under the normal retry policy')
             add('Windows source checks checkpointed',totals.get('windows_title_checkpoints',0),'Interrupted work is not a failed source')
-            add('Windows active decoding operations',inflight,'Probe or beginning/later sample; one Windows operation at a time')
-            add('Windows verification last seen',stamp(seen[0]) if seen else 'Never','Separate from the metadata helper')
+            add('Windows active decoding operations',inflight,'Probe or beginning/later sample; bounded by the resource gate')
+            add('Windows verification last seen',stamp(max(seen,default=0)),'Separate from the metadata helper')
             add('Windows verification gate',controls.get('reason','Not enabled'),'One server plus one Windows verifier only after memory approval')
         except (sqlite3.Error,OSError,ValueError):pass
     c=context(data)
@@ -268,10 +272,13 @@ def overview(data=DATA,snapshot=None):
     else:
         total=max(0,values.get('total',0));verified=max(0,values.get('v5',0))
         add('Final v5 verified',f'{verified:,}',f'{100*verified/total:.2f}% of {total:,} source keys; full beginning and later sample proof' if total else 'Full beginning and later sample proof','success')
+        if 'ready_movies' in values:add('Verified movies',f"{values['ready_movies']:,}",'Distinct indexed movies currently visible from passed source checks','success')
+        if 'ready_shows' in values:add('Verified shows',f"{values['ready_shows']:,}",'Distinct indexed shows with at least one passed episode','success')
         add('Not yet v5 verified',f'{max(0,total-verified):,}',f"Includes {values.get('pending',0):,} awaiting a check, retries and older proof versions")
         add('Unavailable / retry',f"{values.get('unavailable',0):,}",'Failed outcomes are retained and retried on schedule','error' if values.get('unavailable') else 'muted')
         audit_total=values.get('audit_total',0);audit_done=values.get('audit_done',0)
-        add('Initial v5 audit',f'{audit_done:,} / {audit_total:,}',f'{100*audit_done/audit_total:.1f}% complete' if audit_total else 'No initial audit scheduled')
+        if audit_total and audit_done<audit_total:
+            add('Initial v5 audit',f'{audit_done:,} / {audit_total:,}',f'{100*audit_done/audit_total:.1f}% complete')
         add('Final passes in last hour',f"{values.get('v5_hour',0):,}",'Latest verified state per title; not a count of decoder operations','success')
     updated=stamp(now)
     queue=data.parent/'verification-worker/queue.sqlite'
@@ -279,13 +286,18 @@ def overview(data=DATA,snapshot=None):
         with closing(sqlite3.connect('file:'+str(queue)+'?mode=ro',uri=True,timeout=1)) as conn:
             conn.row_factory=sqlite3.Row
             totals=dict(conn.execute('SELECT key,value FROM totals'))
-            control={key:json.loads(value) for key,value in conn.execute("SELECT key,value FROM control WHERE key IN ('enabled','reason')")}
-            seen=conn.execute('SELECT seen FROM client WHERE id=1').fetchone()
+            control={key:json.loads(value) for key,value in conn.execute("SELECT key,value FROM control WHERE key IN ('enabled','reason','max_windows_jobs')")}
+            seen=[row[0] for row in conn.execute('SELECT seen FROM client')]
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE name='second_client'").fetchone():
+                seen += [row[0] for row in conn.execute('SELECT seen FROM second_client')]
             active=conn.execute("SELECT key,operation,params,state,created,stream_started,phase,phase_at FROM decode_jobs WHERE state IN ('pending','leased','result') AND controller>? ORDER BY created LIMIT 1",(now,)).fetchone()
             problem=conn.execute("SELECT operation,outcome,reason_code,finished FROM decode_jobs WHERE outcome IN ('checkpoint','decode_failure') AND finished>? ORDER BY finished DESC LIMIT 1",(now-3600,)).fetchone()
         add('Windows final passes',f"{totals.get('windows_titles_verified',0):,}",'Completed full title checks on the PC; probes and samples excluded','success')
-        connected=bool(seen and seen[0]>now-45)
+        online=sum(value>now-45 for value in seen)
+        connected=online>0
         add('Windows worker','Connected' if connected else 'Offline',control.get('reason','Waiting for resource gate') if connected else 'Server verification continues without the PC','success' if connected and control.get('enabled') else 'muted')
+        capacity=max(1,min(2,int(control.get('max_windows_jobs',1))))
+        add('Windows lanes',f'{online} / {capacity}','Connected verifier containers / allowed simultaneous Windows operations','success' if online and control.get('enabled') else 'muted')
         if active:
             key=active['key'];details=context(data,cache_key='remote-validation-worker')
             title=details.get('name') if details.get('key')==key else None

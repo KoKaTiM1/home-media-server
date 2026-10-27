@@ -35,6 +35,8 @@ class DecodeJobs:
             c.executescript('''CREATE TABLE IF NOT EXISTS control(key TEXT PRIMARY KEY,value TEXT);
             CREATE TABLE IF NOT EXISTS client(id INTEGER PRIMARY KEY CHECK(id=1),worker TEXT,seen REAL DEFAULT 0);
             INSERT OR IGNORE INTO client(id) VALUES(1);
+            CREATE TABLE IF NOT EXISTS second_client(id INTEGER PRIMARY KEY CHECK(id=2),worker TEXT,seen REAL DEFAULT 0);
+            INSERT OR IGNORE INTO second_client(id) VALUES(2);
             CREATE TABLE IF NOT EXISTS decode_jobs(id TEXT PRIMARY KEY,key TEXT,sid TEXT,operation TEXT,params TEXT,url TEXT,
               state TEXT,created REAL,controller REAL,deadline REAL,worker TEXT,lease TEXT,expires REAL DEFAULT 0,result TEXT,result_id TEXT,result_hash TEXT);
             CREATE INDEX IF NOT EXISTS decode_due ON decode_jobs(state,created);
@@ -54,18 +56,24 @@ class DecodeJobs:
     def status(self):
         now=time.time()
         with self.db() as c:
-            row=c.execute('SELECT seen FROM client WHERE id=1').fetchone()
+            seen=[row[0] for table in ('client','second_client') for row in c.execute('SELECT seen FROM '+table)]
+            online=sum(value>now-45 for value in seen)
             return {'protocol':PROTOCOL,'enabled':self.setting(c,'enabled',False),'reason':self.setting(c,'reason','Awaiting memory gate / Windows pilot'),
-                    'windows_seen':row[0], 'windows_online':row[0]>now-45,
+                    'windows_seen':max(seen,default=0), 'windows_online':online>0,'windows_slots_online':online,
                     'activity':self.setting(c,'activity',{}),'backlog':self.setting(c,'backlog',{}),
                     'jobs':dict(c.execute('SELECT state,COUNT(*) FROM decode_jobs GROUP BY state').fetchall()),
                     'totals':dict(c.execute('SELECT key,value FROM totals').fetchall())}
     def seen(self,worker):
         if not isinstance(worker,str) or not re.fullmatch('[a-zA-Z0-9_.:-]{1,128}',worker):raise InvalidJob('Invalid worker')
         with self.db(True) as c:
-            r=c.execute('SELECT worker FROM client WHERE id=1').fetchone()
-            if r[0] not in (None,worker):raise InvalidJob('Token belongs to another worker')
-            c.execute('UPDATE client SET worker=?,seen=? WHERE id=1',(worker,time.time()))
+            first=c.execute('SELECT worker FROM client WHERE id=1').fetchone()[0]
+            second=c.execute('SELECT worker FROM second_client WHERE id=2').fetchone()[0]
+            if worker==first:table='client'
+            elif worker==second:table='second_client'
+            elif first is None:table='client'
+            elif second is None:table='second_client'
+            else:raise InvalidJob('Two enrolled workers already exist')
+            c.execute('UPDATE '+table+' SET worker=?,seen=?',(worker,time.time()))
     def submit(self,key,sid,operation,params,url,seconds):
         validate_recipe(operation,params)
         u=urlsplit(url)
@@ -73,8 +81,11 @@ class DecodeJobs:
         if not re.fullmatch('(movie:tt[0-9]{5,12}|series:tt[0-9]{5,12}:[0-9]+:[0-9]+)',key) or not re.fullmatch('[a-f0-9]{64}',sid):raise InvalidJob('Invalid source identity')
         now=time.time();job=uuid.uuid4().hex
         with self.db(True) as c:
-            if not self.setting(c,'enabled',False) or c.execute('SELECT seen FROM client WHERE id=1').fetchone()[0]<now-45:raise WorkerWait('Windows verification worker offline or gated')
+            seen=max(c.execute('SELECT seen FROM client WHERE id=1').fetchone()[0],c.execute('SELECT seen FROM second_client WHERE id=2').fetchone()[0])
+            if not self.setting(c,'enabled',False) or seen<now-45:raise WorkerWait('Windows verification worker offline or gated')
             c.execute("DELETE FROM decode_jobs WHERE created<? AND state IN ('consumed','cancelled')",(now-7*86400,))
+            active=c.execute("SELECT COUNT(*) FROM decode_jobs WHERE state IN ('pending','leased') AND controller>?",(now,)).fetchone()[0]
+            if active>=max(1,min(2,int(self.setting(c,'max_windows_jobs',1)))):raise WorkerWait('Windows decode lanes busy')
             if c.execute("SELECT COUNT(*) FROM decode_jobs WHERE state IN ('pending','leased','result')").fetchone()[0]>=16:raise WorkerWait('Decode work capacity reached')
             c.execute('INSERT INTO decode_jobs(id,key,sid,operation,params,url,state,created,controller,deadline,phase,phase_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
                       (job,key,sid,operation,json.dumps(params),url,'pending',now,now+30,now+min(480,max(1,seconds)),'queued',now))

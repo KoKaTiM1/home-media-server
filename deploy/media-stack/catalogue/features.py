@@ -875,15 +875,17 @@ class Features:
                 row=conn.execute("SELECT key FROM validation WHERE state='verified' AND checked<=? AND NOT EXISTS(SELECT 1 FROM verification_claims vc WHERE vc.key=validation.key AND vc.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=validation.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (validation.key=mw.key OR validation.key LIKE mw.key||':%')) ORDER BY checked LIMIT 1",(time.time()-86400,)).fetchone()
         return row
 
-    def warm_availability(self,limit=20,remote=False):
+    def warm_availability(self,limit=20,remote=False,slot=1):
         if remote:
-            from verification_remote import ready
-            if not ready(self.g):return
+            from verification_remote import ready,jobs
+            if not ready(self.g) or (slot==2 and jobs(self.g).status().get('windows_slots_online',0)<2):return
+        worker_key=('remote-validation-worker'+('-2' if slot==2 else '')) if remote else 'validation-worker'
+        lock_name=('remote-validation-2.lock' if slot==2 else 'remote-validation.lock') if remote else 'validation.lock'
         self.g['BUDGET'].remote_verification=remote
         self.consume_rechecks()
         # flock survives separate cron/docker exec processes. Interrupted rows
         # remain due and resume automatically; no in-memory-only work cursor.
-        with (self.g['DATA']/('remote-validation.lock' if remote else 'validation.lock')).open('a') as lock:
+        with (self.g['DATA']/lock_name).open('a') as lock:
             try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
             except BlockingIOError:return
             # Defer all torrent probes while the owner is playing anything.
@@ -896,10 +898,10 @@ class Features:
                 except Exception:return 'Waiting for Jellyfin startup or session status'
             blocked=busy()
             if blocked:
-                self.remember('remote-validation-worker' if remote else 'validation-worker',{'message':blocked+'; resumes automatically','started':time.time()},180)
+                self.remember(worker_key,{'message':blocked+'; resumes automatically','started':time.time()},180)
                 return
             if self.cached('validation-provider-backoff'):
-                self.remember('remote-validation-worker' if remote else 'validation-worker',{'message':'Source provider cooldown; resumes automatically','started':time.time()},180)
+                self.remember(worker_key,{'message':'Source provider cooldown; resumes automatically','started':time.time()},180)
                 return
             self.seed_validation()
             self.g['REL'].schedule()
@@ -918,7 +920,7 @@ class Features:
             while checked<limit and time.monotonic()-started<480:
                 blocked=busy()
                 if blocked:
-                    self.remember('remote-validation-worker' if remote else 'validation-worker',{'message':blocked+'; resumes automatically','started':time.time()},180)
+                    self.remember(worker_key,{'message':blocked+'; resumes automatically','started':time.time()},180)
                     break
                 with self.db() as conn:
                     row=conn.execute("SELECT v.key FROM manual_rechecks m JOIN validation v ON v.key=m.key WHERE m.status='pending' AND v.next_check<=? AND NOT EXISTS(SELECT 1 FROM verification_claims vc WHERE vc.key=v.key AND vc.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=v.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (v.key=mw.key OR v.key LIKE mw.key||':%')) ORDER BY m.requested LIMIT 1",(time.time(),)).fetchone()
@@ -945,7 +947,7 @@ class Features:
                 if self.verification_held(key):continue
                 claim=self.claim_verification(key,'windows' if remote else 'server')
                 if not claim:continue
-                self.remember('remote-validation-worker' if remote else 'validation-worker',{'key':key,'started':time.time(),'position':checked+1,'batch':batch_number,'message':'Video sample validation running'},180)
+                self.remember(worker_key,{'key':key,'started':time.time(),'position':checked+1,'batch':batch_number,'message':'Video sample validation running'},180)
                 attempt_started=time.time()
                 slot+=1;self.remember('verification-v5-slot',{'slot':slot},10*365*86400)
                 try:
@@ -989,14 +991,14 @@ class Features:
                     pending=self.g.get('MetadataPending')
                     if pending and isinstance(error,pending):
                         checked+=1
-                        self.remember('remote-validation-worker' if remote else 'validation-worker',{'message':'Metadata pending on helper; checking other titles','started':time.time(),'batch':batch_number},180)
+                        self.remember(worker_key,{'message':'Metadata pending on helper; checking other titles','started':time.time(),'batch':batch_number},180)
                         continue
                     transient=tuple(self.g[name] for name in ('ClientCancelled','PlaybackBusy','Checkpoint') if isinstance(self.g.get(name),type))
                     if isinstance(error,sqlite3.OperationalError) or transient and isinstance(error,transient):
                         if remote:
                             from verification_remote import jobs
                             jobs(self.g).count('windows_title_checkpoints')
-                        self.remember('remote-validation-worker' if remote else 'validation-worker',{'message':'Work checkpointed; resumes after foreground activity or next batch','started':time.time(),'batch':batch_number},180)
+                        self.remember(worker_key,{'message':'Work checkpointed; resumes after foreground activity or next batch','started':time.time(),'batch':batch_number},180)
                         break
                     if isinstance(error,urllib.error.HTTPError) and (error.code==429 or error.code>=500):
                         self.remember('validation-provider-backoff',True,900 if error.code==429 else 300)
@@ -1010,7 +1012,7 @@ class Features:
                 finally:
                     self.release_verification(key,claim)
                 checked+=1
-                self.remember('remote-validation-worker' if remote else 'validation-worker',{'key':key,'started':time.time(),'position':checked,'batch':batch_number,'message':'Last probe finished; proceeding to next queue entry'},180)
+                self.remember(worker_key,{'key':key,'started':time.time(),'position':checked,'batch':batch_number,'message':'Last probe finished; proceeding to next queue entry'},180)
                 time.sleep(2)
             self.log(f'Persistent video validation: {checked} checked; unavailable entries retained with backoff')
 

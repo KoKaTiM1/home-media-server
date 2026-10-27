@@ -1571,6 +1571,7 @@ def main():
     parser.add_argument('command',choices=('serve','sync','collections','badges','trailers','discovery-sync','availability','downloads','imdb-sync','metadata-import','remote-availability'),default='serve',nargs='?')
     parser.add_argument('--movies',type=int,default=1000)
     parser.add_argument('--shows',type=int,default=200)
+    parser.add_argument('--slot',type=int,choices=(1,2),default=1)
     args=parser.parse_args()
     BUDGET.metadata_background=args.command!='serve'
     if args.command=='metadata-import':
@@ -1582,7 +1583,7 @@ def main():
     if args.command=='trailers': return refresh_trailers()
     if args.command=='discovery-sync': return F.sync_discovery()
     if args.command=='availability': return F.warm_availability()
-    if args.command=='remote-availability': return F.warm_availability(remote=True)
+    if args.command=='remote-availability': return F.warm_availability(remote=True,slot=args.slot)
     if args.command=='downloads': return F.manage_downloads()
     if args.command=='imdb-sync': return F.update_index()
     db().close()

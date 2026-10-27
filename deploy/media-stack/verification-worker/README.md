@@ -39,6 +39,16 @@ requests new work. Older versions stop progressing when the local stale-result
 archive reaches 64 files. Update the image over the existing folder and retain
 `config/` and `data/` so the worker identity and pending result survive.
 
+The optional second-lane launcher uses the same installed 0.2.1 image and
+private connection file, but a separate `data-2/` identity and container.
+Overlay `verification-worker-second-lane-launcher.zip` on the existing Windows
+folder, preserving `config/` and `data/`. `08-START-SECOND.cmd` starts that lane;
+`09-STOP-SECOND.cmd` stops only it; `10-STATUS-SECOND.cmd` reads its status.
+The first lane keeps its original commands and data folder. The server's resource
+gate remains at one Windows operation until both containers are connected and
+the bounded two-lane pilot is enabled. Do not copy `data/` into `data-2/` because
+that would reuse the same worker identity and pending result.
+
 A probe or sample is one operation; it is not one fully verified title. OMV has
 separate counts for Windows titles passed/unavailable/checkpointed, active
 operations and heartbeat. Metadata counts and the initial audit are separate

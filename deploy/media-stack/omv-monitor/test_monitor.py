@@ -105,4 +105,16 @@ class MonitorTests(unittest.TestCase):
             self.assertIn('transport',values['Latest PC operation issue']['detail'])
             self.assertNotIn('private-signed-url',str(rows))
 
+    def test_completed_initial_audit_is_replaced_by_current_ready_counts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);data=root/'catalogue';data.mkdir()
+            snapshot=root/'snapshot.json';snapshot.write_text(json.dumps({'time':time.time(),'summary':{
+                'total':100,'pending':70,'unavailable':5,'v5':25,'v5_hour':2,
+                'audit_done':10,'audit_total':10,'ready_movies':15,'ready_shows':7}}))
+            rows=m.overview(data,snapshot)
+            values={row['name']:row['value'] for row in rows}
+            self.assertNotIn('Initial v5 audit',values)
+            self.assertEqual(values['Verified movies'],'15')
+            self.assertEqual(values['Verified shows'],'7')
+
 if __name__=='__main__':unittest.main()

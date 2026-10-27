@@ -15,7 +15,7 @@ import time
 import unittest
 import uuid
 from unittest.mock import patch
-from verification_jobs import DecodeJobs,InvalidJob,PREFIX
+from verification_jobs import DecodeJobs,InvalidJob,WorkerWait,PREFIX
 from verification_media import execute,validate_result,MissingVideoFrames
 from test_app import a
 
@@ -37,6 +37,23 @@ class QueueTests(unittest.TestCase):
         job=self.submit()
         with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:tasks=list(pool.map(lambda _:self.q.claim(WORKER),range(6)))
         self.assertEqual({t['job_id'] for t in tasks},{job});self.assertEqual(len({t['lease_id'] for t in tasks}),1)
+    def test_two_enrolled_windows_workers_claim_distinct_operations(self):
+        second='isolated-windows-2';self.q.seen(second);self.q.set('max_windows_jobs',2)
+        self.assertEqual(self.q.status()['windows_slots_online'],2)
+        with self.assertRaises(InvalidJob):self.q.seen('unapproved-third-worker')
+        first_job=self.submit()
+        second_job=self.q.submit('movie:tt0000002',SID,'probe',{},'http://127.0.0.1:8092/raw/movie:tt0000002',120)
+        first_task=self.q.claim(WORKER);second_task=self.q.claim(second)
+        self.assertEqual(first_task['job_id'],first_job)
+        self.assertEqual(second_task['job_id'],second_job)
+        self.assertNotEqual(first_task['lease_id'],second_task['lease_id'])
+        self.assertEqual(self.q.receive(WORKER,first_task,self.result()),'accepted')
+        self.assertEqual(self.q.receive(second,second_task,self.result()),'accepted')
+    def test_second_lane_stays_closed_until_resource_gate_approves_it(self):
+        self.q.seen('isolated-windows-2')
+        self.submit()
+        with self.assertRaises(WorkerWait):
+            self.q.submit('movie:tt0000002',SID,'probe',{},'http://127.0.0.1:8092/raw/movie:tt0000002',120)
     def test_receipt_replay_after_consumption_and_conflict_rejected(self):
         job=self.submit();task=self.q.claim(WORKER);result=self.result()
         self.assertEqual(self.q.receive(WORKER,task,result),'accepted');self.q.finish(job,True)
@@ -47,7 +64,8 @@ class QueueTests(unittest.TestCase):
         with self.q.db(True) as c:c.execute('UPDATE decode_jobs SET controller=0 WHERE id=?',(job,))
         self.assertFalse(self.q.renew(WORKER,task));self.assertIsNone(self.q.source(job,task['lease_id']))
         self.assertEqual(self.q.receive(WORKER,task,self.result()),'stale')
-        with self.assertRaises(InvalidJob):self.q.claim('different-pc')
+        self.assertIsNone(self.q.claim('different-pc'))
+        self.assertFalse(self.q.renew('different-pc',task))
         self.q.set('generation','changed');self.assertFalse(self.q.renew(WORKER,task))
     def test_stale_result_archive_can_grow_past_old_limit_and_replay(self):
         folder=Path(self.tmp.name)

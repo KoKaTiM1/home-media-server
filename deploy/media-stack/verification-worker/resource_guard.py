@@ -32,9 +32,10 @@ def main():
         elif done-cfg.get('pilot_start',0)>=cfg.get('pilot_limit',20) and not cfg.get('continuous'):reason='Bounded pilot complete; review throughput and memory'
         elif available<256*1024*1024:reason='Host memory pressure; Windows verification paused'
         elif working>limit*(.8 if status['enabled'] else .7):reason='TorrServer memory pressure; Windows verification paused'
-        else:permitted=True;reason='Parallel verification permitted: one server and one Windows job'
+        else:permitted=True;reason='Parallel verification permitted: one server and up to '+str(max(1,min(2,int(cfg.get('max_windows_jobs',1)))))+' Windows jobs'
     except Exception:reason='Resource status unavailable; Windows verification paused'
     q.set('enabled',permitted);q.set('reason',reason);q.set('health',health)
+    q.set('max_windows_jobs',max(1,min(2,int(cfg.get('max_windows_jobs',1)))))
     print(reason)
 
 if __name__=='__main__':main()
