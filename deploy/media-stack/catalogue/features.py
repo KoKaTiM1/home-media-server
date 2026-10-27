@@ -1022,7 +1022,10 @@ class Features:
                         producer_phase(self.g,key,'finished')
                 checked+=1
                 self.remember(worker_key,{'key':key,'started':time.time(),'position':checked,'batch':batch_number,'message':'Last probe finished; proceeding to next queue entry'},180)
-                time.sleep(2)
+                # Remote work is already bounded by exclusive queue leases and
+                # provider backoff. Dispatch the next title without another
+                # fixed idle gap; the loop rechecks viewing/cancellation first.
+                if not remote:time.sleep(2)
             self.log(f'Persistent video validation: {checked} checked; unavailable entries retained with backoff')
 
     def sync_discovery(self):

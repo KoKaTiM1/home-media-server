@@ -117,6 +117,14 @@ and pilot are approved. Producer slots are not extra decoder slots. Add the
 catalogue `verification_jobs.py` and `verification_remote.py` read-only source
 mounts from Compose when restoring; compare deployed module hashes with source.
 
+Windows producer timers retry after three seconds (one-second timer accuracy).
+The controller checks leased operation results every 250 ms and queued work
+every 500 ms; it does not insert a separate two-second pause between remote
+titles. These remove scheduling delays, not torrent startup or download time.
+The four active decoder/eight total queued-work limits, exclusive source/title
+leases, provider backoff and playback/resource guards still apply. Existing
+producer processes finish their current batch before loading updated code.
+
 TorrServer's limit was increased live from 256 to 320 MiB after checking host
 headroom; no TorrServer restart was needed. More physical RAM provides headroom
 but does not itself change Docker limits or establish that reader/heap problems

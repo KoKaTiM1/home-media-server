@@ -78,6 +78,26 @@ class QueueTests(unittest.TestCase):
             self.assertEqual(waiting.result(timeout=1)['job_id'],job)
         self.q.finish(job);self.q.set('enabled',False)
         self.assertIsNone(gateway.claim_wait(self.q,WORKER,15))
+    def test_server_observes_completed_windows_work_without_two_second_gap(self):
+        import verification_remote as remote
+        from reliability import Checkpoint
+        selected={'hash':'a'*40,'index':1,'filename':'file.mkv','length':100}
+        def worker():
+            end=time.monotonic()+3
+            while time.monotonic()<end:
+                task=self.q.claim(WORKER)
+                if task:
+                    self.q.receive(WORKER,task,self.result())
+                    return
+                time.sleep(.01)
+            self.fail('Test operation was not delivered')
+        with patch.object(remote,'jobs',return_value=self.q),patch.object(a.REL,'source_url',return_value='http://127.0.0.1:8092/raw/'+KEY),patch.object(a.REL,'cache_state',return_value={}),patch.object(a.REL,'checkpoint'),patch.object(a,'remaining',return_value=1),patch.object(a,'cached',return_value=None):
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                task=pool.submit(worker);started=time.monotonic()
+                with self.assertRaises(Checkpoint):
+                    remote.execute(a.__dict__,KEY,selected,'probe',{},time.monotonic()+5)
+                elapsed=time.monotonic()-started;task.result(timeout=3)
+        self.assertLess(elapsed,1.5)
     def test_queue_wait_does_not_consume_source_stall_clock(self):
         import verification_remote as remote
         from reliability import Checkpoint,SourceStalled

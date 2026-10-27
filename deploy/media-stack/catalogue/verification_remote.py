@@ -84,7 +84,10 @@ def _execute(runtime,key,selected,operation,params,deadline):
                 if state=='leased' and q.stream_started(job) and q.status()['windows_online']:
                     raise SourceStalled('Selected Windows sample stalled')
                 raise Checkpoint('Windows operation has not delivered data')
-            time.sleep(min(2,max(.01,deadline-time.monotonic())))
+            # Windows already long-polls for delivery. Do not add a separate
+            # two-second acknowledgement gap after every probe/sample: a title
+            # needs several operations and that delay accumulates on all lanes.
+            time.sleep(min(.25 if state=='leased' else .5,max(.01,deadline-time.monotonic())))
     finally:
         try:q.finish(job,consumed)
         except sqlite3.Error:pass

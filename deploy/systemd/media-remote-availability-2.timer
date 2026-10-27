@@ -3,8 +3,8 @@ Description=Dispatch optional second Windows verification lane
 
 [Timer]
 OnBootSec=5min
-OnUnitInactiveSec=15s
-AccuracySec=3s
+OnUnitInactiveSec=3s
+AccuracySec=1s
 
 [Install]
 WantedBy=timers.target

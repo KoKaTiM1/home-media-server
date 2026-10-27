@@ -3,8 +3,8 @@ Description=Dispatch bounded Windows verification lookahead producer %i
 
 [Timer]
 OnBootSec=5min
-OnUnitInactiveSec=15s
-AccuracySec=3s
+OnUnitInactiveSec=3s
+AccuracySec=1s
 
 [Install]
 WantedBy=timers.target
