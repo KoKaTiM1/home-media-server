@@ -14,7 +14,12 @@ It replaces provided values without displaying them and leaves unfilled
 placeholders for later stages. Use `--strict` after all deployment fields are
 configured. A rendered checkout contains private values: never push it publicly.
 
-Set network/storage values before using Compose. On a fresh installation,
+Set network/storage values before using Compose. Configure a stable LAN address
+through OMV or reserve the host's DHCP lease in
+the router. Compose port bindings and the optional Windows worker connection
+use that address; changing it after a reboot leaves services unreachable until
+their configuration is updated.
+On a fresh installation,
 complete the Jellyfin wizard and create the intended online/local libraries
 using the UI or supported API, then obtain their actual view IDs to fill the
 plugin's library-ID fields. Render those source files before building the DLL.

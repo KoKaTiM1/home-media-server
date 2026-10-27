@@ -51,14 +51,14 @@ class MultiSubtitlesTests(unittest.TestCase):
         with patch.object(a,'wizdom_search',return_value=[{'id':1,'versioname':'same'}]),patch.object(a,'fetch',return_value=archive(SRT)):
             self.assertEqual(len(a.wizdom_subtitles(KEY,'same.mkv')),1)
 
-    def test_preparation_labels_and_limits_hebrew_choices_including_embedded(self):
-        for embedded in (0,1,3):
-            with self.subTest(embedded=embedded):
-                key='movie:tt'+str(1234567+embedded)
+    def test_online_tracks_use_delivered_subtitles_and_local_tracks_keep_embedded(self):
+        for embedded,local in ((0,False),(1,False),(3,False),(1,True),(3,True)):
+            with self.subTest(embedded=embedded,local=local):
+                key='movie:tt'+str(1234567+embedded+(100 if local else 0))
                 native=[{'index':0,'codec_type':'video','codec_name':'h264','pix_fmt':'yuv420p'},
                         {'index':1,'codec_type':'audio','codec_name':'aac','profile':'LC'}]
                 native += [{'index':i+2,'codec_type':'subtitle','codec_name':'subrip','tags':{'language':'heb'}} for i in range(embedded)]
-                selected={'filename':'fixture.mp4','hash':'a'*40,'index':1}
+                selected={'filename':'fixture.mp4','hash':'a'*40,'index':1,'local':'/media/fixture.mp4' if local else None}
                 externals=[{'lang':'heb','variant':'a'*16},{'lang':'heb','variant':'b'*16}]
                 with patch.object(a,'signature',return_value='fixture'),patch.object(a.REL,'verify',return_value={'version':5}),patch.object(a,'resolve',return_value=selected),patch.object(a,'probe',return_value={'streams':native,'format':{'duration':'60'}}),patch.object(a,'external_subtitles',return_value=externals) as external,patch.object(a,'signed_path',return_value='http://example.invalid/sub?sig=fixture'):
                     info=a.prepared(key)
@@ -66,10 +66,13 @@ class MultiSubtitlesTests(unittest.TestCase):
                 self.assertEqual([t['Title'] for t in he],['עברית 1','עברית 2'])
                 self.assertEqual(len({t['Index'] for t in info['MediaStreams']}),len(info['MediaStreams']))
                 self.assertEqual(info['DefaultSubtitleStreamIndex'],he[0]['Index'])
-                if embedded==0:self.assertNotEqual(he[0]['DeliveryUrl'],he[1]['DeliveryUrl'])
-                if embedded>=2:external.assert_not_called()
+                if not local:
+                    self.assertTrue(all(t['IsExternal'] for t in he))
+                    self.assertEqual(external.call_args.kwargs['max_hebrew'],2)
+                    self.assertTrue(all(t['Index']>embedded+1 for t in he))
+                elif embedded>=2:external.assert_not_called()
                 else:self.assertEqual(external.call_args.kwargs['max_hebrew'],2-embedded)
-                self.assertEqual(info['subtitle_policy'],2)
+                self.assertEqual(info['subtitle_policy'],3)
 
     def test_signed_variant_route_serves_each_content_and_preserves_legacy(self):
         one=a.store_subtitle(KEY,SRT.encode(),'heb');two=a.store_subtitle(KEY,ALT.encode(),'heb')

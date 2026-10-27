@@ -82,6 +82,7 @@ services:
       DOWNLOADS_ROOT: /storage/downloads/complete
     volumes:
       - /srv/dev-disk-by-uuid-bd267f22-f18a-4966-94ae-409a27252905/appdata/catalogue:/data
+      - /srv/dev-disk-by-uuid-bd267f22-f18a-4966-94ae-409a27252905/appdata/verification-worker:/verification-queue
       - /srv/dev-disk-by-uuid-bd267f22-f18a-4966-94ae-409a27252905/catalogue:/catalogue
       - ./catalogue/app.py:/app/app.py:ro
       - ./catalogue/features.py:/app/features.py:ro

@@ -174,6 +174,10 @@ Hebrew subtitle selection offers up to two distinct versions labelled עברית
 and עברית 2, best release match first. Stable variant URLs keep their files
 separate; explicit None and English fallback remain available. A second choice
 depends on available releases and does not guarantee synchronization.
+Online sources expose only subtitle files the bridge can deliver directly;
+embedded tracks in torrent streams are withheld because Jellyfin cannot extract
+them from the virtual catalogue path. Downloaded local files retain embedded
+subtitle choices. The embedded extraction defect remains tracked in issue #1.
 
 Online Delete reports a title for fresh verification rather than removing its
 virtual record or saved media. Reports are durable, prioritized and visible in

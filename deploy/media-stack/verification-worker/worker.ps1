@@ -3,7 +3,7 @@ $ErrorActionPreference='Stop'
 $Root=$PSScriptRoot
 $Image='home-media-verification-worker:0.2.0'
 $Name='home-media-verification-worker'
-function Docker { & docker @args; if($LASTEXITCODE -ne 0){throw 'Docker failed. See the message above.'} }
+function Invoke-DockerExecutable { & docker.exe @args; if($LASTEXITCODE -ne 0){throw 'Docker failed. See the message above.'} }
 function Existing {
  $Id=& docker container ls --all --filter ('name=^/'+$Name+'$') --format '{{.ID}}'
  if($LASTEXITCODE -ne 0){throw 'Could not list containers.'}
@@ -18,7 +18,7 @@ try {
   $Manifest=Get-Content -Raw (Join-Path $Root 'SHA256SUMS.json')|ConvertFrom-Json
   $Archive=Join-Path $Root 'verification-worker-image.tar.gz'
   if((Get-FileHash -Algorithm SHA256 $Archive).Hash.ToLowerInvariant() -ne $Manifest.'verification-worker-image.tar.gz'){throw 'Image checksum mismatch.'}
-  Docker load --input $Archive
+  Invoke-DockerExecutable load --input $Archive
   Write-Host 'Installed. Copy the private connection JSON, then run 04-START.cmd.'
   exit 0
  }
@@ -27,12 +27,12 @@ try {
   $Current=Existing
   if($Current -and $Current.Config.Labels.'home-media.component' -ne 'verification-worker'){throw 'Container name is occupied by another application.'}
   if($Current -and $Current.State.Running -and $Current.Config.Image -ne $Image){throw 'Old worker is running. Use 07-STOP.cmd, then 04-START.cmd to keep the existing data and use this image.'}
-  if($Current -and -not $Current.State.Running){Docker rm $Name;$Current=$null}
+  if($Current -and -not $Current.State.Running){Invoke-DockerExecutable rm $Name;$Current=$null}
   if(-not $Current){
    New-Item -ItemType Directory -Force (Join-Path $Root 'data')|Out-Null
    $Cfg='type=bind,source='+(Join-Path $Root 'config')+',target=/config,readonly'
    $Data='type=bind,source='+(Join-Path $Root 'data')+',target=/data'
-   Docker run --detach --name $Name --label 'home-media.component=verification-worker' --restart no --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 96 --memory 512m --cpus 2 --log-opt max-size=2m --log-opt max-file=2 --tmpfs '/tmp:rw,nosuid,nodev,size=128m' --mount $Cfg --mount $Data $Image run
+   Invoke-DockerExecutable run --detach --name $Name --label 'home-media.component=verification-worker' --restart no --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 96 --memory 512m --cpus 2 --log-opt max-size=2m --log-opt max-file=2 --tmpfs '/tmp:rw,nosuid,nodev,size=128m' --mount $Cfg --mount $Data $Image run
   }
   Write-Host 'Verification worker is running. Live activity follows; Ctrl+C closes this view while the worker continues.'
   & docker logs --follow --tail 12 $Name
@@ -41,7 +41,7 @@ try {
  if($Action -eq 'Logs'){& docker logs --follow --tail 30 $Name;exit 0}
  if($Action -eq 'Stop'){
   $Current=Existing
-  if($Current -and $Current.Config.Labels.'home-media.component' -eq 'verification-worker'){Docker stop --time 45 $Name}
+  if($Current -and $Current.Config.Labels.'home-media.component' -eq 'verification-worker'){Invoke-DockerExecutable stop --time 45 $Name}
   Write-Host 'Stopped. Local progress and unacknowledged results remain in data.';exit 0
  }
  $Current=Existing

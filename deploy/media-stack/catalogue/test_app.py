@@ -251,7 +251,7 @@ class CatalogueTests(unittest.TestCase):
                         {'index':1,'codec_type':'audio','codec_name':'aac','profile':'LC'}]
                 for index,lang in enumerate(languages,2):
                     tracks.append({'index':index,'codec_type':'subtitle','codec_name':'subrip','tags':{'language':lang}})
-                selected={'filename':'movie.mp4','hash':'a'*40,'index':1}
+                selected={'filename':'movie.mp4','hash':'a'*40,'index':1,'local':'/media/movie.mp4'}
                 info={'streams':tracks,'format':{'duration':'60','bit_rate':'500000'}}
                 with patch.object(a,'DATA',Path(directory)),patch.object(a,'resolve',return_value=selected), \
                      patch.object(a,'probe',return_value=info),patch.object(a,'external_subtitles',return_value=[]):

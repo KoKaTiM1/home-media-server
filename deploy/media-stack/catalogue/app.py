@@ -1086,7 +1086,7 @@ def prepare_locked(key,background,audio_index,deadline):
         if LIVE['key'] not in (None,key) and LIVE['active']>0:
             raise PlaybackBusy('Another title is currently streaming; this server supports one stream')
     saved=cached(prepared_key)
-    if not background and saved and saved.get('verification_version')==VERSION and saved.get('audio_policy')==2 and saved.get('subtitle_policy')==2 and F.source_state(key) in ('verified','downloaded'):
+    if not background and saved and saved.get('verification_version')==VERSION and saved.get('audio_policy')==2 and saved.get('subtitle_policy')==3 and F.source_state(key) in ('verified','downloaded'):
         playback_event(key,'prepared_cache',time.monotonic(),'hit')
         return saved
     verified=cached('verified-'+prepared_key) if not background else None
@@ -1141,6 +1141,10 @@ def prepare_locked(key,background,audio_index,deadline):
         typ=stream.get('codec_type')
         if typ not in ('video','audio','subtitle'): continue
         if typ=='video' and stream.get('disposition',{}).get('attached_pic'): continue
+        # Jellyfin extracts embedded tracks from the indexed .strm path, which
+        # is dynamiclibrary:// for online titles. That path cannot supply the
+        # source bytes, so advertise only delivered external subtitles there.
+        if typ=='subtitle' and not selected.get('local'): continue
         lang=stream.get('tags',{}).get('language','und')
         lang={'he':'heb','iw':'heb','en':'eng'}.get(lang,lang)
         if typ=='subtitle': languages.add(lang)
@@ -1161,7 +1165,7 @@ def prepare_locked(key,background,audio_index,deadline):
     # original stream indexes and all other languages; explicit None stays -1.
     hebrew=[t for t in tracks if t['Type']=='Subtitle' and t['Language']=='heb']
     keep={t['Index'] for t in hebrew[:2]}
-    next_index=max(t['Index'] for t in tracks)+1
+    next_index=max(s['index'] for s in info['streams'])+1
     tracks=[t for t in tracks if t['Type']!='Subtitle' or t['Language']!='heb' or t['Index'] in keep]
     if not background and len(hebrew)<2:
         pool=ThreadPoolExecutor(max_workers=1)
@@ -1191,7 +1195,7 @@ def prepare_locked(key,background,audio_index,deadline):
         'Container':Path(selected['filename']).suffix[1:].lower(),
         'RunTimeTicks':int(float(info.get('format',{}).get('duration',0))*10000000),
         'Bitrate':int(info.get('format',{}).get('bit_rate',5000000)),
-        'languages':sorted(languages),'checked_at':proof.get('checked_at',time.time()),'audio_policy':2,'subtitle_policy':2,
+        'languages':sorted(languages),'checked_at':proof.get('checked_at',time.time()),'audio_policy':2,'subtitle_policy':3,
         'verification_version':VERSION,'PlaybackUrl':REL.source_url('play',key,selected),
         'DefaultAudioStreamIndex':selected_audio['index'] if selected_audio else None,'AudioConversionRequired':needs_conversion}
     if getattr(BUDGET,'speculative',False):remaining(1)
