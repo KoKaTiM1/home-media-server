@@ -1,7 +1,7 @@
 param([ValidateSet('Install','Start','Status','Logs','Stop')][string]$Action='Status')
 $ErrorActionPreference='Stop'
 $Root=$PSScriptRoot
-$Image='home-media-verification-worker:0.2.0'
+$Image='home-media-verification-worker:0.2.1'
 $Name='home-media-verification-worker'
 function Invoke-DockerExecutable { & docker.exe @args; if($LASTEXITCODE -ne 0){throw 'Docker failed. See the message above.'} }
 function Existing {

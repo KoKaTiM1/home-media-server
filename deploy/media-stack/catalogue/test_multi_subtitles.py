@@ -52,7 +52,7 @@ class MultiSubtitlesTests(unittest.TestCase):
             self.assertEqual(len(a.wizdom_subtitles(KEY,'same.mkv')),1)
 
     def test_online_tracks_use_delivered_subtitles_and_local_tracks_keep_embedded(self):
-        for embedded,local in ((0,False),(1,False),(3,False),(1,True),(3,True)):
+        for embedded,local in ((0,False),(1,False),(3,False),(40,False),(1,True),(3,True)):
             with self.subTest(embedded=embedded,local=local):
                 key='movie:tt'+str(1234567+embedded+(100 if local else 0))
                 native=[{'index':0,'codec_type':'video','codec_name':'h264','pix_fmt':'yuv420p'},
@@ -69,7 +69,7 @@ class MultiSubtitlesTests(unittest.TestCase):
                 if not local:
                     self.assertTrue(all(t['IsExternal'] for t in he))
                     self.assertEqual(external.call_args.kwargs['max_hebrew'],2)
-                    self.assertTrue(all(t['Index']>embedded+1 for t in he))
+                    self.assertEqual([t['Index'] for t in info['MediaStreams']],list(range(len(info['MediaStreams']))))
                 elif embedded>=2:external.assert_not_called()
                 else:self.assertEqual(external.call_args.kwargs['max_hebrew'],2-embedded)
                 self.assertEqual(info['subtitle_policy'],3)

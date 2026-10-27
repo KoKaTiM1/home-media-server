@@ -49,6 +49,15 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(self.q.receive(WORKER,task,self.result()),'stale')
         with self.assertRaises(InvalidJob):self.q.claim('different-pc')
         self.q.set('generation','changed');self.assertFalse(self.q.renew(WORKER,task))
+    def test_stale_result_archive_can_grow_past_old_limit_and_replay(self):
+        folder=Path(self.tmp.name)
+        for _ in range(65):
+            result=self.result()
+            client.archive_stale_result(folder,{'operation':'probe'},result)
+        self.assertEqual(len(list((folder/'quarantine').glob('*.json'))),65)
+        last=json.loads(next((folder/'quarantine').glob('*.json')).read_text())
+        client.archive_stale_result(folder,last['task'],last['result'])
+        self.assertEqual(len(list((folder/'quarantine').glob('*.json'))),65)
     def test_worker_never_gets_upstream_url_and_server_cancel_revokes_stream(self):
         job=self.submit();task=self.q.claim(WORKER)
         self.assertNotIn('url',task);self.assertNotIn('http:',json.dumps(task))

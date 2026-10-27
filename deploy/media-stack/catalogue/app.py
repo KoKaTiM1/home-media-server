@@ -1165,7 +1165,10 @@ def prepare_locked(key,background,audio_index,deadline):
     # original stream indexes and all other languages; explicit None stays -1.
     hebrew=[t for t in tracks if t['Type']=='Subtitle' and t['Language']=='heb']
     keep={t['Index'] for t in hebrew[:2]}
-    next_index=max(s['index'] for s in info['streams'])+1
+    # Once unsupported online embedded tracks are omitted, external subtitle
+    # indexes must follow the visible stream list. Android TV uses the index
+    # to access that list and crashes if a removed track leaves a large gap.
+    next_index=max(t['Index'] for t in tracks)+1
     tracks=[t for t in tracks if t['Type']!='Subtitle' or t['Language']!='heb' or t['Index'] in keep]
     if not background and len(hebrew)<2:
         pool=ThreadPoolExecutor(max_workers=1)

@@ -29,6 +29,13 @@ LOG=logging.getLogger('verification-worker');STOP=threading.Event()
 class TransportWait(Exception):pass
 class DecodeRejected(Exception):pass
 
+def archive_stale_result(folder,task,result):
+    quarantine=folder/'quarantine'
+    quarantine.mkdir(exist_ok=True)
+    archive=quarantine/(result['result_id']+'.json')
+    if not archive.exists():
+        archive.write_text(json.dumps({'task':task,'result':result}))
+
 class API:
     def __init__(self,config):
         self.origin=urlsplit(config['server_url']);self.token=config['token'];self.pin=config['tls_sha256'].replace(':','').lower()
@@ -186,9 +193,12 @@ def main():
                         db.execute('DELETE FROM current WHERE id=1')
                     summary['completed_operations']=completed;status('Server acknowledged '+task['operation']+' ('+result['status']+')')
                 elif reply.get('ack')=='stale':
-                    quarantine=folder/'quarantine';quarantine.mkdir(exist_ok=True)
-                    if len(list(quarantine.iterdir()))>=64:raise TransportWait('Quarantine full; review required')
-                    (quarantine/(result['result_id']+'.json')).write_text(json.dumps({'task':task,'result':result}))
+                    try:
+                        archive_stale_result(folder,task,result)
+                    except OSError:
+                        status('Local stale-result archive unavailable; progress retained for retry')
+                        STOP.wait(15)
+                        continue
                     with db:db.execute('DELETE FROM current WHERE id=1')
                     status('Expired result retained; requesting new work')
                 else:raise TransportWait('Result not acknowledged')

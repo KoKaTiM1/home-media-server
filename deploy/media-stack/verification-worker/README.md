@@ -33,6 +33,12 @@ folder without deleting `config/` or `data/`. Run `01-INSTALL.cmd`, then
 and pending-result database. If a title is active, stop it after the viewing
 session; the server verification worker remains independent.
 
+Version 0.2.1 fixes a recovery loop after a long server outage. The gateway
+can acknowledge an expired result as stale; the worker archives it locally and
+requests new work. Older versions stop progressing when the local stale-result
+archive reaches 64 files. Update the image over the existing folder and retain
+`config/` and `data/` so the worker identity and pending result survive.
+
 A probe or sample is one operation; it is not one fully verified title. OMV has
 separate counts for Windows titles passed/unavailable/checkpointed, active
 operations and heartbeat. Metadata counts and the initial audit are separate

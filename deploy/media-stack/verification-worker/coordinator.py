@@ -31,6 +31,8 @@ class Handler(BaseHTTPRequestHandler):
     protocol_version='HTTP/1.0'
     def log_message(self,*args):pass
     def reply(self,status,value):
+        if self.path==PREFIX+'/result' or status>=400:
+            print('Verification request '+self.path.rsplit('/',1)[-1]+' status='+str(status)+' ack='+str(value.get('ack','')),flush=True)
         raw=json.dumps({'protocol':PROTOCOL,**value},allow_nan=False).encode()
         self.send_response(status);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(raw)));self.send_header('Cache-Control','no-store');self.end_headers();self.wfile.write(raw)
     def authorized(self):
@@ -61,7 +63,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(404,{'error':'Unknown endpoint'})
         except (ValueError,KeyError,TypeError):self.reply(400,{'error':'Invalid verification request'})
         except (OSError,TimeoutError):pass
-        except Exception:self.reply(503,{'error':'Verification service temporarily unavailable'})
+        except Exception as error:
+            print('Verification request error '+type(error).__name__,flush=True)
+            self.reply(503,{'error':'Verification service temporarily unavailable'})
     def stream(self):
         fields=self.path[len(PREFIX+'/stream/'):].split('/')
         if len(fields)!=2 or not all(re.fullmatch('[a-f0-9]{32}',s) for s in fields):raise InvalidJob('Invalid stream')
