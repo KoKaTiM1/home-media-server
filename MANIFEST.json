@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-10-27T16:28:23.017691+00:00",
+  "created_utc": "2026-10-27T17:29:49.548291+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -89,7 +89,7 @@
     "deploy/media-stack/omv-monitor/install.py": "4213869b2a3044237bb4b0d38fe88bd4d85d5d903db960c536f8dacd0dd7ddc8",
     "deploy/media-stack/omv-monitor/media-worker-status.service": "1eb94831c9bc38de5fc25247c314345b293e5881c711d1c02cf07da4d8fea0f4",
     "deploy/media-stack/omv-monitor/media-worker-status.timer": "ff774eb1055241aaa89926e44f0016fa74999da29a14a661e3cf42b897e1c40b",
-    "deploy/media-stack/omv-monitor/monitor.py": "30312f46073d4b530b3d1bde44cf2daf2411235d1988547e7609ed64593174b9",
+    "deploy/media-stack/omv-monitor/monitor.py": "1848d94b383b96f75aaadd200c6e684ea3c36b34170ac90a8873939bfb31e47e",
     "deploy/media-stack/omv-monitor/navigation.yaml": "c5b3c25f85ac7f5c8fb80f905d0d45789b62712a312e7f49c03f6531e0ec6576",
     "deploy/media-stack/omv-monitor/route.yaml": "59159d3a649c96e19e2af8b7a1e6b79d05228a9a195718cc2be9e63afe6b8544",
     "deploy/media-stack/omv-monitor/test_monitor.py": "ec40bec59f49e3eb077b43db4ae803e773ffe260c62fbd75d0098f2bc4f5893a",

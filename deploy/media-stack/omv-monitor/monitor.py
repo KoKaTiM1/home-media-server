@@ -287,16 +287,20 @@ def overview(data=DATA,snapshot=None):
             conn.row_factory=sqlite3.Row
             totals=dict(conn.execute('SELECT key,value FROM totals'))
             control={key:json.loads(value) for key,value in conn.execute("SELECT key,value FROM control WHERE key IN ('enabled','reason','max_windows_jobs')")}
-            seen=[row[0] for row in conn.execute('SELECT seen FROM client')]
-            if conn.execute("SELECT 1 FROM sqlite_master WHERE name='second_client'").fetchone():
-                seen += [row[0] for row in conn.execute('SELECT seen FROM second_client')]
+            seen=[]
+            # Count every separately enrolled Windows lane. Older dashboard
+            # code only read the original two tables and reported 2/2 even
+            # after lanes three and four had connected.
+            for table in ('client','second_client','third_client','fourth_client'):
+                if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():
+                    seen += [row[0] for row in conn.execute('SELECT seen FROM '+table)]
             active=conn.execute("SELECT key,operation,params,state,created,stream_started,phase,phase_at FROM decode_jobs WHERE state IN ('pending','leased','result') AND controller>? ORDER BY created LIMIT 1",(now,)).fetchone()
             problem=conn.execute("SELECT operation,outcome,reason_code,finished FROM decode_jobs WHERE outcome IN ('checkpoint','decode_failure') AND finished>? ORDER BY finished DESC LIMIT 1",(now-3600,)).fetchone()
         add('Windows final passes',f"{totals.get('windows_titles_verified',0):,}",'Completed full title checks on the PC; probes and samples excluded','success')
         online=sum(value>now-45 for value in seen)
         connected=online>0
         add('Windows worker','Connected' if connected else 'Offline',control.get('reason','Waiting for resource gate') if connected else 'Server verification continues without the PC','success' if connected and control.get('enabled') else 'muted')
-        capacity=max(1,min(2,int(control.get('max_windows_jobs',1))))
+        capacity=max(1,min(4,int(control.get('max_windows_jobs',1))))
         add('Windows lanes',f'{online} / {capacity}','Connected verifier containers / allowed simultaneous Windows operations','success' if online and control.get('enabled') else 'muted')
         if active:
             key=active['key'];details=context(data,cache_key='remote-validation-worker')
