@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-10-27T05:29:06.808604+00:00",
+  "created_utc": "2026-10-27T05:29:29.983353+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -7,7 +7,7 @@
     "RESTORE.md": "c04c36bc312792dbf008631a3656ed2653a2835e6be043b47701ecbac5672212",
     "artifacts/DynamicLibrary/meta.json": "fb782b38f52df228c7217dc2d66e48ff268b91011435c35f827bb3e3f0eacee6",
     "artifacts/README.md": "8ee172edbc15e2b65dd213d93368f803d858c2f22f1597225e722278445f62e9",
-    "backup/export_project.py": "33ee73372e7fc891b4bd2581006e2a37ec0d9f5e98b8cdb3aefb20a58c2df992",
+    "backup/export_project.py": "bd916920d08f9fe1257d487b4ca699255b006592ccce19faa7b9abc7eb97eebf",
     "backup/push_project.py": "7782d261b341bc103fa2c28a7c492c96f125e118728be99f0fe060f9424e738c",
     "backup/render_deployment.py": "ff3a93a85eb6c958a6e329f1e7c47d151f4db038998634003a867f8bc959c24b",
     "backup/templates/.gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -100,6 +100,9 @@
     "deploy/media-stack/verification-worker/05-STATUS.cmd": "491a9d25e0d9f1a6c0a9de7588ae55ec6168e982cc5bc5b4319aec956b15310e",
     "deploy/media-stack/verification-worker/06-LOGS.cmd": "805077d59c9af041f694f1dd0057d1b67333e1ddf8bdf7ebaf13d6b59caacd7e",
     "deploy/media-stack/verification-worker/07-STOP.cmd": "d11160886fb4639fee87360bd9d4187ff515e19d9eebb48ef4abea0e9119ea2b",
+    "deploy/media-stack/verification-worker/08-START-SECOND.cmd": "7ef25e8f555588eac82646b2729dc2714d479a405c0d908a7f2a711d59d7dc35",
+    "deploy/media-stack/verification-worker/09-STOP-SECOND.cmd": "9f8b2eeecfb3fd0300e39a02eb90468e48b89969c86f9567f9e25398c53f9deb",
+    "deploy/media-stack/verification-worker/10-STATUS-SECOND.cmd": "5271281a72b2a8dd9e67aa0192354f10b6c0a23a74aa4aeaff42f10b3c5d8710",
     "deploy/media-stack/verification-worker/Dockerfile": "8427129ff91b5770865b325c8de840dc2ca8b0013f42b29dbd8dd9d3fde0c19b",
     "deploy/media-stack/verification-worker/README.md": "4d636bc57c022f882583c762405af2e2c191a9ada011ce393d14c8015919f37f",
     "deploy/media-stack/verification-worker/START-HERE.txt": "f67b693dbeb2cbb7b5f9bd17b2184eecba95f47b3910b1f859902e1b4da9c2b1",

@@ -32,6 +32,7 @@ VERIFICATION_WORKER_FILES = (
     '.gitignore', 'Dockerfile', 'README.md', 'START-HERE.txt', 'config.example.json',
     'coordinator.py', 'resource_guard.py', 'verification_worker.py', 'worker.ps1',
     '01-INSTALL.cmd', '04-START.cmd', '05-STATUS.cmd', '06-LOGS.cmd', '07-STOP.cmd',
+    '08-START-SECOND.cmd', '09-STOP-SECOND.cmd', '10-STATUS-SECOND.cmd',
 )
 
 
