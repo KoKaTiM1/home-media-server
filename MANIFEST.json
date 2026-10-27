@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-10-27T21:45:59.173881+00:00",
+  "created_utc": "2026-10-27T21:50:17.412837+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -18,7 +18,7 @@
     "deploy/media-stack/README.md": "834fec2e5378f42458287874783d5b69336e63b5ebc9310d076ed34eb2dbe2d7",
     "deploy/media-stack/catalogue/Dockerfile": "c60c51a2ba842e4e5cb88a0873e229df12020e3a123a3f6e3548698581f46bde",
     "deploy/media-stack/catalogue/README.md": "2ab29710473748a58f423f223d846d4ed9e0754902d18a7cabd3b31764aaa01a",
-    "deploy/media-stack/catalogue/app.py": "0bd07f92d4259f73b7eca4f297091cb2a0a475c589dea0a350c7c8a6203b45ab",
+    "deploy/media-stack/catalogue/app.py": "2937ee03283804ad5c0a8d6a272b859036acca3c3f2ca1a262bac6c5682fdc32",
     "deploy/media-stack/catalogue/bootstrap.py": "002cb58a203f36b9ee66d83900cf939a273e73e75637dfd8b342a67b48edfad9",
     "deploy/media-stack/catalogue/check_audio_conversion.py": "669463dd9be988b0becf34db0014739e559e2f1fa6c350be11d5dd4a81c4a899",
     "deploy/media-stack/catalogue/check_audio_subtitles.py": "f89e81cd25fa7767dddef438e63e8155a92e8689e5aeeaf5e27af306ed4eb02f",
