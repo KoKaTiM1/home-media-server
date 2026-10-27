@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-10-27T19:57:50.543668+00:00",
+  "created_utc": "2026-10-27T20:00:12.981662+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -112,7 +112,7 @@
     "deploy/media-stack/verification-worker/16-STATUS-FOURTH.cmd": "b8658d5befd339e9cee3d57ee8fbb5ab15680d21addd6eb103cffebc0e1cb972",
     "deploy/media-stack/verification-worker/17-UPDATE-RUNNING.cmd": "4f8f96041fc6ef111b9898fd48e742f68945685373d887cde2835c2c4ec5b660",
     "deploy/media-stack/verification-worker/Dockerfile": "8427129ff91b5770865b325c8de840dc2ca8b0013f42b29dbd8dd9d3fde0c19b",
-    "deploy/media-stack/verification-worker/README.md": "8c7ce4323b558fc83cc239bed066924551b87f0c5f918a741ee55decb0594db2",
+    "deploy/media-stack/verification-worker/README.md": "58ba910f9c057b489485901c4a9fb2308de3b3086444f7d8a1a891ec946d3bf8",
     "deploy/media-stack/verification-worker/START-HERE.txt": "ddb0f5f8457dd82c7a112c1511a8aa48488a574aa8251dff20ab70ff9541fa55",
     "deploy/media-stack/verification-worker/config.example.json": "110d37e93171a6f327d55c17ce13014cc8033ecdace6d55e465844754e07b5cf",
     "deploy/media-stack/verification-worker/coordinator.py": "79655547aeb0389a49146daa93748111e48ea0932fd6196e908d4b244af7321e",

@@ -72,8 +72,9 @@ FFmpeg output, signed source URL or unrestricted error text reaches OMV.
 
 ## Queue and progress update (0.2.2)
 
-The server can stage up to two operations per active lane, with a maximum of
-three active leases during the current pilot. Extra producers resolve independent
+The server can stage up to two operations per active lane. The private guard
+independently caps active leases (three, then four during staged pilots). Extra
+producers resolve independent
 titles ahead of time; a queued operation retains its server controller, exact
 source binding, deadline and exclusive title claim. No whole-title batch is
 handed to a PC. Each container runs one operation at a time. Expired leases are
@@ -159,7 +160,8 @@ For bounded lookahead, set private guard `prefetch_per_lane` to `2` (default
 `1`). The active lease limit remains `max_windows_jobs`; the total operation
 queue limit is their product, at most eight. At three active slots, restore the
 `media-remote-lookahead@4`, `@5` and `@6` timer instances alongside the ordinary
-three producers. Keep all dispatchers gated off until the staged memory gate
+three producers. At four active slots, also restore `@7` and `@8`, for eight
+producer slots in total. Keep all dispatchers gated off until the staged memory gate
 and pilot are approved. Producer slots are not extra decoder slots. Add the
 catalogue `verification_jobs.py` and `verification_remote.py` read-only source
 mounts from Compose when restoring; compare deployed module hashes with source.
