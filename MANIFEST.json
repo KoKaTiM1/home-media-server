@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-10-27T17:29:49.548291+00:00",
+  "created_utc": "2026-10-27T18:57:38.584827+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -49,7 +49,7 @@
     "deploy/media-stack/catalogue/verification_media.py": "00d792a5790d137d0c384e721c182dd5d25b4c41805824e95e430c93e7ebe8dd",
     "deploy/media-stack/catalogue/verification_remote.py": "4c9e41b8b8c7a11bda2d4179fe73417d6f81f39b7a263d17fabd0c2cc3b54c7f",
     "deploy/media-stack/cleanup.py": "f8a9181eb31e16a0c996aa33547f960b2c886fbb2f06ae89bad8cd2c06d1e6f9",
-    "deploy/media-stack/compose.yaml": "e0c88b48a402026dd7fd85cd956ef634e9fa0d554dec743104cfc15d7a9d3ded",
+    "deploy/media-stack/compose.yaml": "2d4f5b7a71c8ccae90d784b6680b058165ac0454f29dece4a7f77ffb993d5e10",
     "deploy/media-stack/configure-audio.py": "bc304f2a86342876cecdfdadd722bdbf6966202c5b24266943615596659c88d2",
     "deploy/media-stack/configure-subtitles.py": "a5eb8306d03efde402a3e1cdc3a72ed3b64e4f8ea7b76e6c850a1c99a0f569b2",
     "deploy/media-stack/metadata-worker/.dockerignore": "0430726d54544f6196d48177dbcde1117f3eb8fd1a2625f83d9e8b3c61aa3115",

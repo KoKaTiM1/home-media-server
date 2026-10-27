@@ -86,6 +86,7 @@ services:
       - /srv/dev-disk-by-uuid-bd267f22-f18a-4966-94ae-409a27252905/catalogue:/catalogue
       - ./catalogue/app.py:/app/app.py:ro
       - ./catalogue/features.py:/app/features.py:ro
+      - ./catalogue/verification_jobs.py:/app/verification_jobs.py:ro
       - /srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>:/storage
     secrets:
       - catalogue_signing
