@@ -15,7 +15,7 @@ class MonitorTests(unittest.TestCase):
         with patch.object(m,'systemd',return_value=units),patch.object(m,'context',return_value={}):rows=m.workers()
         row=next(r for r in rows if r['id']=='media-verification-coordinator')
         self.assertIn('Running',row['health']);self.assertEqual(row['next_run'],'Continuous service')
-        self.assertLessEqual(len(rows),10)
+        self.assertLessEqual(len(rows),11)
         self.assertEqual(rows[1]['name'],'Windows LAN source verification')
         self.assertFalse(any('LAN metadata' in r['name'] for r in rows))
 

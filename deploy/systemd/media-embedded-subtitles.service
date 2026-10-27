@@ -1,0 +1,11 @@
+[Unit]
+Description=Cache embedded Hebrew subtitles from requested exact media sources
+Requires=media-stack.service
+After=media-stack.service media-verification-guard.service
+RequiresMountsFor=/srv/dev-disk-by-uuid-bd267f22-f18a-4966-94ae-409a27252905
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker exec catalogue-bridge python /app/app.py embedded-subtitles
+TimeoutStartSec=125s
+Nice=19

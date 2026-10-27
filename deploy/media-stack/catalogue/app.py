@@ -30,6 +30,7 @@ import zipfile
 from features import Features
 from metadata_jobs import MetadataJobs, MetadataBusy, from_marker as metadata_coordinator
 from reliability import Reliability, Checkpoint, VERSION, rank, METADATA_SECONDS, WORK_SECONDS
+from embedded_subtitles import EmbeddedSubtitles
 
 DATA = Path(os.getenv('CATALOGUE_DATA', '/data'))
 LIBRARY = Path(os.getenv('CATALOGUE_LIBRARY', '/catalogue'))
@@ -1138,7 +1139,7 @@ def prepare_locked(key,background,audio_index,deadline):
         if LIVE['key'] not in (None,key) and LIVE['active']>0:
             raise PlaybackBusy('Another title is currently streaming; this server supports one stream')
     saved=cached(prepared_key)
-    if not background and saved and saved.get('verification_version')==VERSION and saved.get('audio_policy')==2 and saved.get('subtitle_policy')==4 and F.source_state(key) in ('verified','downloaded'):
+    if not background and saved and saved.get('verification_version')==VERSION and saved.get('audio_policy')==2 and saved.get('subtitle_policy')==5 and F.source_state(key) in ('verified','downloaded'):
         playback_event(key,'prepared_cache',time.monotonic(),'hit')
         return saved
     verified=cached('verified-'+prepared_key) if not background else None
@@ -1233,12 +1234,19 @@ def prepare_locked(key,background,audio_index,deadline):
         cancel=getattr(BUDGET,'cancel',None)
         def subtitles():
             with request_budget(deadline,cancel):
-                return external_subtitles(key,selected['filename'],'eng' in languages,max_hebrew=2-len(hebrew))
+                try:extracted=EMBED.ready(key,selected)
+                except (OSError,ValueError,sqlite3.Error):extracted=[]
+                try:return extracted+external_subtitles(key,selected['filename'],'eng' in languages,max_hebrew=2-len(hebrew))
+                except Exception:
+                    if extracted:return extracted
+                    raise
         try:
             with playback_phase(key,'subtitle_lookup'):
                 external=pool.submit(subtitles).result(timeout=max(.001,min(15,deadline-time.monotonic())))
-            he_count=len(hebrew)
+            he_count=len(hebrew);variants=set()
             for sub in external:
+                if sub.get('variant') in variants:continue
+                if sub.get('variant'):variants.add(sub['variant'])
                 if sub['lang']=='heb' and he_count>=2:continue
                 if sub['lang']=='heb':he_count+=1
                 variant=sub.get('variant')
@@ -1256,7 +1264,7 @@ def prepare_locked(key,background,audio_index,deadline):
         'Container':Path(selected['filename']).suffix[1:].lower(),
         'RunTimeTicks':int(float(info.get('format',{}).get('duration',0))*10000000),
         'Bitrate':int(info.get('format',{}).get('bit_rate',5000000)),
-        'languages':sorted(languages),'checked_at':proof.get('checked_at',time.time()),'audio_policy':2,'subtitle_policy':4,
+        'languages':sorted(languages),'checked_at':proof.get('checked_at',time.time()),'audio_policy':2,'subtitle_policy':5,
         'verification_version':VERSION,'PlaybackUrl':REL.source_url('play',key,selected),
         'DefaultAudioStreamIndex':selected_audio['index'] if selected_audio else None,'AudioConversionRequired':needs_conversion}
     if getattr(BUDGET,'speculative',False):remaining(1)
@@ -1266,6 +1274,9 @@ def prepare_locked(key,background,audio_index,deadline):
     if accepted is not False:
         REL.success(key,selected)
         remember('verified-'+prepared_key,{'selected':selected,'info':info,'proof':proof},max(1,300-(time.time()-proof.get('checked_at',time.time()))))
+        if not background:
+            try:EMBED.enqueue(key,selected,output['RunTimeTicks']/10000000)
+            except (OSError,ValueError,sqlite3.Error):log('Embedded subtitle scheduling deferred')
     return output if background else remember(prepared_key,output,max(1,300-(time.time()-output['checked_at'])))
 
 
@@ -1626,7 +1637,7 @@ def main():
     # its native metadata and downloaded sidecar subtitles beside STRM files.
     os.umask(0o002)
     parser=argparse.ArgumentParser()
-    parser.add_argument('command',choices=('serve','sync','collections','badges','trailers','discovery-sync','availability','downloads','imdb-sync','metadata-import','remote-availability'),default='serve',nargs='?')
+    parser.add_argument('command',choices=('serve','sync','collections','badges','trailers','discovery-sync','availability','downloads','imdb-sync','metadata-import','remote-availability','embedded-subtitles'),default='serve',nargs='?')
     parser.add_argument('--movies',type=int,default=1000)
     parser.add_argument('--shows',type=int,default=200)
     parser.add_argument('--slot',type=int,choices=range(1,9),default=1)
@@ -1641,6 +1652,7 @@ def main():
     if args.command=='trailers': return refresh_trailers()
     if args.command=='discovery-sync': return F.sync_discovery()
     if args.command=='availability': return F.warm_availability()
+    if args.command=='embedded-subtitles': return log('Embedded subtitle chunks completed: '+str(EMBED.work()))
     if args.command=='remote-availability': return F.warm_availability(remote=True,slot=args.slot)
     if args.command=='downloads': return F.manage_downloads()
     if args.command=='imdb-sync': return F.update_index()
@@ -1653,4 +1665,5 @@ def main():
 
 F=Features(globals())
 REL=Reliability(globals())
+EMBED=EmbeddedSubtitles(globals())
 if __name__=='__main__': main()

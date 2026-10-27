@@ -1,0 +1,10 @@
+[Unit]
+Description=Resume requested embedded Hebrew subtitle extraction while idle
+
+[Timer]
+OnBootSec=6min
+OnUnitInactiveSec=15s
+AccuracySec=3s
+
+[Install]
+WantedBy=timers.target

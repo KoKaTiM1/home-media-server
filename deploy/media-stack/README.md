@@ -107,6 +107,7 @@ quota and maintenance issues were repaired and checked.
 | `media-verification-guard` | Every 15 seconds; pauses optional verification on memory pressure or a new TorrServer restart |
 | `media-saved-downloads` | Every minute; track downloads, move owned files and apply managed retention |
 | `media-catalogue-badges` | Hourly; subtitle availability markers |
+| `media-embedded-subtitles` | Requested online titles; resumable Hebrew extraction while idle |
 | `media-catalogue-collections` | Every 30 minutes; native collection membership |
 | `media-cleanup` | Hourly; legacy Downloads retention |
 | `media-worker-status` | Two minutes after boot, then one minute after completion; cached OMV counters |
@@ -174,10 +175,12 @@ Hebrew subtitle selection offers up to two distinct versions labelled עברית
 and עברית 2, best release match first. Stable variant URLs keep their files
 separate; explicit None and English fallback remain available. A second choice
 depends on available releases and does not guarantee synchronization.
-Online sources expose only subtitle files the bridge can deliver directly;
-embedded tracks in torrent streams are withheld because Jellyfin cannot extract
-them from the virtual catalogue path. Downloaded local files retain embedded
-subtitle choices. The embedded extraction defect remains tracked in issue #1.
+Online sources expose only subtitle files the bridge can deliver directly.
+An idle worker extracts embedded Hebrew from requested exact sources in resumable
+chunks; completed tracks join the external choices, while partial tracks stay
+hidden. Existing external subtitles work while extraction is pending. Native
+extraction from the virtual path is bypassed. Downloaded local files retain
+embedded choices. Physical selection/seek acceptance remains tracked in issue #1.
 
 Online Delete reports a title for fresh verification rather than removing its
 virtual record or saved media. Reports are durable, prioritized and visible in

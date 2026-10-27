@@ -132,7 +132,7 @@ Native Jellyfin HLS owns seeking, segments, authentication and cleanup. Text
 subtitles remain separately selectable; video encoding/subtitle burning is not
 requested. After restore, `configure-audio.py` applies native throttling at
 60 seconds ahead and segment retention of 90 seconds through Jellyfin's API.
-Temporary HLS files use the existing media-partition Jellyfin cache.
+Temporary HLS files use the configured Jellyfin cache.
 
 | Server request stage | Bound / failure behavior |
 | --- | --- |
@@ -153,8 +153,9 @@ Wizdom is the default free Hebrew provider and needs no account/key. Movie IMDb
 IDs or series IMDb plus exact season/episode identify matches; release names
 help rank candidates. Hebrew is preferred, with English where available.
 The player offers up to two Hebrew tracks named **עברית 1** and **עברית 2**.
-Existing embedded Hebrew counts toward that pair; missing slots use up to two
-Wizdom releases, best filename match first. Identical normalized cue content is
+Completed cached extraction of the exact online source is preferred when
+available; local media retain native embedded tracks. Missing slots use up to
+two Wizdom releases, best filename match first. Identical normalized cue content is
 deduplicated, including copies that differ only in cue numbering/newlines.
 A second version appears only when available. This offers an alternative for a
 poorly timed track; it does not automatically prove or correct synchronization.
@@ -165,17 +166,44 @@ file. Provider failures on one release can fall through to another within the
 existing preparation budget. Signed variant IDs survive the native VTT relay.
 Legacy single-file subtitle links remain readable. Native language identifiers
 stay `heb`, while titles/display names begin in Hebrew. English and explicit
-None retain their existing behavior. Prepared metadata uses subtitle-policy2,
-so the next preparation rebuilds older cached single-choice track lists.
+None retain their existing behavior. Prepared metadata uses subtitle-policy5,
+so preparation rebuilds older cached track lists.
 OpenSubtitles is optional additional coverage, configured privately through
 `configure-subtitles.py`. Missing subtitles cannot be fabricated, and matching
 a release name does not guarantee synchronization.
 
 The bridge reads ZIP contents without extracting archive paths and converts
 Windows-1255/UTF-16 content to UTF-8. The signed Jellyfin-relative subtitle relay
-serves Hebrew/English text as WebVTT. External and embedded text tracks remain
-selectable, including explicit None across PlaybackInfo refreshes. A player
+serves Hebrew/English text as WebVTT. Delivered external tracks and local
+embedded text retain explicit None across PlaybackInfo refreshes. A player
 already open during an update must be stopped/reopened to use changed metadata.
+
+### Embedded Hebrew cache for online titles
+
+Native extraction cannot read the virtual dynamic catalogue path. Instead,
+foreground preparation queues an on-demand exact-source extraction job; Play
+never waits for it. The idle worker reads two-minute windows with preroll,
+converts a Hebrew text stream to SRT and checks copied video packet timestamps
+for window coverage. It saves cues and a durable cursor, not a full video file.
+This can still require reading much of the source over the torrent transport.
+
+Only a completely covered, nonempty subtitle is published as an external signed
+variant. Partial cue sets stay hidden. A source/file change uses a different
+cache identity; a failed/manual-pending video check cannot authorize extraction.
+Existing external subtitles continue working while extraction is pending or
+unavailable. Only one embedded Hebrew text track is extracted per source;
+bitmap subtitles are unsupported. Exact-source extraction improves release
+matching but cannot correct timing errors already inside the original track.
+
+`media-embedded-subtitles.timer` resumes up to four windows within a110-second
+slice and checks again15seconds after a slice ends. Source stalls retry later;
+ordinary slice exhaustion retains the last completed window and resumes soon.
+Active/paused viewing, navigation, title holds and resource pressure defer or
+cancel work. The worker shares exclusive title/torrent claims with verification
+and never changes video validation proofs or failure counters. Completed output
+invalidates only prepared subtitle-response caches; a currently opened player
+retains its original metadata. Each job's cached cue data is bounded to2MiB.
+OMV Media workers lists the extraction service separately from v5 verification.
 
 Hourly badge refreshes are bounded to 25 titles and a 200-search/day application
 budget, prioritizing recently browsed titles. Badges use cached availability;
