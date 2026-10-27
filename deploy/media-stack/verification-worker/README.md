@@ -121,7 +121,7 @@ checkpoint, not a failed source. Lost replies replay the same result identity.
 
 1. Build the normal catalogue image first. From the stack directory build the
    helper with `docker build -f verification-worker/Dockerfile -t
-   home-media-verification-worker:0.1.0 .`. Export this image privately; compiled
+   home-media-verification-worker:0.2.2 .`. Export this image privately; compiled
    image archives are not part of the public repository.
 2. Install `coordinator.py`, `resource_guard.py` and the shared
    `catalogue/verification_jobs.py` / `verification_media.py` under
@@ -154,6 +154,15 @@ checkpoint, not a failed source. Lost replies replay the same result identity.
 7. Deliver a regenerated private PC JSON, enroll its persisted identity, verify
    real PC results and fallback on stopping the PC. Preserve protected titles,
    watch progress, favourites and downloads. Do not restart a playing service.
+
+For bounded lookahead, set private guard `prefetch_per_lane` to `2` (default
+`1`). The active lease limit remains `max_windows_jobs`; the total operation
+queue limit is their product, at most eight. At three active slots, restore the
+`media-remote-lookahead@4`, `@5` and `@6` timer instances alongside the ordinary
+three producers. Keep all dispatchers gated off until the staged memory gate
+and pilot are approved. Producer slots are not extra decoder slots. Add the
+catalogue `verification_jobs.py` and `verification_remote.py` read-only source
+mounts from Compose when restoring; compare deployed module hashes with source.
 
 TorrServer's limit was increased live from 256 to 320 MiB after checking host
 headroom; no TorrServer restart was needed. More physical RAM provides headroom
