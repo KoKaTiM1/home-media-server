@@ -198,7 +198,7 @@ matching but cannot correct timing errors already inside the original track.
 Each window covers30seconds, limiting work lost to a playback/resource yield.
 Ordinary cancellation retries after15seconds; source errors retain their longer
 backoff. The same playback and memory guards are checked before reading again.
-`media-embedded-subtitles.timer` resumes up to four windows within a110-second
+`media-embedded-subtitles.timer` resumes up to sixteen windows within a110-second
 slice and checks again15seconds after a slice ends. Source stalls retry later;
 ordinary slice exhaustion retains the last completed window and resumes soon.
 Active/paused viewing, navigation, title holds and resource pressure defer or

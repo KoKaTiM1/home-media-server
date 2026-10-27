@@ -48,6 +48,12 @@ class EmbeddedTests(unittest.TestCase):
         with patch.object(self.worker,'extract') as extract:
             self.assertFalse(self.worker.once(time.monotonic()+15));extract.assert_not_called()
         self.assertEqual(self.row()[0],'queued')
+    def test_smaller_windows_resume_existing_cache_without_losing_boundary_cues(self):
+        self.seed();self.worker.once(time.monotonic()+15)
+        with patch('embedded_subtitles.WINDOW',5):
+            for _ in range(4):self.worker.once(time.monotonic()+15)
+        self.assertEqual(self.row()[:2],('ready',30))
+        self.assertEqual(cues(Path(self.worker.ready(KEY,self.selected)[0]['path']).read_text()),cues(SRT))
     def test_cancellation_keeps_previous_chunks_and_never_invalidates_video(self):
         self.seed();self.worker.once(time.monotonic()+15)
         with patch.object(self.worker,'extract',side_effect=a.ClientCancelled('new playback')),patch.object(a.F,'validation_result') as invalidated:

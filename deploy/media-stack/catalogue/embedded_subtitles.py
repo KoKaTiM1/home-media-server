@@ -197,7 +197,7 @@ class EmbeddedSubtitles:
             self.g['log']('Embedded subtitle checkpoint ('+type(error).__name__+code+')')
             return False
         finally:self.g['F'].release_verification(key,claim)
-    def work(self,seconds=110,max_chunks=4):
+    def work(self,seconds=110,max_chunks=16):
         self.g['DATA'].mkdir(parents=True,exist_ok=True)
         with (self.g['DATA']/'embedded-subtitles.lock').open('a') as lock:
             try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
