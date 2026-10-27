@@ -1,100 +1,51 @@
-# Optional Windows media verification worker
+# Optional Windows verification worker
 
-The always-on server owns the validation queue, chooses exact sources and commits
-version-5 playback proofs. The optional Windows Linux-container worker performs
-real FFprobe/FFmpeg probes, beginning/later sample decoding and fresh AAC-LC sample
-conversion. It handles movies and episode keys through the same scheduler as the
-server. The older metadata helper remains a separate component.
+Windows decodes fixed media samples; the server owns source selection and final
+v5 proofs. Package 0.2.3 simplifies the launchers; its decoder image remains
+`home-media-verification-worker:0.2.2` with the queue/progress improvements.
 
-The server and Windows dispatcher each reserve a key with a renewable durable
-claim before preparation. Both schedulers exclude live claims; expired claims
-return to the server. Existing per-title/per-torrent locks remain in use. A
-Windows dispatcher orchestrates the normal server pipeline while its media
-recipes run on the PC. Only the trusted server can mark a title verified, choose
-a fallback, update retries or import a playable item.
+## Four launchers
 
-## Windows operation
+| File | Action |
+| --- | --- |
+| `01-UPDATE-AND-START.cmd` | Verify/load the image, restart/start all four workers, remove old launchers after success. |
+| `02-START-ALL.cmd` | Start all four without reinstalling; already-running workers are retained. |
+| `03-LOGS.cmd` | Combined live logs, prefixed by worker name; Ctrl+C closes only the view. |
+| `04-STOP-ALL.cmd` | Stop all four, retaining every saved result and identity. |
 
-Copy the prepared archive to a local directory outside a Git checkout, extract
-it, start Docker Desktop's Linux engine and run `01-INSTALL.cmd`. Deliver the
-private connection JSON separately through authenticated SCP into
-`config/verification.local.json`, then run `04-START.cmd`.
+Extract over the existing worker folder. Preserve `config/`, `data/`, `data-2/`,
+`data-3/` and `data-4/`; each container has a separate durable identity. Run
+`01-UPDATE-AND-START.cmd` once after extracting. No per-worker start/stop actions
+are needed. Fresh installations need their private connection JSON under
+`config/verification.local.json` before Update or Start.
 
-The start window follows live logs. Ctrl+C closes that view while Docker keeps
-working; `05-STATUS.cmd` shows saved counters, `06-LOGS.cmd` follows logs and
-`07-STOP.cmd` stops the helper. Keep `data/` across restarts to preserve its
-identity and durable unacknowledged result. There is no Windows auto-start;
-start Docker Desktop and the launcher when assistance is wanted. The server
-continues when Windows is absent.
+The updater checks the image checksum and occupied container names before
+stopping workers. Cleanup targets only the exact historical launcher names,
+never data/config or unrelated scripts. Failed validation leaves running workers
+and old launchers intact. Other applications' containers are never adopted.
+An interrupted update can be retried; retained pending results use existing
+lease/generation fencing. Physical Windows installation remains a separate check
+from server-side or mocked launcher tests.
 
-For the 0.2.0 progress update, extract the new package over the existing local
-folder without deleting `config/` or `data/`. Run `01-INSTALL.cmd`, then
-`07-STOP.cmd` and `04-START.cmd`. The new image retains the same worker identity
-and pending-result database. If a title is active, stop it after the viewing
-session; the server verification worker remains independent.
+## Queue and progress
 
-Version 0.2.1 fixes a recovery loop after a long server outage. The gateway
-can acknowledge an expired result as stale; the worker archives it locally and
-requests new work. Older versions stop progressing when the local stale-result
-archive reaches 64 files. Update the image over the existing folder and retain
-`config/` and `data/` so the worker identity and pending result survive.
+Each container runs one operation at a time. Four connected containers do not
+necessarily mean four active jobs: the private server resource guard sets that
+limit independently, and can stage up to two operations per active lane.
+Additional server producers prepare independent titles ahead of time under
+exclusive title claims; whole-title batches are not handed to the PC.
 
-Additional Windows lanes use the same installed image and private
-connection file, each with a separate `data-N/` identity and container. The
-server supports up to four Windows jobs, but the live resource gate is raised in
-stages: review three active lanes before enabling a fourth. Connected containers are
-consumers of a shared queue; four connected containers do not mean four active
-decode slots. The guard independently caps simultaneous leases.
-Never copy a `data/` folder between lanes; each identity owns its checkpoint and
-pending result. The launchers are `08-START-SECOND.cmd`, `11-START-THIRD.cmd`,
-and `14-START-FOURTH.cmd`, with matching stop/status commands. The first lane
-keeps the original `data/` folder and commands.
-Newly created containers use Docker's `unless-stopped` policy: after Docker
-Desktop starts following an outage, a previously running worker resumes using
-its saved result. A deliberate `07-STOP.cmd` or `09-STOP-SECOND.cmd` keeps that
-lane stopped. Existing containers retain their old restart policy until they
-are recreated or changed with `docker update --restart unless-stopped`.
+Claim long polling delivers ready work promptly. Waiting for assignment does
+not count as a torrent stall. Messages distinguish server preparation, busy
+decode slots, no ready operation and paused gates. Identical waiting lines repeat
+at most once per minute; local status keeps refreshing. Phase lines identify the
+title and local acknowledged operation count. Operations are not final verified
+titles; OMV shows server-validated title outcomes separately.
 
-A probe or sample is one operation; it is not one fully verified title. OMV has
-separate counts for Windows titles passed/unavailable/checkpointed, active
-operations and heartbeat. Metadata counts and the initial audit are separate
-from the large validation backlog. The owner decides when to turn Windows off;
-there is no automatic stop at a remaining-title threshold.
-
-OMV's Media workers **Progress overview** uses a cached catalogue snapshot for
-final v5 passes, remaining source keys, retries and initial-audit progress.
-Live queue state shows the title, batch position, probe/beginning/later sample,
-elapsed time and useful source bytes. Version 0.2.0 also reports fixed decoder
-phases on lease renewals every 10 seconds and a small fixed reason category for
-checkpoints or decoder rejections. The earlier PC image remains compatible but
-only the server-inferred operation stage appears until it is updated. No raw
-FFmpeg output, signed source URL or unrestricted error text reaches OMV.
-
-## Queue and progress update (0.2.2)
-
-The server can stage up to two operations per active lane. The private guard
-independently caps active leases (three, then four during staged pilots). Extra
-producers resolve independent
-titles ahead of time; a queued operation retains its server controller, exact
-source binding, deadline and exclusive title claim. No whole-title batch is
-handed to a PC. Each container runs one operation at a time. Expired leases are
-fenced and the server resumes the title later; a late result cannot overwrite a
-new lease. The existing progress/foreground/resource guards remain in force.
-
-Claims can wait up to 15 seconds on the gateway, checking for new ready work
-within that period. Queue waiting does not consume the source download stall
-clock. The 0.2.2 client immediately asks again after an enabled empty claim.
-Repeated identical idle messages are logged at most once per minute; local
-status continues updating. Messages distinguish source preparation, a busy
-decode slot, no ready operation and a paused resource gate. Acknowledged
-operations are explicitly separate from the server's final title totals.
-
-To update, extract the private 0.2.2 package over the existing folder, run
-`01-INSTALL.cmd`, then `17-UPDATE-RUNNING.cmd`. The latter restarts only verifier
-containers that were running, retaining all `data/`, `data-N/` and `config/`
-folders and leaving stopped lanes stopped. Older clients remain compatible;
-new console messages require the new image. Physical Windows installation must
-be checked separately from server-side deployment.
+Workers use Docker's `unless-stopped` restart policy. After Docker Desktop
+starts, previously running containers can resume without manually starting each
+worker. A deliberate Stop keeps them stopped until Start/Update. Windows can be
+shut down without stopping the primary server verifier.
 
 ## Restricted transport and evidence
 

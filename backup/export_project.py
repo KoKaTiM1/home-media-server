@@ -31,11 +31,8 @@ METADATA_WORKER_FILES = (
 VERIFICATION_WORKER_FILES = (
     '.gitignore', 'Dockerfile', 'README.md', 'START-HERE.txt', 'config.example.json',
     'coordinator.py', 'resource_guard.py', 'verification_worker.py', 'worker.ps1',
-    '01-INSTALL.cmd', '04-START.cmd', '05-STATUS.cmd', '06-LOGS.cmd', '07-STOP.cmd',
-    '08-START-SECOND.cmd', '09-STOP-SECOND.cmd', '10-STATUS-SECOND.cmd',
-    '11-START-THIRD.cmd', '12-STOP-THIRD.cmd', '13-STATUS-THIRD.cmd',
-    '14-START-FOURTH.cmd', '15-STOP-FOURTH.cmd', '16-STATUS-FOURTH.cmd',
-    '17-UPDATE-RUNNING.cmd',
+    '01-UPDATE-AND-START.cmd', '02-START-ALL.cmd', '03-LOGS.cmd', '04-STOP-ALL.cmd',
+    'checks/mock-docker.ps1', 'checks/test-launchers.ps1', 'checks/run-launcher-checks.py',
 )
 
 

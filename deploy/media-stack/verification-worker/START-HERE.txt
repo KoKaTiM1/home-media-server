@@ -1,34 +1,25 @@
-Windows verification worker
+Home media verification worker - simple launcher package 0.2.3
 
-This is the real media sample decoder, separate from the older metadata worker.
-The server still owns source selection, all library data and final proofs.
+Keep Docker Desktop running in Linux-container mode.
+Keep config/ and EVERY existing data folder: data/, data-2/, data-3/, data-4/.
+Extract this package over the existing HomeMediaVerificationWorker folder.
 
-1. Keep this folder on a local drive. Start Docker Desktop (Linux engine).
-2. Run 01-INSTALL.cmd to load the included image.
-3. Copy the private verification connection JSON from the server user home
-   into config/verification.local.json using the authenticated SCP login.
-   Do not paste the token into chat or GitHub.
-4. Run 04-START.cmd. It shows live progress. The OMV Media workers overview
-   shows final verified counts, the current operation and its decoder stage.
-5. 05-STATUS.cmd shows counters; 06-LOGS.cmd follows live activity.
-   Ctrl+C closes the activity view only. 07-STOP.cmd stops the worker.
-6. Optional lanes 2–4 have separate START/STOP/STATUS launchers. Start a new
-   lane only when the server owner enables it; preserve each data-N folder.
+01-UPDATE-AND-START.cmd
+  Checks and installs the included image, safely restarts/starts all four
+  workers, and removes the old per-worker launchers after success.
+  Configuration, identities, progress and pending results stay in place.
 
-Windows is optional: stopping it or shutting down the PC leaves the server
-working. Keep data/ for identity and retained results across restarts.
-No inbound Windows port, SSH account or shared network database is needed.
+02-START-ALL.cmd
+  Starts all four workers without loading the image again. Safe to run twice.
 
-To update an already running worker to the included image: extract this archive
-over the existing folder without deleting config/ or data/, run 01-INSTALL.cmd,
-then 07-STOP.cmd and 04-START.cmd. Stopping waits for the current operation to
-checkpoint; the server continues verifying throughout. Keep data/ so the worker
-retains its identity and any unacknowledged result.
+03-LOGS.cmd
+  Shows combined live logs with a worker name on each line.
+  Ctrl+C closes the log view only; workers continue running.
 
-Version 0.2.2 update for all currently running containers:
-Extract over this folder, preserve config/ and every data folder, run
-01-INSTALL.cmd, then 17-UPDATE-RUNNING.cmd. Only previously running verifier
-containers restart. Use the usual LOGS/STATUS commands afterward.
-Waiting messages now distinguish server preparation, busy decode slots and
-resource pauses. Repeated identical waits appear at most once a minute.
-A probe/sample/conversion is an operation, not a final verified title.
+04-STOP-ALL.cmd
+  Stops all four workers. All saved data stays in place.
+
+Only four CMD launchers are needed. worker.ps1, SHA256SUMS.json and the image
+archive are supporting files; do not delete them before running an update.
+The server controls active-job capacity and may pause assignments independently.
+Windows is optional. The server keeps verifying if this PC is offline.
