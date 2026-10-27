@@ -137,7 +137,7 @@ class EmbeddedSubtitles:
             row=c.execute("SELECT key,sid,selected,duration,info,cursor,track FROM embedded_subtitles e WHERE state='queued' AND next_try<=? AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=e.key AND h.expires>?) ORDER BY updated LIMIT 1",(time.time(),time.time())).fetchone()
         if not row:return False
         key,sid,raw,duration,info,start,track=row;selected=json.loads(raw)
-        if not self.current(key,sid) or self.g['REL'].excluded(key,selected):
+        if self.g['REL'].sid(selected)!=sid or not self.current(key,sid) or self.g['REL'].excluded(key,selected):
             with self.db() as c:c.execute("UPDATE embedded_subtitles SET state='stale',updated=? WHERE key=? AND sid=?",(time.time(),key,sid))
             return True
         claim=self.g['F'].claim_verification(key,'subtitle')

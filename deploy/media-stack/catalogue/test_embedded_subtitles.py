@@ -57,6 +57,12 @@ class EmbeddedTests(unittest.TestCase):
         self.seed();a.F.validation_result(KEY,True,proof={'version':5,'source_id':'b'*64})
         with patch.object(self.worker,'extract') as extract:self.assertTrue(self.worker.once(time.monotonic()+15));extract.assert_not_called()
         self.assertEqual(self.row()[0],'stale')
+    def test_changed_persisted_transport_cannot_reuse_old_binding(self):
+        self.seed()
+        with self.worker.db() as c:c.execute('UPDATE embedded_subtitles SET selected=? WHERE key=?',(json.dumps({**self.selected,'hash':'b'*40}),KEY))
+        with patch.object(self.worker,'extract') as extract:
+            self.assertTrue(self.worker.once(time.monotonic()+15));extract.assert_not_called()
+        self.assertEqual(self.row()[0],'stale')
     def test_absent_hebrew_does_not_fabricate_track(self):
         self.seed();info=copy.deepcopy(self.info)
         info['streams']=[s for s in info['streams'] if s.get('codec_type')!='subtitle']
