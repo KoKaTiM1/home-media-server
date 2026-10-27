@@ -72,7 +72,7 @@ class MultiSubtitlesTests(unittest.TestCase):
                     self.assertEqual([t['Index'] for t in info['MediaStreams']],list(range(len(info['MediaStreams']))))
                 elif embedded>=2:external.assert_not_called()
                 else:self.assertEqual(external.call_args.kwargs['max_hebrew'],2-embedded)
-                self.assertEqual(info['subtitle_policy'],3)
+                self.assertEqual(info['subtitle_policy'],4)
 
     def test_signed_variant_route_serves_each_content_and_preserves_legacy(self):
         one=a.store_subtitle(KEY,SRT.encode(),'heb');two=a.store_subtitle(KEY,ALT.encode(),'heb')

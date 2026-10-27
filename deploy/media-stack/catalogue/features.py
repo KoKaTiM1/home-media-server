@@ -1026,7 +1026,10 @@ class Features:
                 try:self.page(kind,year,0)
                 except Exception:self.log(f'Recent discovery provider page deferred: {kind} {year}')
         with self.db() as conn:recent=conn.execute('SELECT kind,imdb,meta FROM discovery').fetchall()
-        with closing(sqlite3.connect(self.g['DATA']/'imdb/catalogue.sqlite')) as index:
+        # The index importer can commit while this scheduled refresh adds
+        # discovered titles. Wait for that bounded writer instead of failing
+        # the whole refresh on SQLite's short default busy timeout.
+        with closing(sqlite3.connect(self.g['DATA']/'imdb/catalogue.sqlite',timeout=60)) as index:
             for kind,imdb,raw in recent:
                 meta=json.loads(raw);year=str(meta.get('releaseInfo',''))[:4]
                 if year.isdigit():

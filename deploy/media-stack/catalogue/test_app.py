@@ -117,7 +117,9 @@ class CatalogueTests(unittest.TestCase):
         rpc.added=False
         with patch.object(a.F,'local_download',return_value=None),patch.object(a,'cached',return_value=None), \
              patch.object(a,'stream_candidates',return_value=[candidate]),patch.object(a,'torr',side_effect=calls), \
-             patch.object(a,'remember',side_effect=lambda key,value,ttl:value):
+             patch.object(a,'remember',side_effect=lambda key,value,ttl:value), \
+             patch.object(a.REL,'choices',return_value=[]),patch.object(a.REL,'excluded',return_value=False), \
+             patch.object(a.REL,'checkpoint',return_value={}),patch.object(a.REL,'bind',return_value='fixture'):
             selected=a.resolve('series:tt1234567:1:1',deadline=a.time.monotonic()+45)
         self.assertEqual(selected['index'],1)
         self.assertEqual(selected['filename'],'Show.S01E01.mkv')
