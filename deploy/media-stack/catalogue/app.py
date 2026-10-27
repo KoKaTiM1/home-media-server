@@ -1080,6 +1080,55 @@ def prepared(key,background=False,audio_index=None,cancel=None):
         finally:lock.release()
 
 
+def durable_playback_evidence(key,audio_index=None):
+    """Reuse accepted exact-source evidence; scheduled audits always decode anew.
+
+    Playback rows survive the five-minute response cache and service reboots.
+    They are metadata, not a promise that a torrent is currently reachable.
+    Resolution and the stream proxy still check the live transport.
+    """
+    if F.source_state(key) not in ('verified','downloaded'):return None
+    with F.db() as conn:
+        row=conn.execute('SELECT p.value,v.proof,v.state FROM playback p JOIN validation v ON v.key=p.key WHERE p.key=?',(key,)).fetchone()
+    if not row or row[2]!='verified':return None
+    try:
+        saved=json.loads(row[0]);proof=json.loads(row[1] or '{}')
+        selected=saved['selected'];sid=REL.sid(selected)
+        audio=saved.get('DefaultAudioStreamIndex')
+        if (saved.get('verification_version')!=VERSION or saved.get('audio_policy')!=2
+            or proof.get('version')!=VERSION or proof.get('audio_policy')!=2
+            or proof.get('source_id')!=sid or proof.get('source_hash')!=selected.get('hash')
+            or proof.get('file_index')!=selected.get('index') or proof.get('filename')!=selected.get('filename')
+            or proof.get('length')!=selected.get('length')
+            or proof.get('selected_audio_index')!=audio
+            or (audio_index is not None and audio_index!=audio)
+            or proof.get('audio_conversion')!=saved.get('AudioConversionRequired')
+            or proof.get('checked_at')!=saved.get('checked_at')
+            or not proof.get('checked_at') or REL.excluded(key,selected)
+            or bool(F.local_download(key))!=bool(selected.get('local'))):return None
+        samples=proof.get('samples',[])
+        if (len(samples)!=2 or samples[0].get('position')!=0 or samples[1].get('position',0)<=0
+            or any(s.get('video_frames',0)<=0 or (audio is not None and s.get('audio_frames',0)<=0) for s in samples)):return None
+        # Older durable rows predate verification_info. Their native stream
+        # metadata contains the codec/track/duration fields needed here.
+        info=saved.get('verification_info')
+        if not info:
+            streams=[]
+            fields={'Index':'index','Codec':'codec_name','Profile':'profile','Channels':'channels',
+                    'PixelFormat':'pix_fmt','Level':'level','Width':'width','Height':'height',
+                    'BitRate':'bit_rate','SampleRate':'sample_rate','AverageFrameRate':'avg_frame_rate'}
+            for track in saved['MediaStreams']:
+                if track['Type'] not in ('Video','Audio') and (track['Type']!='Subtitle' or track.get('IsExternal')):continue
+                stream={target:track[source] for source,target in fields.items() if track.get(source) is not None}
+                stream.update(codec_type=track['Type'].lower(),tags={'language':track.get('Language','und')},
+                    disposition={'default':int(bool(track.get('IsDefault'))),'forced':int(bool(track.get('IsForced')))})
+                streams.append(stream)
+            info={'streams':streams,'format':{'duration':saved['RunTimeTicks']/10000000,'bit_rate':saved.get('Bitrate',5000000)}}
+        if not any(s.get('codec_type')=='video' for s in info['streams']):return None
+        return {'selected':selected,'info':info,'proof':proof,'transport_check':True}
+    except (ValueError,KeyError,TypeError,AttributeError,IndexError):return None
+
+
 def prepare_locked(key,background,audio_index,deadline):
     prepared_key='prepared:'+key+(':'+str(audio_index) if audio_index is not None else '')
     with LIVE_LOCK:
@@ -1092,9 +1141,14 @@ def prepare_locked(key,background,audio_index,deadline):
     verified=cached('verified-'+prepared_key) if not background else None
     if verified and (verified.get('proof',{}).get('version')!=VERSION or F.source_state(key) not in ('verified','downloaded')
                      or REL.excluded(key,verified['selected']) or bool(F.local_download(key))!=bool(verified['selected'].get('local'))):verified=None
+    if not background and not verified:
+        verified=durable_playback_evidence(key,audio_index)
+        if verified:playback_event(key,'durable_evidence',time.monotonic(),'hit')
     for attempt in range(3):
         try:
-            with playback_phase(key,'torrent_resolution'):selected=verified['selected'] if verified else resolve(key,deadline=deadline)
+            with playback_phase(key,'torrent_resolution'):
+                selected=verified['selected'] if verified and not verified.get('transport_check') else resolve(key,deadline=deadline)
+                if verified and REL.sid(selected)!=REL.sid(verified['selected']):verified=None
         except (ClientCancelled,PlaybackBusy,Checkpoint,TimeoutError,subprocess.TimeoutExpired,sqlite3.OperationalError):raise
         except Exception as error:
             cancel=getattr(BUDGET,'cancel',None)
@@ -1117,6 +1171,7 @@ def prepare_locked(key,background,audio_index,deadline):
             if audio_index is not None and selected_audio is None:raise ValueError('Audio track not found')
             needs_conversion=selected_audio is not None and (selected_audio.get('codec_name')!='aac' or selected_audio.get('profile')!='LC')
             if needs_conversion and float(info.get('format',{}).get('duration') or 0)<=0:raise RuntimeError('Converted VOD requires known duration')
+            if verified and verified.get('transport_check') and (verified['proof'].get('selected_audio_index')!=(selected_audio['index'] if selected_audio else None) or verified['proof'].get('audio_conversion')!=needs_conversion):verified=None
             proof=verified['proof'] if verified else REL.verify(key,selected,info,selected_audio['index'] if selected_audio else None,needs_conversion,deadline)
             break
         except (ClientCancelled,PlaybackBusy,Checkpoint,TimeoutError,subprocess.TimeoutExpired,sqlite3.OperationalError):raise
@@ -1203,7 +1258,7 @@ def prepare_locked(key,background,audio_index,deadline):
         'DefaultAudioStreamIndex':selected_audio['index'] if selected_audio else None,'AudioConversionRequired':needs_conversion}
     if getattr(BUDGET,'speculative',False):remaining(1)
     with db() as conn:
-        conn.execute('INSERT OR REPLACE INTO playback VALUES (?,?,?)',(key,json.dumps(output),time.time()))
+        conn.execute('INSERT OR REPLACE INTO playback VALUES (?,?,?)',(key,json.dumps({**output,'verification_info':info}),time.time()))
     accepted=True if verified else F.validation_result(key,True,proof=proof)
     if accepted is not False:
         REL.success(key,selected)

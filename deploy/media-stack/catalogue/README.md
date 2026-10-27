@@ -101,7 +101,14 @@ Opening a playable movie/episode's details asks the bridge to prepare its source
 in advance. One speculative job runs at a time, without a queue, for at most
 12 seconds, with a 60-second per-title cooldown. Active or paused playback and
 unavailable session status suppress the job; playback beginning cancels it.
-A successful preparation, including subtitle lookup, is reused for five minutes.
+A successful response, including subtitle lookup, is cached for five minutes.
+After that cache expires or the bridge restarts, Play can reuse durable v5
+evidence and codec metadata for the identical torrent/file and selected audio.
+The live torrent metadata is resolved again and video requests still require
+initial bytes before returning success. Changed sources or audio, exclusions,
+newer failures and requested rechecks prevent this reuse. Scheduled background
+audits always probe and decode fresh samples. Subtitle choices are refreshed
+separately; reuse never advances the stored verification timestamp.
 It may fetch torrent metadata and small video/audio probe samples; it does not
 request a managed full-film download. Failed speculative attempts do not revoke
 existing verification or drop torrents. Immediate Play still has its ordinary
@@ -109,6 +116,7 @@ existing verification or drop torrents. Immediate Play still has its ordinary
 buffering can still delay startup. Sanitized `details_warm`, `prepared_cache`,
 `subtitle_lookup`, `upstream_open` and `stream_ready` events separate preparation,
 cache reuse and the initial video-data wait from long-running transfer logs.
+`durable_evidence` identifies reuse of a persisted exact-source proof.
 
 AAC-LC audio can play directly. Selected AAC Main, AC3/EAC3, MP3 or other non-LC
 tracks can use Jellyfin native HLS with **video copy and AAC-LC stereo audio at
