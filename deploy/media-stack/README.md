@@ -192,3 +192,5 @@ and existing user permissions determine whether Delete is visible.
 
 
 Optional Windows source verification is implemented separately from metadata fetching. See [worker operation and recovery](verification-worker/README.md). The server remains authoritative. The first 20-title PC pilot completed with 19 verified and one unavailable result; continuous PC assistance is now enabled under the memory and playback guards. Issues #3 and #4 track the remaining memory investigation and physical offline/reconnect check.
+
+Streaming verification v6 adds a 1.5× bitrate delivery check. Existing matching v5 sources reuse their decoded evidence and receive speed-only upgrades; changed sources require both checks. Slow sources are excluded for six hours while alternatives are tried. See [delivery-speed evidence](catalogue/README.md#v6-delivery-speed-evidence).

@@ -357,13 +357,18 @@ class Reliability:
             raise Checkpoint('Speed verification needs exact size and duration')
         required=1.5*length/duration;target=max(4*1024**2,min(32*1024**2,int(15*length/duration)))
         windows=[]
+        if getattr(self.g['BUDGET'],'remote_verification',False):
+            from verification_remote import producer_phase
+            producer_phase(self.g,key,'waiting for speed check')
         with self.lock('global-verification'),self.lock('torrent:'+selected['hash']):
             test_end=min(deadline,time.monotonic()+60)
+            if getattr(self.g['BUDGET'],'remote_verification',False):producer_phase(self.g,key,'speed verification')
             self.g['remaining'](1)
             # Activate only this stream, then account for every pre-existing cache
             # byte pessimistically. No physical file offsets are inferred from
             # TorrServer's alphabetically sorted file_stats.
             self._speed_required=round(required)
+            self.checkpoint(key,phase='speed verification',required_speed=round(required),speed_status='checking',state='preparing')
             startup=self.speed_read(key,selected,0,1,min(test_end,time.monotonic()+10))
             measured_start=time.monotonic()
             cache=self.cache_state(selected)
@@ -371,10 +376,12 @@ class Reliability:
             while cache.get('Readers') and time.monotonic()<wait_end:
                 self.g['remaining'](1);time.sleep(.1);cache=self.cache_state(selected)
             if cache.get('Hash','').lower()!=selected['hash'].lower() or cache.get('Readers') or 'Filled' not in cache or not isinstance(cache.get('Pieces'),dict):
+                self.checkpoint(key,speed_status='cache_wait')
                 raise Checkpoint('Speed cache attribution busy or unavailable')
             cached=max(int(cache.get('Filled',0)),sum(max(0,int(x.get('Size',0))) for x in (cache.get('Pieces') or {}).values()))
             size=min(32*1024**2,target+cached);target=size-cached
             if target<4*1024**2 or size*3>=length:
+                self.checkpoint(key,speed_status='cache_wait')
                 raise Checkpoint('Speed test awaits uncached range budget')
             for fraction in (.35,.70):
                 self.g['remaining'](1)

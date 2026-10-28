@@ -1338,6 +1338,12 @@ class Features:
                         continue
                     transient=tuple(self.g[name] for name in ('ClientCancelled','PlaybackBusy','Checkpoint') if isinstance(self.g.get(name),type))
                     if isinstance(error,sqlite3.OperationalError) or transient and isinstance(error,transient):
+                        # Cache-only attribution waits must not monopolize all
+                        # producers by immediately reclaiming the same title.
+                        if not isinstance(error,sqlite3.OperationalError):
+                            with self.db() as conn:
+                                wait=conn.execute("SELECT 1 FROM preparation_work WHERE key=? AND json_extract(value,'$.speed_status')='cache_wait'",(key,)).fetchone()
+                                if wait:conn.execute('INSERT OR REPLACE INTO metadata_waits VALUES (?,?)',(key,time.time()+300))
                         if remote:
                             from verification_remote import jobs
                             jobs(self.g).count('windows_title_checkpoints')
