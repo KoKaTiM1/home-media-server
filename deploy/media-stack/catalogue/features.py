@@ -240,9 +240,9 @@ class Features:
                             # Preserve current resolved transport for any existing
                             # viewer. The worker clears it immediately before its
                             # fresh probe, after playback has become idle.
-                            cachekeys=['prepared:'+key,'source-status:'+key]
-                            conn.execute('DELETE FROM cache WHERE key IN (?,?)',cachekeys)
-                            conn.execute('DELETE FROM cache WHERE key>=? AND key<?',('prepared:'+key+':','prepared:'+key+':\uffff'))
+                            conn.execute('DELETE FROM cache WHERE key=?',('source-status:'+key,))
+                            for prefix in ('prepared:','verified-prepared:'):
+                                conn.execute('DELETE FROM cache WHERE key=? OR (key>=? AND key<?)',(prefix+key,prefix+key+':',prefix+key+':\uffff'))
                         conn.execute('UPDATE recheck_requests SET count=? WHERE id=?',(len(keys),ident))
                 done=root/'processed';done.mkdir(parents=True,exist_ok=True)
                 try:path.replace(done/path.name)

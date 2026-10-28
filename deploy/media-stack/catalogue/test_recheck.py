@@ -15,12 +15,14 @@ class RecheckTests(unittest.TestCase):
  def test_report_hides_title_preserves_files_and_proof_and_queues_without_backoff(self):
   a.F.validation_result(KEY,True,proof={'fixture':'original','audio_policy':2})
   a.remember('prepared:'+KEY,{'old':'success'},100);a.remember('resolved:'+KEY,{'current':'viewer'},100)
+  a.remember('verified-prepared:'+KEY,{'old':'proof'},100);a.remember('verified-prepared:'+KEY+':1',{'old':'audio proof'},100)
   movie=a.F.media/'movie.mp4';movie.write_bytes(b'keep actual saved video')
   metadata=a.LIBRARY/'movie.strm';metadata.parent.mkdir(parents=True,exist_ok=True);metadata.write_text('keep virtual item')
   path,now=self.report([KEY]);a.F.consume_rechecks()
   self.assertFalse(path.exists());self.assertTrue((a.LIBRARY/'.recheck-requests/processed'/path.name).exists())
   self.assertEqual(a.F.source_state(KEY),'pending');self.assertNotIn(KEY,a.F.ready_keys())
   self.assertIsNone(a.cached('prepared:'+KEY));self.assertEqual(a.cached('resolved:'+KEY),{'current':'viewer'})
+  self.assertIsNone(a.cached('verified-prepared:'+KEY));self.assertIsNone(a.cached('verified-prepared:'+KEY+':1'))
   with a.F.db() as c:
    row=c.execute('SELECT state,priority,next_check,proof FROM validation WHERE key=?',(KEY,)).fetchone()
   self.assertEqual(row[:3],('pending',1000,0));self.assertEqual(json.loads(row[3])['fixture'],'original')

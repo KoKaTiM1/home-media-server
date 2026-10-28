@@ -286,8 +286,9 @@ class Reliability:
             if track.get('codec_name') not in AUDIO_CODECS:raise DecodeFailure('Unsupported audio conversion')
         duration=float(info.get('format',{}).get('duration') or 0)
         if duration<10 or not math.isfinite(duration):raise SourceFailure('No usable sample duration')
-        with self.db() as c:row=c.execute('SELECT proof FROM validation WHERE key=?',(key,)).fetchone()
+        with self.db() as c:row=c.execute('SELECT v.proof,COALESCE(m.requested,0) FROM validation v LEFT JOIN manual_rechecks m ON m.key=v.key WHERE v.key=?',(key,)).fetchone()
         prior=json.loads(row[0]) if row and row[0] else {}
+        requested=row[1] if row else 0
         sequence=int(prior.get('audit_sequence',-1))+1
         later=round(min(duration-2,max(6,duration*(.25,.5,.75)[sequence%3])),3)
         samples=[]
@@ -298,7 +299,7 @@ class Reliability:
             partial=json.loads(work[0]) if work and time.time()-work[1]<86400 else {}
             identity=[self.sid(selected),audio_index,sequence,position,conversion]
             saved=partial.get('sample_checkpoint')
-            if saved and saved.get('identity')==identity and time.time()-saved.get('checked_at',0)<3600:
+            if saved and saved.get('identity')==identity and saved.get('checked_at',0)>=requested and time.time()-saved.get('checked_at',0)<3600:
                 sample=saved['evidence']
             else:
                 sample=self.sample(key,selected,info,audio_index,conversion,position,seconds,deadline)

@@ -65,6 +65,17 @@ class ReliabilityTests(unittest.TestCase):
         self.assertGreater(proof['samples'][0]['audio_frames'],100)
         self.assertFalse(list(a.DATA.glob('verify-*')))
 
+    def test_manual_request_cannot_reuse_an_older_partial_beginning_sample(self):
+        selected,info=self.fixture();a.F.validation_result(KEY,True,proof={'version':5,'audit_sequence':0})
+        requested=time.time()
+        with a.F.db() as c:c.execute('INSERT INTO manual_rechecks VALUES (?,?,?,?)',(KEY,requested,'fixture','pending'))
+        a.REL.checkpoint(KEY,sample_checkpoint={'identity':[a.REL.sid(selected),1,1,0,False],
+            'checked_at':requested-1,'evidence':{'video_frames':999,'audio_frames':999}})
+        with patch.object(a.REL,'sample',return_value={'video_frames':60,'audio_frames':100}) as sample:
+            proof=a.REL.verify(KEY,selected,info,1,False,time.monotonic()+10)
+        self.assertEqual(sample.call_count,2);self.assertEqual(sample.call_args_list[0].args[5],0)
+        self.assertEqual(proof['samples'][0]['video_frames'],60)
+
     def test_real_exit_zero_delayed_video_cannot_pass_full_preparation(self):
         selected,info=self.fixture(delayed=True)
         with patch.object(a,'resolve',return_value=selected),patch.object(a,'probe',return_value=info):
