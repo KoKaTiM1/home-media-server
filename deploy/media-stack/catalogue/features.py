@@ -264,17 +264,38 @@ class Features:
         ready=self.ready_titles()
         with self.db() as conn:
             rows=conn.execute('SELECT kind,imdb,meta FROM items ORDER BY rowid').fetchall()
+            discovery={(kind,imdb):raw for kind,imdb,raw in conn.execute('SELECT kind,imdb,meta FROM discovery')}
             known={(kind,imdb):(state,next_attempt,title,description,nfo_written,source) for kind,imdb,state,next_attempt,title,description,nfo_written,source in
                    conn.execute('SELECT kind,imdb,state,next_attempt,title_he,description_he,nfo_written,source FROM localized_metadata')}
-        candidates=[]
-        for kind,imdb,raw in rows:
-            key=kind+':'+imdb
-            if key not in ready:continue
+        item_metadata={(kind,imdb):json.loads(raw) for kind,imdb,raw in rows}
+        ordered=[(kind,imdb) for kind,imdb,_ in rows if kind+':'+imdb in ready]
+        ordered.extend((kind,imdb) for key in sorted(ready)
+                       for kind,imdb in [key.split(':',1)] if (kind,imdb) not in item_metadata)
+        candidates=[];missing_index=[];batch_limit=max(1,min(16,int(limit)))
+        for kind,imdb in ordered:
+            meta=item_metadata.get((kind,imdb))
+            if meta is None and (kind,imdb) in discovery:meta=json.loads(discovery[(kind,imdb)])
+            if meta is None:missing_index.append((kind,imdb));continue
+            meta={**meta,'id':imdb,'type':kind}
             state,next_attempt,title_he,description_he,nfo_written,source=known.get((kind,imdb),('',0,None,None,0,None))
             cached_pending=bool((title_he or description_he) and not nfo_written)
             if next_attempt>time.time() and not cached_pending:continue
-            candidates.append((kind,imdb,json.loads(raw),title_he,description_he,nfo_written,source))
-            if len(candidates)>=max(1,min(16,int(limit))):break
+            candidates.append((kind,imdb,meta,title_he,description_he,nfo_written,source))
+            if len(candidates)>=batch_limit:break
+        if len(candidates)<batch_limit and missing_index:
+            index=self.g['DATA']/'imdb/catalogue.sqlite'
+            if index.is_file():
+                with closing(sqlite3.connect('file:'+str(index)+'?mode=ro',uri=True)) as conn:
+                    for kind,imdb in missing_index:
+                        row=conn.execute('SELECT name,original,year,genres FROM titles WHERE kind=? AND imdb=?',(kind,imdb)).fetchone()
+                        if not row:continue
+                        meta={'id':imdb,'type':kind,'name':row[0],'originalName':row[1],
+                              'releaseInfo':str(row[2]),'genres':(row[3] or '').split(',')}
+                        state,next_attempt,title_he,description_he,nfo_written,source=known.get((kind,imdb),('',0,None,None,0,None))
+                        cached_pending=bool((title_he or description_he) and not nfo_written)
+                        if next_attempt>time.time() and not cached_pending:continue
+                        candidates.append((kind,imdb,meta,title_he,description_he,nfo_written,source))
+                        if len(candidates)>=batch_limit:break
         if not candidates:return 0
         enriched=changed=0;refresh=[]
         for kind,imdb,meta,cached_title,cached_description,nfo_written,cached_source in candidates:

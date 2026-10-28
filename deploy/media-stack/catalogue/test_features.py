@@ -141,6 +141,22 @@ class FeatureTests(unittest.TestCase):
                                       'description':'English overview'}),
                          {'id':'tt1234567','type':'movie','name':'English title','description':'English overview'})
 
+    def test_ready_identity_without_import_row_is_backfilled_from_local_index(self):
+        index=a.DATA/'imdb'/'catalogue.sqlite';index.parent.mkdir(parents=True)
+        with sqlite3.connect(index) as conn:
+            conn.execute('CREATE TABLE titles(imdb TEXT,kind TEXT,name TEXT,original TEXT,year INTEGER,genres TEXT)')
+            conn.execute('INSERT INTO titles VALUES (?,?,?,?,?,?)',('tt1234567','movie','English title','Original title',2001,'Drama'))
+        a.F.validation_result('movie:tt1234567',True,proof={'version':5})
+        with patch.object(a.F,'jf',return_value=[]),patch.object(a.F,'wikidata_title_metadata',return_value={
+                'title_he':'שם בעברית','description_he':'תיאור בעברית','source':'wikidata+hewiki'}):
+            self.assertEqual(a.F.refresh_hebrew_metadata(limit=1),1)
+        localized=a.F.localize({'id':'tt1234567','type':'movie','name':'English title','description':'English overview'})
+        self.assertEqual((localized['name'],localized['description']),('שם בעברית','תיאור בעברית'))
+        with a.F.db() as conn:
+            self.assertIsNone(conn.execute('SELECT 1 FROM items WHERE key=?',('movie:tt1234567',)).fetchone())
+            self.assertEqual(conn.execute('SELECT state FROM validation WHERE key=?',('movie:tt1234567',)).fetchone()[0],'verified')
+        self.assertFalse((a.LIBRARY/'movies'/'tt1234567'/'movie.nfo').exists())
+
     def test_audio_resync_retains_verified_visibility_and_only_migrates_once(self):
         good='movie:tt1234567';failed='movie:tt2345678'
         a.F.validation_result(good,True,proof={'version':2})
