@@ -58,6 +58,89 @@ class FeatureTests(unittest.TestCase):
         with a.F.db() as conn:
             conn.executemany("INSERT INTO validation(key,state,checked,proof) VALUES (?,'verified',?,?)",((kind+':'+imdb,time.time(),json.dumps({'version':2})) for kind,imdb in rows))
 
+    def test_localized_title_and_description_fallback_independently(self):
+        with a.F.db() as conn:
+            conn.execute('INSERT INTO aliases VALUES (?,?,?)',('tt1234567','שם בעברית','English title'))
+            conn.execute('INSERT INTO localized_metadata(kind,imdb,title_he,description_he,state) VALUES (?,?,?,?,?)',
+                         ('movie','tt1234567','שם בעברית','תיאור בעברית','complete'))
+        complete=a.F.localize({'id':'tt1234567','type':'movie','name':'English title','description':'English overview'})
+        self.assertEqual((complete['name'],complete['description'],complete['englishName']),
+                         ('שם בעברית','תיאור בעברית','English title'))
+        with a.F.db() as conn:conn.execute('UPDATE localized_metadata SET description_he=NULL WHERE imdb=?',('tt1234567',))
+        title_only=a.F.localize({'id':'tt1234567','type':'movie','name':'English title','description':'English overview'})
+        self.assertEqual(title_only['name'],'שם בעברית')
+        self.assertEqual(title_only['description'],'English overview')
+        with a.F.db() as conn:
+            conn.execute('DELETE FROM aliases WHERE imdb=?',('tt1234568',))
+            conn.execute('INSERT INTO localized_metadata(kind,imdb,description_he,state) VALUES (?,?,?,?)',
+                         ('series','tt1234568','תיאור בעברית','complete'))
+        description_only=a.F.localize({'id':'tt1234568','type':'series','name':'English show','description':'English overview'})
+        self.assertEqual(description_only['name'],'English show')
+        self.assertEqual(description_only['description'],'תיאור בעברית')
+
+    def test_wikidata_requires_exact_imdb_and_uses_hebrew_article_summary(self):
+        wrong={'claims':{'P345':[{'mainsnak':{'datavalue':{'value':'tt7654321'}}}]},'labels':{'he':{'value':'לא נכון'}}}
+        right={'claims':{'P345':[{'mainsnak':{'datavalue':{'value':'tt1234567'}}}]},
+               'labels':{'he':{'value':'שם נכון'}},'descriptions':{'he':{'value':'תיאור קצר'}},
+               'sitelinks':{'hewiki':{'title':'שם נכון (סרט)'}}}
+        with patch.object(a.F,'wikimedia_json',side_effect=[{'search':[{'id':'Q1'},{'id':'Q2'}]},
+                {'entities':{'Q1':wrong,'Q2':right}},{'extract':'תקציר עברי ארוך'}]) as fetcher:
+            result=a.F.wikidata_title_metadata('movie','tt1234567','English title')
+        self.assertEqual(result,{'title_he':'שם נכון','description_he':'תקציר עברי ארוך','source':'wikidata+hewiki'})
+        self.assertEqual(fetcher.call_count,3)
+
+    def test_nfo_localization_preserves_identity_and_other_metadata(self):
+        folder=a.LIBRARY/'movies'/'tt1234567';folder.mkdir(parents=True)
+        path=folder/'movie.nfo'
+        path.write_text('<movie><title>Old English</title><year>2001</year><uniqueid type="imdb">tt1234567</uniqueid><plot>Old plot</plot><trailer>keep-me</trailer></movie>')
+        changed=a.F.apply_localized_nfo('movie','tt1234567',{'englishName':'English title'},'שם בעברית','תקציר בעברית')
+        root=__import__('xml.etree.ElementTree',fromlist=['ElementTree']).parse(path).getroot()
+        self.assertTrue(changed)
+        self.assertEqual(root.findtext('title'),'שם בעברית')
+        self.assertEqual(root.findtext('originaltitle'),'English title')
+        self.assertEqual(root.findtext('plot'),'תקציר בעברית')
+        self.assertEqual(root.findtext('uniqueid'),'tt1234567')
+        self.assertEqual(root.findtext('trailer'),'keep-me')
+
+    def test_provider_failure_keeps_existing_english_metadata_and_video_proof(self):
+        key='movie:tt1234567';a.F.validation_result(key,True,proof={'version':5})
+        with a.F.db() as conn:
+            conn.execute('INSERT INTO items VALUES (?,?,?,?,?)',(key,'movie','tt1234567',
+                         json.dumps({'id':'tt1234567','type':'movie','name':'English title','description':'English overview'}),'[]'))
+        folder=a.LIBRARY/'movies'/'tt1234567';folder.mkdir(parents=True)
+        (folder/'movie.nfo').write_text('<movie><title>English title</title><plot>English overview</plot></movie>')
+        with patch.object(a.F,'jf',return_value=[]),patch.object(a.F,'wikidata_title_metadata',side_effect=TimeoutError('offline')):
+            a.F.refresh_hebrew_metadata(limit=1)
+        with a.F.db() as conn:
+            state=conn.execute('SELECT state,next_attempt FROM localized_metadata WHERE kind=? AND imdb=?',('movie','tt1234567')).fetchone()
+            proof=conn.execute('SELECT state,proof FROM validation WHERE key=?',(key,)).fetchone()
+        self.assertEqual(state[0],'retry');self.assertGreater(state[1],time.time())
+        self.assertEqual(proof[0],'verified');self.assertEqual(json.loads(proof[1])['version'],5)
+        self.assertIn('English overview',(folder/'movie.nfo').read_text())
+
+    def test_provider_failure_keeps_cached_hebrew_fields(self):
+        key='movie:tt1234567';a.F.validation_result(key,True,proof={'version':5})
+        with a.F.db() as conn:
+            conn.execute('INSERT INTO items VALUES (?,?,?,?,?)',(key,'movie','tt1234567',
+                         json.dumps({'id':'tt1234567','type':'movie','name':'English title','description':'English overview'}),'[]'))
+            conn.execute('INSERT INTO aliases VALUES (?,?,?)',('tt1234567','שם שמור','English title'))
+            conn.execute('INSERT INTO localized_metadata(kind,imdb,title_he,description_he,state,next_attempt) VALUES (?,?,?,?,?,0)',
+                         ('movie','tt1234567','שם שמור','תיאור שמור','complete'))
+        folder=a.LIBRARY/'movies'/'tt1234567';folder.mkdir(parents=True)
+        (folder/'movie.nfo').write_text('<movie><title>שם שמור</title><plot>תיאור שמור</plot></movie>')
+        with patch.object(a.F,'jf',return_value=[]),patch.object(a.F,'wikidata_title_metadata',side_effect=TimeoutError('offline')):
+            a.F.refresh_hebrew_metadata(limit=1)
+        localized=a.F.localize({'id':'tt1234567','type':'movie','name':'English title','description':'English overview'})
+        self.assertEqual((localized['name'],localized['description']),('שם שמור','תיאור שמור'))
+
+    def test_unmatched_wikidata_entity_keeps_english_fallback(self):
+        entity={'claims':{'P345':[{'mainsnak':{'datavalue':{'value':'tt7654321'}}}]}}
+        with patch.object(a.F,'wikimedia_json',side_effect=[{'search':[{'id':'Q1'}]},{'entities':{'Q1':entity}}]):
+            self.assertIsNone(a.F.wikidata_title_metadata('movie','tt1234567','English title'))
+        self.assertEqual(a.F.localize({'id':'tt1234567','type':'movie','name':'English title',
+                                      'description':'English overview'}),
+                         {'id':'tt1234567','type':'movie','name':'English title','description':'English overview'})
+
     def test_audio_resync_retains_verified_visibility_and_only_migrates_once(self):
         good='movie:tt1234567';failed='movie:tt2345678'
         a.F.validation_result(good,True,proof={'version':2})

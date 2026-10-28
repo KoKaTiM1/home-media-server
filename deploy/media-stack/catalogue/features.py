@@ -16,6 +16,7 @@ import uuid
 import urllib.error
 import urllib.parse as U
 import urllib.request as R
+import xml.etree.ElementTree as ET
 
 
 class Features:
@@ -33,6 +34,13 @@ class Features:
         conn.execute('CREATE TABLE IF NOT EXISTS discovery (kind TEXT, imdb TEXT, meta TEXT, PRIMARY KEY(kind,imdb))')
         conn.execute('CREATE TABLE IF NOT EXISTS release_dates (kind TEXT, imdb TEXT, released TEXT, PRIMARY KEY(kind,imdb))')
         conn.execute('CREATE TABLE IF NOT EXISTS aliases (imdb TEXT PRIMARY KEY, hebrew TEXT, english TEXT)')
+        conn.execute('''CREATE TABLE IF NOT EXISTS localized_metadata (
+            kind TEXT NOT NULL, imdb TEXT NOT NULL, title_he TEXT, description_he TEXT,
+            source TEXT, state TEXT NOT NULL DEFAULT 'pending', checked_at REAL NOT NULL DEFAULT 0,
+            next_attempt REAL NOT NULL DEFAULT 0, nfo_written INTEGER NOT NULL DEFAULT 0,
+            refresh_pending INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(kind,imdb))''')
+        conn.execute('CREATE INDEX IF NOT EXISTS localized_metadata_due ON localized_metadata(state,next_attempt)')
         conn.execute('CREATE TABLE IF NOT EXISTS downloads (key TEXT PRIMARY KEY, value TEXT)')
         conn.execute("CREATE TABLE IF NOT EXISTS validation (key TEXT PRIMARY KEY, state TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, next_check REAL NOT NULL DEFAULT 0, checked REAL NOT NULL DEFAULT 0, proof TEXT, reason TEXT, priority INTEGER NOT NULL DEFAULT 0)")
         conn.execute('CREATE TABLE IF NOT EXISTS audio_recheck (key TEXT PRIMARY KEY, completed REAL NOT NULL DEFAULT 0)')
@@ -117,12 +125,199 @@ class Features:
 
     def localize(self,meta):
         result=dict(meta);imdb=meta.get('imdb_id') or meta.get('id')
-        with self.db() as conn:row=conn.execute('SELECT hebrew,english FROM aliases WHERE imdb=?',(imdb,)).fetchone()
-        if row and row[0] and re.search('[\u0590-\u05ff]',row[0]):
-            english=row[1] or meta.get('name','')
-            result['originalName']=english
-            result['name']=row[0]+(' / '+english if english and english!=row[0] else '')
+        kind=meta.get('type')
+        with self.db() as conn:
+            row=conn.execute('SELECT hebrew,english FROM aliases WHERE imdb=?',(imdb,)).fetchone()
+            localized=conn.execute('SELECT title_he,description_he FROM localized_metadata WHERE kind=? AND imdb=?',
+                                   (kind,imdb)).fetchone() if kind in ('movie','series') else None
+        hebrew=(localized[0] if localized else None) or (row[0] if row else None)
+        if hebrew and re.search('[\u0590-\u05ff]',hebrew):
+            english=(row[1] if row else None) or meta.get('name','')
+            result['englishName']=english
+            result['name']=hebrew
+            if english and english!=hebrew:result['originalName']=english
+        if localized and localized[1] and re.search('[\u0590-\u05ff]',localized[1]):
+            result['englishDescription']=meta.get('description') or ''
+            result['description']=localized[1]
         return result
+
+    def wikimedia_json(self,url,timeout=8):
+        """Use a shared daily request budget and serialize polite Wikimedia reads."""
+        lock_path=self.g['DATA']/'wikimedia-api.lock'
+        lock_path.parent.mkdir(parents=True,exist_ok=True)
+        with lock_path.open('a+') as lock:
+            try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            except BlockingIOError:raise RuntimeError('Wikimedia provider busy') from None
+            day=dt.date.today().isoformat();budget_key='wikimedia-request-budget:'+day
+            with self.db() as conn:
+                row=conn.execute('SELECT value FROM cache WHERE key=?',(budget_key,)).fetchone()
+                budget=json.loads(row[0]) if row else {'requests':0,'last_request':0}
+                if budget.get('requests',0)>=160:raise RuntimeError('Wikimedia daily request budget reached')
+                pause=max(0,.25-(time.time()-budget.get('last_request',0)))
+                if pause:time.sleep(pause)
+                budget={'requests':budget.get('requests',0)+1,'last_request':time.time()}
+                conn.execute('INSERT OR REPLACE INTO cache VALUES (?,?,?)',
+                             (budget_key,json.dumps(budget),time.time()+86400))
+            headers={'User-Agent':'HomeMediaCatalogue/1.0 (+https://github.com/<GITHUB_OWNER>/home-media-server)'}
+            return self.fetch(url,headers=headers,timeout=timeout)
+
+    @staticmethod
+    def _hebrew(value):
+        return value.strip() if isinstance(value,str) and re.search('[\u0590-\u05ff]',value) else None
+
+    def wikidata_title_metadata(self,kind,imdb,english_name,include_article=True):
+        """Find a Wikidata entity only after exact IMDb-property verification."""
+        if kind not in ('movie','series') or not re.fullmatch(r'tt\d{5,12}',imdb):return None
+        query={'action':'wbsearchentities','search':english_name,'language':'en','uselang':'en',
+               'format':'json','limit':30,'maxlag':5}
+        found=self.wikimedia_json('https://www.wikidata.org/w/api.php?'+U.urlencode(query)).get('search',[])
+        ids=[row['id'] for row in found if re.fullmatch(r'Q\d+',row.get('id',''))][:30]
+        if not ids:return None
+        query={'action':'wbgetentities','ids':'|'.join(ids),'props':'claims|labels|descriptions|sitelinks/urls',
+               'languages':'he|en','sitefilter':'hewiki','format':'json','maxlag':5}
+        entities=self.wikimedia_json('https://www.wikidata.org/w/api.php?'+U.urlencode(query)).get('entities',{})
+        for ident in ids:
+            entity=entities.get(ident,{})
+            imdbs=[claim.get('mainsnak',{}).get('datavalue',{}).get('value')
+                   for claim in entity.get('claims',{}).get('P345',[])]
+            if imdb not in imdbs:continue
+            labels=entity.get('labels',{});descriptions=entity.get('descriptions',{})
+            title=self._hebrew(labels.get('he',{}).get('value'))
+            description=self._hebrew(descriptions.get('he',{}).get('value'))
+            hewiki=entity.get('sitelinks',{}).get('hewiki',{}).get('title')
+            if not title:title=self._hebrew(hewiki)
+            article_used=False
+            if include_article and hewiki:
+                try:
+                    article=self.wikimedia_json('https://he.wikipedia.org/api/rest_v1/page/summary/'+U.quote(hewiki.replace(' ','_'),safe=''),timeout=6)
+                    extract=self._hebrew(article.get('extract'))
+                    if extract:description=extract[:4000];article_used=True
+                except (urllib.error.HTTPError,urllib.error.URLError,TimeoutError,ValueError):pass
+            return {'title_he':title,'description_he':description,'source':'wikidata'+('+hewiki' if article_used else '')}
+        return None
+
+    def _save_localized_metadata(self,kind,imdb,value,state='complete',retry_days=180):
+        value=value or {};now=time.time();retry=now+retry_days*86400
+        with self.db() as conn:
+            conn.execute('''INSERT INTO localized_metadata(kind,imdb,title_he,description_he,source,state,checked_at,next_attempt)
+                VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(kind,imdb) DO UPDATE SET
+                title_he=COALESCE(excluded.title_he,localized_metadata.title_he),
+                description_he=COALESCE(excluded.description_he,localized_metadata.description_he),
+                source=COALESCE(excluded.source,localized_metadata.source),state=excluded.state,
+                checked_at=excluded.checked_at,next_attempt=excluded.next_attempt''',
+                (kind,imdb,value.get('title_he'),value.get('description_he'),value.get('source'),state,now,retry))
+            if value.get('title_he') or value.get('description_he'):
+                old=conn.execute('SELECT hebrew,english FROM aliases WHERE imdb=?',(imdb,)).fetchone()
+                hebrew=value.get('title_he') or (old[0] if old else None)
+                english=(old[1] if old else None) or value.get('english_name')
+                if hebrew or english:
+                    conn.execute('''INSERT INTO aliases(imdb,hebrew,english) VALUES (?,?,?)
+                        ON CONFLICT(imdb) DO UPDATE SET hebrew=COALESCE(excluded.hebrew,aliases.hebrew),
+                        english=COALESCE(aliases.english,excluded.english)''',(imdb,hebrew,english))
+
+    def apply_localized_nfo(self,kind,imdb,meta,title_he,description_he):
+        path=self.g['LIBRARY']/('movies' if kind=='movie' else 'shows')/imdb/('movie.nfo' if kind=='movie' else 'tvshow.nfo')
+        if not path.is_file():return False
+        lock_path=self.g['DATA']/'nfo-metadata.lock'
+        with lock_path.open('a+') as lock:
+            fcntl.flock(lock,fcntl.LOCK_EX)
+            try:tree=ET.parse(path);root=tree.getroot()
+            except (OSError,ET.ParseError):return False
+            changed=False
+            english=meta.get('englishName') or meta.get('originalName') or meta.get('name')
+            for tag,value in (('title',title_he),('originaltitle',english),('plot',description_he)):
+                if not value:continue
+                node=root.find(tag)
+                if node is None:node=ET.SubElement(root,tag);changed=True
+                if node.text!=value:node.text=str(value);changed=True
+            if not changed:return False
+            ET.indent(root);temporary=path.with_suffix(path.suffix+'.new')
+            tree.write(temporary,encoding='utf-8',xml_declaration=True);temporary.replace(path)
+            return True
+
+    def refresh_localized_items(self,identities):
+        if not identities:return 0
+        try:
+            native=self.jf('/Items?Recursive=true&IncludeItemTypes=Movie,Series&Fields=ProviderIds,Path&Limit=5000',timeout=20).get('Items',[])
+            ids={(('movie' if item.get('Type')=='Movie' else 'series'),item.get('ProviderIds',{}).get('Imdb')):item.get('Id')
+                 for item in native if str(item.get('Path','')).startswith(str(self.g['LIBRARY']))}
+            refreshed=0
+            for kind,imdb in identities:
+                ident=ids.get((kind,imdb))
+                if not ident:continue
+                self.jf('/Items/'+ident+'/Refresh?Recursive=false&MetadataRefreshMode=FullRefresh&ImageRefreshMode=None&ReplaceAllMetadata=false',{},method='POST')
+                with self.db() as conn:conn.execute('UPDATE localized_metadata SET refresh_pending=0 WHERE kind=? AND imdb=?',(kind,imdb))
+                refreshed+=1
+            return refreshed
+        except Exception:
+            self.log('Hebrew NFO refresh deferred; local metadata remains safely saved')
+            return 0
+
+    def refresh_hebrew_metadata(self,limit=8):
+        """Resumable, ready-only Hebrew metadata enrichment and local NFO refresh."""
+        if self.hebrew_metadata_busy():
+            self.log('Hebrew metadata backfill deferred during playback or foreground catalogue work');return 0
+        with self.db() as conn:
+            pending_refresh=[(kind,imdb) for kind,imdb in conn.execute(
+                'SELECT kind,imdb FROM localized_metadata WHERE refresh_pending=1 ORDER BY checked_at LIMIT 8')]
+        self.refresh_localized_items(pending_refresh)
+        ready=self.ready_titles()
+        with self.db() as conn:
+            rows=conn.execute('SELECT kind,imdb,meta FROM items ORDER BY rowid').fetchall()
+            known={(kind,imdb):(state,next_attempt,title,description,nfo_written,source) for kind,imdb,state,next_attempt,title,description,nfo_written,source in
+                   conn.execute('SELECT kind,imdb,state,next_attempt,title_he,description_he,nfo_written,source FROM localized_metadata')}
+        candidates=[]
+        for kind,imdb,raw in rows:
+            key=kind+':'+imdb
+            if key not in ready:continue
+            state,next_attempt,title_he,description_he,nfo_written,source=known.get((kind,imdb),('',0,None,None,0,None))
+            cached_pending=bool((title_he or description_he) and not nfo_written)
+            if next_attempt>time.time() and not cached_pending:continue
+            candidates.append((kind,imdb,json.loads(raw),title_he,description_he,nfo_written,source))
+            if len(candidates)>=max(1,min(16,int(limit))):break
+        if not candidates:return 0
+        enriched=changed=0;refresh=[]
+        for kind,imdb,meta,cached_title,cached_description,nfo_written,cached_source in candidates:
+            title=meta.get('name') or meta.get('originalName') or imdb
+            value=None
+            if cached_title or cached_description:
+                value={'title_he':cached_title,'description_he':cached_description,'source':cached_source or 'cached'}
+            else:
+                try:value=self.wikidata_title_metadata(kind,imdb,title,include_article=True)
+                except Exception as error:
+                    retry=1
+                    if isinstance(error,urllib.error.HTTPError):
+                        try:retry=max(1,min(7,int(error.headers.get('Retry-After','3600'))//86400 or 1))
+                        except (TypeError,ValueError):retry=1
+                    self._save_localized_metadata(kind,imdb,None,state='retry',retry_days=retry)
+                    continue
+                if value:value={**value,'english_name':meta.get('name') or meta.get('originalName') or imdb}
+                self._save_localized_metadata(kind,imdb,value,state='complete' if value else 'no_match',retry_days=180 if value else 30)
+            if not value:continue
+            enriched+=1
+            display=self.localize({**meta,'id':imdb,'type':kind})
+            if self.hebrew_metadata_busy():
+                self.log('Hebrew NFO updates paused after playback started; cached translations will resume later')
+                break
+            title_he=value.get('title_he') or self._hebrew(display.get('name'))
+            try:
+                if self.apply_localized_nfo(kind,imdb,display,title_he,value.get('description_he')):
+                    changed+=1;refresh.append((kind,imdb))
+                    with self.db() as conn:conn.execute('UPDATE localized_metadata SET refresh_pending=1 WHERE kind=? AND imdb=?',(kind,imdb))
+            except (OSError,ET.ParseError):
+                self._save_localized_metadata(kind,imdb,value,state='retry',retry_days=1)
+                continue
+            with self.db() as conn:conn.execute('UPDATE localized_metadata SET nfo_written=1 WHERE kind=? AND imdb=?',(kind,imdb))
+        self.refresh_localized_items(refresh)
+        self.log(f'Hebrew metadata batch complete: {len(candidates)} checked, {enriched} localized, {changed} NFOs updated')
+        return enriched
+
+    def hebrew_metadata_busy(self):
+        if self.foreground_busy():return True
+        try:
+            return any(session.get('NowPlayingItem') for session in self.jf('/Sessions',timeout=3))
+        except Exception:
+            return True
 
     def poster_url(self,kind,imdb,badge=None):
         if badge is None:badge=self.g['poster_status'](kind,imdb)
@@ -511,16 +706,20 @@ class Features:
                 # Rank compact index entries first; fetch full rows/aliases only
                 # for this page, rather than sorting thousands of poster previews.
                 rows=conn.execute('WITH ranked AS (SELECT t.imdb FROM '+rank_source+' WHERE '+where+
-                    ' ORDER BY '+ordering+' LIMIT ? OFFSET ?) SELECT t.imdb,t.name,t.original,t.year,t.genres,a.hebrew,'+
+                    ' ORDER BY '+ordering+' LIMIT ? OFFSET ?) SELECT t.imdb,t.name,t.original,t.year,t.genres,'+
+                    'COALESCE(lm.title_he,a.hebrew),lm.description_he,COALESCE(a.english,t.name),'+
                     ('t.rating' if 'rating' in columns else 'NULL')+','+('t.runtime' if 'runtime' in columns else 'NULL')+
-                    ',t.kind,'+('t.released' if 'released' in columns else 'NULL')+' FROM ranked r JOIN state.home_titles t ON t.imdb=r.imdb LEFT JOIN state.aliases a ON a.imdb=t.imdb ORDER BY '+ordering,
+                    ',t.kind,'+('t.released' if 'released' in columns else 'NULL')+
+                    ' FROM ranked r JOIN state.home_titles t ON t.imdb=r.imdb LEFT JOIN state.aliases a ON a.imdb=t.imdb '
+                    'LEFT JOIN state.localized_metadata lm ON lm.imdb=t.imdb AND lm.kind=t.kind ORDER BY '+ordering,
                     (*params,limit,offset)).fetchall()
-            metas=[{'id':imdb,'type':actual_kind,'name':hebrew+' / '+name if hebrew else name,'originalName':original,
+            metas=[{'id':imdb,'type':actual_kind,'name':hebrew or name,'englishName':english,'originalName':english,
+                'description':description_he,
                 'releaseInfo':str(release_year),'genres':genres.split(',') if genres else [],
                 'poster':f'https://images.metahub.space/poster/medium/{imdb}/img',
                 'released':released+'T00:00:00Z' if released else None,
                 'imdbRating':str(rating) if rating is not None else None,'runtime':str(runtime)+' min' if runtime else None}
-                for imdb,name,original,release_year,genres,hebrew,rating,runtime,actual_kind,released in rows]
+                for imdb,name,original,release_year,genres,hebrew,description_he,english,rating,runtime,actual_kind,released in rows]
             return {'metas':self.decorate_posters(metas),'total':total,'has_more':offset+len(metas)<total,'offset':offset}
         if month_bounds:raise RuntimeError('Month search requires the local release date index')
         cachekey=f'browse:{kind}:{years_filter}:{offset}:{limit}:{sort_by}:{sort_order}'
@@ -676,14 +875,14 @@ class Features:
         if saved is not None:return saved
         params={'action':'wbsearchentities','search':query,'language':'he','uselang':'he',
                 'format':'json','limit':20,'maxlag':30}
-        response=self.fetch('https://www.wikidata.org/w/api.php?'+U.urlencode(params),timeout=7)
+        response=self.wikimedia_json('https://www.wikidata.org/w/api.php?'+U.urlencode(params),timeout=7)
         if response.get('error'):raise RuntimeError('Hebrew title provider temporarily busy')
         found=response.get('search',[])
         ids=[r['id'] for r in found if re.fullmatch(r'Q\d+',r.get('id',''))]
         if not ids:return self.remember(key,[],3600)
         params={'action':'wbgetentities','ids':'|'.join(ids),'props':'claims|labels',
                 'languages':'he|en','format':'json','maxlag':30}
-        response=self.fetch('https://www.wikidata.org/w/api.php?'+U.urlencode(params),timeout=7)
+        response=self.wikimedia_json('https://www.wikidata.org/w/api.php?'+U.urlencode(params),timeout=7)
         if response.get('error'):raise RuntimeError('Hebrew title provider temporarily busy')
         entities=response.get('entities',{})
         output=[];keywords=[];lookups=0
@@ -1142,6 +1341,7 @@ class Features:
         if not self.foreground_busy():
             try:self.browse('all',limit=1)
             except Exception:self.log('Compact catalogue warm-up deferred')
+        self.refresh_hebrew_metadata(limit=8)
         self.log(f'Discovery pages refreshed; {changed} shows gained updated episode metadata')
 
     def records(self):

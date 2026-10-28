@@ -552,3 +552,22 @@ failures/checkpoints for30days, including title, stage, category and current fre
 check status. Raw errors, URLs, credentials and device/user identities are not
 stored in that table. Existing successful phase timings remain structured logs.
 
+## Hebrew titles and descriptions
+
+Cinemeta remains the English metadata fallback. Hebrew enrichment uses a
+Wikidata record only after its IMDb property exactly matches the local title;
+when a Hebrew Wikipedia article exists, its lead extract supplies a fuller
+Hebrew description. Title and description are selected independently, so a
+missing Hebrew field leaves its English value intact. Original and English
+names remain stored as search aliases. Provider failures retain cached values.
+
+The six-hour discovery sync enriches at most eight already-ready movie/show
+identities per run. Work is resumable in the catalogue database, serializes
+Wikimedia requests and caps this integration at 160 requests per Jerusalem day
+to leave room for interactive Hebrew searches. New titles use the same cached
+localization when they are opened/imported. Existing NFO files are updated
+atomically with only title, original title and plot; other tags and media proofs
+are preserved. Jellyfin refreshes only the affected parent items, and the batch
+is deferred while playback or foreground catalogue work is active. Metadata
+refresh uses Jellyfin's API and does not write user watch/favorite state.
+

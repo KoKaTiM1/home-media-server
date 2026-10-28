@@ -9,6 +9,8 @@ source server. A fresh recovery still needs its own accounts, keys and setup.
 
 See [catalogue/README.md](catalogue/README.md) for browsing, validation,
 Hebrew subtitles, audio conversion, saved downloads and current limitations.
+Hebrew movie/show titles and descriptions are enriched gradually from verified
+identities, with per-field English fallback and original-name search retained.
 The public repository's root README includes measured hardware specifications;
 its RESTORE.md describes rebuilding with private deployment values.
 

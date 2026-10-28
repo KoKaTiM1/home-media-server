@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 import datetime as dt
 from difflib import SequenceMatcher
+import fcntl
 import hashlib
 import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -540,7 +541,12 @@ def nfo(path,root_tag,values,genres=None):
         else: ET.SubElement(root,key).text=str(value)
     for genre in genres or []: ET.SubElement(root,'genre').text=genre
     ET.indent(root)
-    ET.ElementTree(root).write(path,encoding='utf-8',xml_declaration=True)
+    lock_path=DATA/'nfo-metadata.lock';lock_path.parent.mkdir(parents=True,exist_ok=True)
+    with lock_path.open('a+') as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX)
+        temporary=path.with_suffix(path.suffix+'.new')
+        ET.ElementTree(root).write(temporary,encoding='utf-8',xml_declaration=True)
+        temporary.replace(path)
 
 
 def import_item(kind,meta,bucket):
@@ -561,12 +567,14 @@ def import_item(kind,meta,bucket):
         if not (folder/'movie.strm').exists():
             # The plugin resolves this only at playback; scans never fetch torrents.
             (folder/'movie.strm').write_text('dynamiclibrary://movie/'+imdb+'\n')
-        values={'title':name,'year':year,'imdbid':imdb,'plot':meta.get('description'),
+        values={'title':name,'originaltitle':meta.get('englishName') or meta.get('originalName'),
+                'year':year,'imdbid':imdb,'plot':meta.get('description'),
                 'premiered':str(meta.get('released',''))[:10], 'rating':meta.get('imdbRating'),
                 'runtime':re.sub(r'\D','',str(meta.get('runtime',''))) or None,'trailer':trailer_urls(meta)}
         nfo(folder/'movie.nfo','movie',values,meta.get('genres'))
     else:
-        nfo(folder/'tvshow.nfo','tvshow',{'title':name,'year':year,'imdbid':imdb,'plot':meta.get('description'),
+        nfo(folder/'tvshow.nfo','tvshow',{'title':name,'originaltitle':meta.get('englishName') or meta.get('originalName'),
+            'year':year,'imdbid':imdb,'plot':meta.get('description'),
             'trailer':trailer_urls(meta)},meta.get('genres'))
         for video in meta.get('videos',[]):
             season=video.get('season'); episode=video.get('episode')
@@ -1667,10 +1675,11 @@ def main():
     # its native metadata and downloaded sidecar subtitles beside STRM files.
     os.umask(0o002)
     parser=argparse.ArgumentParser()
-    parser.add_argument('command',choices=('serve','sync','collections','badges','trailers','discovery-sync','availability','downloads','imdb-sync','metadata-import','remote-availability','embedded-subtitles'),default='serve',nargs='?')
+    parser.add_argument('command',choices=('serve','sync','collections','badges','trailers','discovery-sync','availability','downloads','imdb-sync','metadata-import','remote-availability','embedded-subtitles','hebrew-metadata'),default='serve',nargs='?')
     parser.add_argument('--movies',type=int,default=1000)
     parser.add_argument('--shows',type=int,default=200)
     parser.add_argument('--slot',type=int,choices=range(1,9),default=1)
+    parser.add_argument('--limit',type=int,default=8)
     args=parser.parse_args()
     BUDGET.metadata_background=args.command!='serve'
     if args.command=='metadata-import':
@@ -1683,6 +1692,7 @@ def main():
     if args.command=='discovery-sync': return F.sync_discovery()
     if args.command=='availability': return F.warm_availability()
     if args.command=='embedded-subtitles': return log('Embedded subtitle work steps: '+str(EMBED.work()))
+    if args.command=='hebrew-metadata': return F.refresh_hebrew_metadata(limit=args.limit)
     if args.command=='remote-availability': return F.warm_availability(remote=True,slot=args.slot)
     if args.command=='downloads': return F.manage_downloads()
     if args.command=='imdb-sync': return F.update_index()
