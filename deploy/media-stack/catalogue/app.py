@@ -785,10 +785,10 @@ def resolve(key,deadline=None):
             work=REL.checkpoint(key)
             metadata_started=work.get('metadata_started',time.time()) if work.get('metadata_hash')==infohash else time.time()
             metadata_age=max(0,time.time()-metadata_started)
-            # A background producer should not occupy one of thirty-two slots for
-            # the full metadata timeout. Yield after 30s, retain the title and
+            # A background producer should not occupy a slot for the full
+            # metadata timeout. Yield after 45s, retain the title and
             # source for retry, then continue with another candidate/title.
-            metadata_window=min(METADATA_SECONDS,30) if background else METADATA_SECONDS
+            metadata_window=min(METADATA_SECONDS,45) if background else METADATA_SECONDS
             end=min(time.monotonic()+max(0,min(metadata_window,METADATA_SECONDS-metadata_age)),deadline or float('inf'))
             REL.checkpoint(key,phase='metadata',state='preparing',source_hash=infohash,metadata_hash=infohash,metadata_started=metadata_started)
             try:status=torr({'action':'get','hash':infohash},timeout=2)

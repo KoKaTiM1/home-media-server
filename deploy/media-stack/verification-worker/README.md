@@ -112,8 +112,10 @@ For bounded lookahead, set private guard `prefetch_per_lane` to `2` through `8`
 (currently four); total queued plus leased decode operations are capped at the
 product, up to32. Queue entries are operations, not titles: a title can need a
 probe and multiple sample operations. With four Windows leases, producer slots
-1–16 prepare the active batch and slots17–32 can prepare the following batch
-while Windows is decoding the first. These producer slots do not grant any
+1–16 prepare work while Windows consumes ready operations from the shared
+queue. Slots17–32 are available for additional lookahead, but are currently
+paused after the 32-producer experiment saturated the bridge's two-CPU quota
+without keeping the ready queue filled. These producer slots do not grant any
 extra Windows decoder leases.
 
 The 1.5 GiB catalogue-bridge memory allowance is now part of the host guard:
@@ -151,7 +153,8 @@ assistance was enabled after that review; the existing memory and playback
 guards still pause it as needed. A physical Windows stop/reconnect and longer
 throughput review remain open in issue #4.
 
-The double-buffered supply pilot retains four active decoders and a32-operation
-queue, with lookahead producers @4 through @32 (ordinary producers1–3). Existing
-playback and resource guards apply; measure useful outcomes and queue starvation
-before increasing further.
+The current bounded supply pilot retains four active decoders and a32-operation
+queue, with producers1–16 active (ordinary producers1–3 plus lookahead4–16).
+Lookahead17–32 remains paused until source metadata resolution can reliably fill
+the ready queue without overloading the bridge. Existing playback and resource
+guards apply; measure useful outcomes and queue starvation before increasing.
