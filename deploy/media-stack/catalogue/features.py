@@ -349,10 +349,11 @@ class Features:
                         candidates.append((kind,imdb,meta,title_he,description_he,nfo_written,source))
                         if len(candidates)>=batch_limit:break
         if not candidates:return 0
-        enriched=changed=0;refresh=[]
+        enriched=changed=attempted=0;refresh=[]
         deadline=time.monotonic()+90
         for kind,imdb,meta,cached_title,cached_description,nfo_written,cached_source in candidates:
             if time.monotonic()>deadline or self.hebrew_metadata_busy():break
+            attempted+=1
             title=meta.get('name') or meta.get('originalName') or imdb
             value=None
             if cached_title or cached_description:
@@ -370,7 +371,7 @@ class Features:
                 if value:value={**value,'english_name':meta.get('name') or meta.get('originalName') or imdb}
                 self._save_localized_metadata(kind,imdb,value,state='complete' if value else 'no_match',retry_days=180 if value else 30)
             if not value:continue
-            enriched+=1
+            if value.get('title_he') or value.get('description_he'):enriched+=1
             display=self.localize({**meta,'id':imdb,'type':kind})
             if self.hebrew_metadata_busy():
                 self.log('Hebrew NFO updates paused after playback started; cached translations will resume later')
@@ -385,7 +386,7 @@ class Features:
                 continue
             with self.db() as conn:conn.execute('UPDATE localized_metadata SET nfo_written=1 WHERE kind=? AND imdb=?',(kind,imdb))
         self.refresh_localized_items(refresh)
-        self.log(f'Hebrew metadata batch complete: {len(candidates)} checked, {enriched} localized, {changed} NFOs updated')
+        self.log(f'Hebrew metadata batch complete: {len(candidates)} selected, {attempted} attempted, {enriched} with Hebrew fields, {changed} NFOs updated')
         return enriched
 
     def hebrew_metadata_busy(self):

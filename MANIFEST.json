@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-10-28T15:48:45.244806+00:00",
+  "created_utc": "2026-10-28T15:49:19.476805+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -31,7 +31,7 @@
     "deploy/media-stack/catalogue/check_subtitle_delivery.py": "cc143d9c5ad787bcfc3e66a8b26cb48e465afb487d5d2e4e35872486bbc439f9",
     "deploy/media-stack/catalogue/check_tv_recovery.py": "e1ba91df58983dd47155461b6a199aee661d04f825c4281b1ac3551b451e59d4",
     "deploy/media-stack/catalogue/embedded_subtitles.py": "e4d03f9f10a928500fc0b8c44270c283ca10ab9b52e9b861e92731f31737e0c1",
-    "deploy/media-stack/catalogue/features.py": "d29330e99c88fd33a3446963c00cead6cd5326a6da7c694b012b2738bb3ea88a",
+    "deploy/media-stack/catalogue/features.py": "21a912f029cef039aecf4e1f67d6bb43c098b51e825f59a0eb869ccbcf555e6e",
     "deploy/media-stack/catalogue/metadata_jobs.py": "1754fe90b7c20426a2afc35ed49afe16084770288bb630922d5f81471ed021dc",
     "deploy/media-stack/catalogue/playback_diagnostics.py": "3557a7986747c80f0e1aac06ffc203731c240c89b84a288acb74996d4fc134db",
     "deploy/media-stack/catalogue/reliability.py": "9ba028f2bc79eb01d0952c67dcc6602c03332583824a8d12cd983c91c54d826c",
