@@ -3,7 +3,7 @@
 Debian 13 / OpenMediaVault 8 runs Jellyfin, the custom catalogue bridge,
 Transmission and TorrServer through `/opt/media-stack/compose.yaml`.
 Jellyfin is pinned to 10.11.11, the modified Dynamic Library plugin is
-1.4.0.18, and the installed Wizdom subtitle provider is 0.2.0.0.
+1.4.0.22, and the installed Wizdom subtitle provider is 0.2.0.0.
 The initial Jellyfin wizard and catalogue integration are complete on the
 source server. A fresh recovery still needs its own accounts, keys and setup.
 

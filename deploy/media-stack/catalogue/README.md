@@ -574,3 +574,10 @@ are preserved. Jellyfin refreshes only the affected parent items, and the batch
 is deferred while playback or foreground catalogue work is active. Metadata
 refresh uses Jellyfin's API and does not write user watch/favorite state.
 
+Native Items lists, individual details and TV search hints apply the saved Hebrew
+fields after cached catalogue DTOs are assembled. The plugin reads local labels
+in batches of at most 100; browsing performs no translation-provider requests.
+English fields remain when their Hebrew equivalents are missing or the cache is
+temporarily unreachable. This changes displayed text and preserves poster artwork,
+item identities, release years and per-user data.
+
