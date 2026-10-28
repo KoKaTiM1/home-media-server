@@ -107,30 +107,30 @@ checkpoint, not a failed source. Lost replies replay the same result identity.
    real PC results and fallback on stopping the PC. Preserve protected titles,
    watch progress, favourites and downloads. Do not restart a playing service.
 
-For bounded lookahead, set private guard `prefetch_per_lane` to `2`, `3` or `4` (default
-`1`). The active lease limit remains `max_windows_jobs`; the total operation
-queue limit is their product, at most sixteen. At three active slots and depth two, restore the
-`media-remote-lookahead@4`, `@5` and `@6` timer instances alongside the ordinary
-three producers. At four active slots, also restore `@7` and `@8`, for eight
-producer slots in total. The depth-three throughput pilot uses four active
-Windows leases with twelve preparation slots: also enable `@9` through `@12`.
-The bridge has a 768 MiB memory allowance for the additional preparation
-processes. The expanded pilot uses a separate 1.5 GiB TorrServer allowance:
-measured working memory briefly reached 866 MiB with twelve preparation slots,
-crossing the former 1 GiB allowance's 80% pause threshold. The 80/70% guard,
-OOM/restart checks and host-memory guard remain unchanged.
-The bridge CPU quota is two logical CPUs on the four-thread source host. The
-former one-CPU quota throttled source preparation under the expanded pool.
-Keep additional dispatchers gated off until the staged memory gate
-and pilot are approved. Producer slots are not extra decoder slots. Add the
-catalogue `verification_jobs.py` and `verification_remote.py` read-only source
-mounts from Compose when restoring; compare deployed module hashes with source.
+For bounded lookahead, set private guard `prefetch_per_lane` to `2` through `8`
+(`1` by default). The active Windows lease limit remains `max_windows_jobs`
+(currently four); total queued plus leased decode operations are capped at the
+product, up to32. Queue entries are operations, not titles: a title can need a
+probe and multiple sample operations. With four Windows leases, producer slots
+1–16 prepare the active batch and slots17–32 can prepare the following batch
+while Windows is decoding the first. These producer slots do not grant any
+extra Windows decoder leases.
+
+The 1.5 GiB catalogue-bridge memory allowance is now part of the host guard:
+Windows work pauses at80% of bridge working memory and resumes below70%, using
+the same reclaimable-cache adjustment as TorrServer. TorrServer retains its
+1.5 GiB allowance and 80/70% guard; host-available RAM and new OOM/restart
+checks still apply. The bridge CPU quota is two logical CPUs on the four-thread
+source host. Expand preparation concurrency in stages and measure ready work,
+resource peaks and useful outcomes before claiming a speedup. Add the catalogue
+`verification_jobs.py` and `verification_remote.py` read-only source mounts from
+Compose when restoring; compare deployed module hashes with source.
 
 Windows producer timers retry after three seconds (one-second timer accuracy).
 The controller checks leased operation results every 250 ms and queued work
 every 500 ms; it does not insert a separate two-second pause between remote
 titles. These remove scheduling delays, not torrent startup or download time.
-The four active decoder/sixteen maximum total queued-work limits, exclusive source/title
+The four active decoder/thirty-two maximum total queued-work limits, exclusive source/title
 leases, provider backoff and playback/resource guards still apply. Existing
 producer processes finish their current batch before loading updated code.
 
@@ -151,4 +151,7 @@ assistance was enabled after that review; the existing memory and playback
 guards still pause it as needed. A physical Windows stop/reconnect and longer
 throughput review remain open in issue #4.
 
-The 16-operation supply pilot uses four active decoders, prefetch depth four, and lookahead producers @4 through @16 (ordinary producers 1–3). Existing playback and resource guards apply; measure useful outcomes and queue starvation before increasing further.
+The double-buffered supply pilot retains four active decoders and a32-operation
+queue, with lookahead producers @4 through @32 (ordinary producers1–3). Existing
+playback and resource guards apply; measure useful outcomes and queue starvation
+before increasing further.

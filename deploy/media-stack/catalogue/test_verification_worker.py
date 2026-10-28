@@ -93,10 +93,10 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(self.q.status()['jobs']['pending'],12)
         for worker,task in zip(workers,tasks):self.assertEqual(self.q.claim(worker)['lease_id'],task['lease_id'])
         self.assertEqual(self.q.status()['jobs']['leased'],4)
-        self.q.producer(16,KEY,'source preparation')
-        with self.assertRaises(InvalidJob):self.q.producer(17,KEY,'source preparation')
+        self.q.producer(32,KEY,'source preparation')
+        with self.assertRaises(InvalidJob):self.q.producer(33,KEY,'source preparation')
         self.q.set('prefetch_per_lane',100)
-        self.assertEqual(self.q.status()['windows_queue_capacity'],16)
+        self.assertEqual(self.q.status()['windows_queue_capacity'],32)
     def test_server_observes_completed_windows_work_without_two_second_gap(self):
         import verification_remote as remote
         from reliability import Checkpoint

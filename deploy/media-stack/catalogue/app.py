@@ -785,7 +785,7 @@ def resolve(key,deadline=None):
             work=REL.checkpoint(key)
             metadata_started=work.get('metadata_started',time.time()) if work.get('metadata_hash')==infohash else time.time()
             metadata_age=max(0,time.time()-metadata_started)
-            # A background producer should not occupy one of sixteen slots for
+            # A background producer should not occupy one of thirty-two slots for
             # the full metadata timeout. Yield after 30s, retain the title and
             # source for retry, then continue with another candidate/title.
             metadata_window=min(METADATA_SECONDS,30) if background else METADATA_SECONDS
@@ -1715,7 +1715,7 @@ def main():
     parser.add_argument('command',choices=('serve','sync','collections','badges','trailers','discovery-sync','availability','downloads','imdb-sync','metadata-import','remote-availability','embedded-subtitles','hebrew-metadata'),default='serve',nargs='?')
     parser.add_argument('--movies',type=int,default=1000)
     parser.add_argument('--shows',type=int,default=200)
-    parser.add_argument('--slot',type=int,choices=range(1,17),default=1)
+    parser.add_argument('--slot',type=int,choices=range(1,33),default=1)
     parser.add_argument('--limit',type=int,default=8)
     args=parser.parse_args()
     BUDGET.metadata_background=args.command!='serve'

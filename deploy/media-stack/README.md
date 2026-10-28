@@ -193,4 +193,6 @@ and existing user permissions determine whether Delete is visible.
 
 Optional Windows source verification is implemented separately from metadata fetching. See [worker operation and recovery](verification-worker/README.md). The server remains authoritative. The first 20-title PC pilot completed with 19 verified and one unavailable result; continuous PC assistance is now enabled under the memory and playback guards. Issues #3 and #4 track the remaining memory investigation and physical offline/reconnect check.
 
+Windows decoding remains limited to four active operations. The server can prepare up to32 queued/leased operations as a two-batch buffer; the second preparation pool stays under the playback, TorrServer, host-RAM and catalogue-bridge memory guards.
+
 Streaming verification v6 adds a 1.5× bitrate delivery check. Existing matching v5 sources reuse their decoded evidence and receive speed-only upgrades; changed sources require both checks. Slow sources are excluded for six hours while alternatives are tried. Background source-metadata waits now yield after 30 seconds so the producer can try another source or title without marking the pending title unavailable. See [delivery-speed evidence](catalogue/README.md#v6-delivery-speed-evidence) and the [background validation limits](catalogue/README.md#playback-and-audio).

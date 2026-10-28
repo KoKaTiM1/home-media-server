@@ -307,7 +307,7 @@ def overview(data=DATA,snapshot=None):
         add('Windows worker','Connected' if connected else 'Offline',control.get('reason','Waiting for resource gate') if connected else 'Server verification continues without the PC','success' if connected and control.get('enabled') else 'muted')
         capacity=max(1,min(4,int(control.get('max_windows_jobs',1))))
         add('Windows lanes',f'{online} / {capacity}','Connected verifier containers / allowed simultaneous Windows operations','success' if online and control.get('enabled') else 'muted')
-        queue_capacity=capacity*max(1,min(4,int(control.get('prefetch_per_lane',1))))
+        queue_capacity=capacity*max(1,min(8,int(control.get('prefetch_per_lane',1))))
         producer_phases={}
         for key,value in control.items():
             if not key.startswith('producer:') or not isinstance(value,dict) or value.get('updated',0)<=now-45:continue

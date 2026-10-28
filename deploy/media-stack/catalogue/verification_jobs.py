@@ -75,9 +75,9 @@ class DecodeJobs:
                     'totals':dict(c.execute('SELECT key,value FROM totals').fetchall())}
     def queue_capacity(self,c):
         capacity=max(1,min(4,int(self.setting(c,'max_windows_jobs',1))))
-        return capacity*max(1,min(4,int(self.setting(c,'prefetch_per_lane',1))))
+        return capacity*max(1,min(8,int(self.setting(c,'prefetch_per_lane',1))))
     def producer(self,slot,key,phase):
-        if slot not in range(1,17) or not re.fullmatch('(movie:tt[0-9]{5,12}|series:tt[0-9]{5,12}:[0-9]+:[0-9]+)',key):raise InvalidJob('Invalid producer')
+        if slot not in range(1,33) or not re.fullmatch('(movie:tt[0-9]{5,12}|series:tt[0-9]{5,12}:[0-9]+:[0-9]+)',key):raise InvalidJob('Invalid producer')
         if phase not in ('source preparation','torrent_resolution','waiting for source metadata','video_probe','preparation',
                          'waiting for decoder','waiting for speed check','speed verification','probe','sample','finished'):
             raise InvalidJob('Invalid producer phase')
@@ -102,7 +102,7 @@ class DecodeJobs:
             c.execute("DELETE FROM decode_jobs WHERE created<? AND state IN ('consumed','cancelled')",(now-7*86400,))
             active=c.execute("SELECT COUNT(*) FROM decode_jobs WHERE state IN ('pending','leased') AND controller>?",(now,)).fetchone()[0]
             if active>=self.queue_capacity(c):raise WorkerWait('Windows ready queue full')
-            if c.execute("SELECT COUNT(*) FROM decode_jobs WHERE state IN ('pending','leased','result')").fetchone()[0]>=16:raise WorkerWait('Decode work capacity reached')
+            if c.execute("SELECT COUNT(*) FROM decode_jobs WHERE state IN ('pending','leased','result')").fetchone()[0]>=32:raise WorkerWait('Decode work capacity reached')
             c.execute('INSERT INTO decode_jobs(id,key,sid,operation,params,url,state,created,controller,deadline,phase,phase_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
                       (job,key,sid,operation,json.dumps(params),url,'pending',now,now+30,now+min(480,max(1,seconds)),'queued',now))
         return job
