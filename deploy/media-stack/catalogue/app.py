@@ -1453,6 +1453,16 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path=='/series-counts':
                 wanted=U.parse_qs(parsed.query).get('ids',[''])[0].split(',')[:1000]
                 return self.reply(F.series_episode_counts(wanted))
+            if parsed.path=='/title-labels':
+                keys=U.parse_qs(parsed.query).get('keys',[''])[0].split(',')[:100]
+                labels={}
+                with F.db() as conn:
+                    for key in keys:
+                        if not re.fullmatch(r'(movie|series):tt\d{5,12}',key):continue
+                        kind,imdb=key.split(':',1)
+                        row=conn.execute('SELECT COALESCE(l.title_he,a.hebrew),l.description_he,a.english FROM aliases a LEFT JOIN localized_metadata l ON l.imdb=a.imdb AND l.kind=? WHERE a.imdb=?',(kind,imdb)).fetchone()
+                        if row:labels[key]={'hebrew':row[0],'description':row[1],'english':row[2]}
+                return self.reply(labels)
             if parsed.path=='/validation':
                 with F.db() as conn:
                     states=dict(conn.execute('SELECT state,COUNT(*) FROM validation GROUP BY state'))

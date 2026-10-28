@@ -12,6 +12,16 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Caching.Memory;
 
 static void Check(bool condition, string name) { if (!condition) throw new Exception(name); }
+var localized = new BaseItemDto { Id=Guid.NewGuid(), Name="English", Overview="English overview", ProductionYear=2001,
+    UserData=new UserItemDataDto { Key="locale-fixture", IsFavorite=true, Played=true, PlaybackPositionTicks=123 },
+    ImageTags=new Dictionary<ImageType,string> { [ImageType.Primary]="unchanged-poster" } };
+var localizedId=localized.Id;var localizedState=localized.UserData;
+Jellyfin.Plugin.DynamicLibrary.Filters.HomeCatalogueResultFilter.ApplySavedLabels(localized,"שם בעברית",null,"English");
+Check(localized.Name=="שם בעברית" && localized.Overview=="English overview" && localized.OriginalTitle=="English", "Title-only Hebrew keeps English overview");
+Jellyfin.Plugin.DynamicLibrary.Filters.HomeCatalogueResultFilter.ApplySavedLabels(localized,null,"תיאור בעברית",null);
+Check(localized.Name=="שם בעברית" && localized.Overview=="תיאור בעברית" && localized.Id==localizedId && localized.ProductionYear==2001
+    && ReferenceEquals(localized.UserData,localizedState) && localized.ImageTags[ImageType.Primary]=="unchanged-poster", "Description update preserves identity, artwork and user state");
+Console.WriteLine("PASS: cached Hebrew fields independently preserve English fallback, poster, identity and user state");
 static MediaSourceInfo Source(string profile) => new()
 {
     Id = "fixture-source", Path = "http://<SERVER_LAN_IP>:8092/play/movie:tt1254207?fixture=1", Name = "Fixture",

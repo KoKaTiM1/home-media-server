@@ -74,6 +74,7 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
     {
         public string? Hebrew { get; set; }
         public string? English { get; set; }
+        public string? Description { get; set; }
         public string? Poster { get; set; }
         public List<MediaUrl>? Trailers { get; set; }
     }
@@ -81,6 +82,43 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
     private bool IsHomeTitle(BaseItemDto title) => title.Type is BaseItemKind.Movie or BaseItemKind.Series
         && (library.GetItemById(title.Id)?.Path?.StartsWith("/catalogue/", StringComparison.Ordinal) == true
             || SearchResultFactory.IsDynamicItem(title));
+
+    public static void ApplySavedLabels(BaseItemDto item, string? hebrew, string? description, string? english)
+    {
+        if (!string.IsNullOrWhiteSpace(hebrew)) item.Name = hebrew;
+        if (!string.IsNullOrWhiteSpace(description)) item.Overview = description;
+        if (!string.IsNullOrWhiteSpace(english)) item.OriginalTitle = english;
+    }
+
+    private async Task LocalizeResponseAsync(ObjectResult result, CancellationToken token)
+    {
+        var items = result.Value switch
+        {
+            QueryResult<BaseItemDto> page => page.Items.ToArray(),
+            BaseItemDto single => new[] { single },
+            IEnumerable<BaseItemDto> array => array.ToArray(),
+            _ => Array.Empty<BaseItemDto>()
+        };
+        var keyed = items.Where(IsHomeTitle).Select(i => (Item:i, Key:HomeKey(i.Id,i.Type))).Where(x => x.Key is not null).ToArray();
+        var hints = result.Value is SearchHintResult search ? search.SearchHints.ToArray() : Array.Empty<SearchHint>();
+        var keyedHints = hints.Select(h => (Item:h, Key:HomeKey(h.Id,h.Type))).Where(x => x.Key is not null).ToArray();
+        var client = clients.CreateClient();
+        client.Timeout = TimeSpan.FromSeconds(2);
+        foreach (var batch in keyed.Select(x => x.Key!).Concat(keyedHints.Select(x => x.Key!)).Distinct().Chunk(100))
+        {
+            try
+            {
+                var labels = await client.GetFromJsonAsync<Dictionary<string,TitleLabels>>(
+                    "http://catalogue-bridge:8092/title-labels?keys=" + Uri.EscapeDataString(string.Join(',',batch)), token);
+                if (labels is null) continue;
+                foreach (var entry in keyed)
+                    if (labels.TryGetValue(entry.Key!,out var value)) ApplySavedLabels(entry.Item,value.Hebrew,value.Description,value.English);
+                foreach (var entry in keyedHints)
+                    if (labels.TryGetValue(entry.Key!,out var value) && !string.IsNullOrWhiteSpace(value.Hebrew)) entry.Item.Name=value.Hebrew;
+            }
+            catch (Exception) { /* Retain usable response metadata when the local cache is unavailable. */ }
+        }
+    }
 
     private sealed class ReadyResponse
     {
@@ -433,6 +471,8 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
             if (playback.MediaSources.Count == 0 && playback.ErrorCode is null)
                 playback.ErrorCode = MediaBrowser.Model.Dlna.PlaybackErrorCode.NoCompatibleStream;
         }
+        if (context.Result is ObjectResult localizedResult)
+            await LocalizeResponseAsync(localizedResult, context.HttpContext.RequestAborted);
         await next();
     }
 }
