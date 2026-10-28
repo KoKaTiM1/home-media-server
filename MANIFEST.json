@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-10-28T18:17:45.172288+00:00",
+  "created_utc": "2026-10-28T18:19:06.709585+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -105,7 +105,7 @@
     "deploy/media-stack/verification-worker/03-LOGS.cmd": "805077d59c9af041f694f1dd0057d1b67333e1ddf8bdf7ebaf13d6b59caacd7e",
     "deploy/media-stack/verification-worker/04-STOP-ALL.cmd": "d11160886fb4639fee87360bd9d4187ff515e19d9eebb48ef4abea0e9119ea2b",
     "deploy/media-stack/verification-worker/Dockerfile": "8427129ff91b5770865b325c8de840dc2ca8b0013f42b29dbd8dd9d3fde0c19b",
-    "deploy/media-stack/verification-worker/README.md": "1f0d729feaebcc4acfbe5196dda40d62f7d461cbf31e7f87ab29864d1358f387",
+    "deploy/media-stack/verification-worker/README.md": "7a65edbc3591603672be18100b98dd146d73caac1b310fc8198a0b122a52fb0e",
     "deploy/media-stack/verification-worker/START-HERE.txt": "8bb4683d7ecc26d8b194e28b645d4a802e26f3681ae04afbad93d8481570e983",
     "deploy/media-stack/verification-worker/checks/mock-docker.ps1": "85bd57dbb882d7cb895977f7948b767ae8f1e9accd06fe2b4a3873df34ba104f",
     "deploy/media-stack/verification-worker/checks/run-launcher-checks.py": "6b7e4d94f880d96767771a86e2abb94fc29271e7b9e713aed935f0f5562e36b4",

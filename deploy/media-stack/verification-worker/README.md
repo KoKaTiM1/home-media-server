@@ -134,12 +134,13 @@ The four active decoder/twelve maximum total queued-work limits, exclusive sourc
 leases, provider backoff and playback/resource guards still apply. Existing
 producer processes finish their current batch before loading updated code.
 
-TorrServer's limit was increased live from 256 to 320 MiB after checking host
-headroom; no TorrServer restart was needed. More physical RAM provides headroom
-but does not itself change Docker limits or establish that reader/heap problems
-are fixed. Root-cause investigation remains tracked in issue #3; the Windows
-verification rollout is issue #4. Production PC validation remains required
-before advertising a speedup.
+The former 256/320 MiB TorrServer limits predate the host's 16 GiB RAM upgrade.
+Issue #3's OOM mitigation is closed. The current 1.5 GiB allowance belongs to
+the expanded source-preparation observation in issue #4 and was applied live
+after measuring memory pressure; no playback container restart was needed.
+Functional Windows validation/recovery has passed. The current throughput
+optimization still needs observed useful-work and resource results before
+advertising a speedup.
 
 The physical PC completed a probe of a local media canary after the gateway's
 Docker-network allow rule was corrected. It then committed v5 proofs from real
