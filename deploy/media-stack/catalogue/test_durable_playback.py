@@ -62,11 +62,11 @@ class DurablePlaybackTests(unittest.TestCase):
         self.assertEqual(evidence['info']['format']['duration'],60)
         self.assertEqual(evidence['info']['streams'][1]['profile'],'LC')
 
-    def test_audit_still_probes_and_decodes(self):
+    def test_audit_reuses_probe_info_but_runs_verification_gate(self):
         self.seed()
         with patch.object(a,'resolve',return_value=SELECTED),patch.object(a,'probe',return_value=INFO) as probe,patch.object(a.REL,'verify',return_value={'version':5}) as verify:
             a.prepared(KEY,background=True)
-        probe.assert_called_once();verify.assert_called_once()
+        probe.assert_not_called();verify.assert_called_once()
 
     def test_new_source_cannot_inherit_old_proof(self):
         proof=self.seed();other={**SELECTED,'hash':'b'*40}

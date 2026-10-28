@@ -114,8 +114,8 @@ class MonitorTests(unittest.TestCase):
             activity={'key':'series:tt1234567:1:2','name':'Example Show S1E2','position':2,'batch':8,'preparation':{'received_bytes':3145728}}
             with patch.object(m,'context',return_value=activity):rows=m.overview(data,snapshot)
             values={row['name']:row for row in rows}
-            self.assertEqual(values['Final v5 verified']['value'],'12')
-            self.assertEqual(values['Not yet v5 verified']['value'],'88')
+            self.assertEqual(values['Final decoded sources (v5+)']['value'],'12')
+            self.assertEqual(values['Not yet decode verified']['value'],'88')
             self.assertEqual(values['Windows final passes']['value'],'4')
             self.assertEqual(values['Windows decode queue']['value'],'1 active / 0 ready')
             self.assertIn('Decoding later sample',values['Windows working on']['detail'])

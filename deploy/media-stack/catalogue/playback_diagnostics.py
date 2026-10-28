@@ -6,7 +6,7 @@ from reliability import SourceFailure
 
 KEY=re.compile(r'(movie:tt\d{5,12}|series:tt\d{5,12}:\d+:\d+)')
 CATEGORIES={'upstream_http','client_disconnect','timeout','local_database','network',
-            'local_io','operation','decode_failure','source_stalled','source_failure','checkpoint','playback_busy'}
+            'local_io','operation','decode_failure','source_stalled','source_too_slow','source_failure','checkpoint','playback_busy'}
 
 class PlaybackDiagnostics:
     def __init__(self,g):self.g=g

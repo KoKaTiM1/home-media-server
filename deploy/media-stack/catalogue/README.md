@@ -581,3 +581,26 @@ English fields remain when their Hebrew equivalents are missing or the cache is
 temporarily unreachable. This changes displayed text and preserves poster artwork,
 item identities, release years and per-user data.
 
+
+### v6 delivery-speed evidence
+
+v6 adds Debian-measured exact-file delivery at 1.5 times file-size/runtime bitrate.
+Two bounded range reads (4–32 MiB each, 60 seconds total) include connection time;
+startup must return bytes within ten seconds. The initial torrent cache's entire
+filled-byte count is pessimistically subtracted from each window's delivered
+bytes. Each window must prove at least 4 MiB of uncached delivery, and cumulative
+throughput must also pass, so read-ahead cannot manufacture a network-speed pass.
+Large/ambiguous caches checkpoint until the bounded uncached test is possible;
+no cache eviction or torrent removal is used to force a test. Other readers,
+viewing/navigation, exhausted work budgets and resource holds checkpoint safely.
+
+For an unchanged accepted v5 file/audio policy, v6 preserves the decoded samples
+and original decode timestamp and only checks speed. Changed sources/audio and
+manual fresh rechecks decode again. Gradual migration preserves legacy visibility
+until an actual source failure; old v5 playback evidence remains usable during
+migration. Speed failures exclude that exact source for six hours, trying other
+matching sources; titles with no accepted alternative remain retryable. Daily
+background audits refresh speed evidence without redecoding unchanged torrents.
+Local files retain their decode checks and bypass torrent-speed requirements.
+Speed evidence describes server delivery conditions, not future peer availability
+or the client Wi-Fi path. The optional Windows image does not need an update.

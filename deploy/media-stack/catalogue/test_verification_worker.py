@@ -306,7 +306,7 @@ class RealDecoderTests(unittest.TestCase):
             def source(route,key,selection,token=None):
                 if route=='raw':return server.bridge+'/raw/'+key+'?progress='+token
                 return original_url(route,key,selection,token)
-            with patch.multiple(a,DATA=data,LIBRARY=library,SECRET=secret),patch.object(a,'resolve',return_value=selected),patch.object(a.REL,'source_url',side_effect=source):
+            with patch.multiple(a,DATA=data,LIBRARY=library,SECRET=secret),patch.object(a,'resolve',return_value=selected),patch.object(a.REL,'source_url',side_effect=source),patch.object(a.REL,'speed_verify',return_value={'policy':1,'mode':'fixture'}):
                 data.mkdir();library.mkdir();(data/'verification-helper.json').write_text(json.dumps({'queue_path':str(q.path)}))
                 a.F.enqueue(KEY);a.BUDGET.remote_verification=True
                 thread=threading.Thread(target=pc_loop,daemon=True);thread.start()
@@ -320,5 +320,7 @@ class RealDecoderTests(unittest.TestCase):
                 finally:done.set();thread.join(timeout=5);a.BUDGET.remote_verification=False
             bad=client.API({'server_url':'https://127.0.0.1:'+str(server.server_port),'token':TOKEN,'tls_sha256':'f'*64})
             with self.assertRaises(client.TransportWait):bad.request('/status')
+            # Drain handlers before deleting their SQLite directory.
+            server.shutdown();server.server_close()
 
 if __name__=='__main__':unittest.main()

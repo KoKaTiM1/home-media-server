@@ -84,7 +84,7 @@ class EmbeddedSubtitles:
             row=c.execute('SELECT state,proof FROM validation WHERE key=?',(key,)).fetchone()
             manual=c.execute('SELECT status FROM manual_rechecks WHERE key=?',(key,)).fetchone()
         proof=json.loads(row[1] or '{}') if row else {}
-        return bool(row and row[0]=='verified' and proof.get('version')==5 and proof.get('source_id')==sid and (not manual or manual[0]=='passed'))
+        return bool(row and row[0]=='verified' and proof.get('version') in (5,6) and proof.get('source_id')==sid and (not manual or manual[0]=='passed'))
     def resources_busy(self):
         from verification_remote import jobs
         try:

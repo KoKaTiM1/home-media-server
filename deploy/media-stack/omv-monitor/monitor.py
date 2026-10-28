@@ -83,7 +83,7 @@ def workers():
                 if work:
                     detail+=' · '+work.get('phase',work.get('state','preparing'))
                     if 'received_bytes' in work:
-                        detail+=f" · {work['received_bytes']:,} useful bytes · {work.get('speed',0):,} B/s · {work.get('buffer_bytes',0):,} buffered"
+                        detail+=f" · {work['received_bytes']:,} useful bytes · {work.get('speed',0):,} B/s (required {work.get('required_speed',0):,}) · {work.get('buffer_bytes',0):,} buffered"
                     if work.get('last_useful_progress'):
                         detail+=' · last progress '+span(time.time()-work['last_useful_progress'])+' ago'
                     if work.get('audio'):detail+=' · '+work['audio']
@@ -159,7 +159,10 @@ def counts(data=DATA,refresh=False):
             if audit.get('pending',0):
                 for status,label in [('pending','awaiting check'),('passed','passed'),('failed','failed')]:
                     add('Initial stronger-verification audit — '+label,audit.get(status,0),'Existing titles remain visible until a fresh failure; reports run first')
-            v5=conn.execute("SELECT COUNT(*),SUM(CASE WHEN json_extract(proof,'$.audio_conversion')=1 THEN 1 ELSE 0 END),SUM(CASE WHEN checked>? THEN 1 ELSE 0 END) FROM validation WHERE state='verified' AND json_extract(proof,'$.version')=5",(now-3600,)).fetchone()
+            v5=conn.execute("SELECT COUNT(*),SUM(CASE WHEN json_extract(proof,'$.audio_conversion')=1 THEN 1 ELSE 0 END),SUM(CASE WHEN checked>? THEN 1 ELSE 0 END) FROM validation WHERE state='verified' AND json_extract(proof,'$.version')>=5",(now-3600,)).fetchone()
+            v6=conn.execute("SELECT COUNT(*) FROM validation WHERE state='verified' AND json_extract(proof,'$.version')=6").fetchone()[0]
+            add('Speed-verified v6 sources',v6,'Exact decoded file plus 1.5x bitrate delivery; v5 decode evidence reused when unchanged')
+            add('Decoded sources awaiting speed proof',max(0,v5[0]-v6),'Visible during gradual speed audit; failures try alternative torrents')
             summary.update(v5=v5[0],v5_hour=v5[2] or 0)
             add('Passed stronger video/audio checks',v5[0],'Decoded beginning and later samples from the exact selected torrent/file')
             add('Stronger checks — direct audio',v5[0]-(v5[1] or 0))
@@ -242,7 +245,7 @@ def counts(data=DATA,refresh=False):
                 if remote.execute("SELECT 1 FROM sqlite_master WHERE name='second_client'").fetchone():
                     seen += [row[0] for row in remote.execute('SELECT seen FROM second_client')]
                 inflight=remote.execute("SELECT COUNT(*) FROM decode_jobs WHERE state IN ('pending','leased') AND controller>?",(now,)).fetchone()[0]
-            add('Windows source checks passed',totals.get('windows_titles_verified',0),'Actual v5 verification runs; distinct from metadata uploads')
+            add('Windows source checks passed',totals.get('windows_titles_verified',0),'Final Windows-producer outcomes; v6 may reuse old decoding plus a server speed check')
             add('Windows source checks unavailable',totals.get('windows_titles_unavailable',0),'Failures retained under the normal retry policy')
             add('Windows source checks checkpointed',totals.get('windows_title_checkpoints',0),'Interrupted work is not a failed source')
             add('Windows active decoding operations',inflight,'Probe or beginning/later sample; bounded by the resource gate')
@@ -272,10 +275,10 @@ def overview(data=DATA,snapshot=None):
         add('Verification overview','Preparing','The background counter snapshot is still running')
     else:
         total=max(0,values.get('total',0));verified=max(0,values.get('v5',0))
-        add('Final v5 verified',f'{verified:,}',f'{100*verified/total:.2f}% of {total:,} source keys; full beginning and later sample proof' if total else 'Full beginning and later sample proof','success')
+        add('Final decoded sources (v5+)' ,f'{verified:,}',f'{100*verified/total:.2f}% of {total:,} source keys; full beginning and later sample proof' if total else 'Full beginning and later sample proof','success')
         if 'ready_movies' in values:add('Verified movies',f"{values['ready_movies']:,}",'Distinct indexed movies currently visible from passed source checks','success')
         if 'ready_shows' in values:add('Verified shows',f"{values['ready_shows']:,}",'Distinct indexed shows with at least one passed episode','success')
-        add('Not yet v5 verified',f'{max(0,total-verified):,}',f"Includes {values.get('pending',0):,} awaiting a check, retries and older proof versions")
+        add('Not yet decode verified',f'{max(0,total-verified):,}',f"Includes {values.get('pending',0):,} awaiting a check, retries and older proof versions")
         add('Unavailable / retry',f"{values.get('unavailable',0):,}",'Failed outcomes are retained and retried on schedule','error' if values.get('unavailable') else 'muted')
         audit_total=values.get('audit_total',0);audit_done=values.get('audit_done',0)
         if audit_total and audit_done<audit_total:

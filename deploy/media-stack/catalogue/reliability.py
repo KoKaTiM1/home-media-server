@@ -22,7 +22,7 @@ import uuid
 from pathlib import Path
 from verification_media import evidence, MissingVideoFrames, MissingSelectedAudio, execute as media_execute
 
-VERSION = 5
+VERSION = 6
 POLL_SECONDS = 2
 STALL_SECONDS = 45
 METADATA_SECONDS = 90
@@ -37,6 +37,7 @@ class ResourceCheckpoint(Checkpoint):pass
 class SourceFailure(RuntimeError):pass
 class DecodeFailure(SourceFailure):pass
 class SourceStalled(SourceFailure):pass
+class SourceTooSlow(SourceFailure):pass
 
 
 def rank(candidate):
@@ -124,9 +125,9 @@ class Reliability:
             c.execute('UPDATE source_choices SET preferred=1,verified=?,excluded=0 WHERE key=? AND sid=?',(time.time(),key,sid))
             c.execute('DELETE FROM preparation_work WHERE key=?',(key,))
 
-    def exclude(self,key,selected):
+    def exclude(self,key,selected,seconds=900):
         sid=self.bind(key,selected)
-        with self.db() as c:c.execute('UPDATE source_choices SET excluded=? WHERE key=? AND sid=?',(time.time()+900,key,sid))
+        with self.db() as c:c.execute('UPDATE source_choices SET excluded=? WHERE key=? AND sid=?',(time.time()+seconds,key,sid))
 
     def choices(self,key):
         # Bootstrap pre-v5 exact sources from durable playback records without
@@ -280,6 +281,119 @@ class Reliability:
             return {'position':position,'seconds':seconds,**evidence(result['crc'],seconds,audio_index is not None)}
         except (MissingVideoFrames,MissingSelectedAudio):raise DecodeFailure('Decoded sample coverage incomplete') from None
 
+    @staticmethod
+    def speed_proof_valid(proof,local=False):
+        try:
+            s=proof['speed']
+            if s.get('policy')!=1 or not s.get('checked_at'):return False
+            if local:return s.get('mode')=='local'
+            required=s['required_bytes_per_second']
+            return (s.get('mode')=='torrent' and s.get('margin')==1.5 and math.isfinite(required) and required>0
+                and len(s['windows'])==2 and s.get('startup_seconds',11)<=10
+                and all(w['uncached_bytes_lower_bound']>=4*1024**2 and math.isfinite(w['bytes_per_second'])
+                        and w['bytes_per_second']>=required and 0<w['first_byte_seconds']<=10 for w in s['windows']))
+        except (KeyError,TypeError,ValueError):return False
+
+    def decode_proof(self,key,selected,audio_index,conversion):
+        """Only reuse accepted evidence for this exact file and audio policy."""
+        if selected.get('local'):return None
+        with self.db() as c:
+            row=c.execute('SELECT v.state,v.proof,COALESCE(m.requested,0),v.reason FROM validation v LEFT JOIN manual_rechecks m ON m.key=v.key WHERE v.key=?',(key,)).fetchone()
+        if not row or (row[0]!='verified' and not (row[0]=='unavailable' and 'SourceTooSlow' in (row[3] or ''))):return None
+        try:
+            p=json.loads(row[1] or '{}');samples=p.get('samples',[])
+            if (p.get('version') not in (5,6) or p.get('audio_policy')!=2
+                or p.get('source_id')!=self.sid(selected) or p.get('source_hash')!=selected['hash']
+                or p.get('file_index')!=selected.get('index') or p.get('filename')!=selected['filename']
+                or p.get('length')!=selected.get('length') or p.get('selected_audio_index')!=audio_index
+                or p.get('audio_conversion')!=conversion or p.get('checked_at',0)<row[2]
+                or self.excluded(key,selected) or len(samples)!=2 or samples[0].get('position')!=0
+                or samples[1].get('position',0)<=0 or any(s.get('video_frames',0)<=0 or
+                    (audio_index is not None and s.get('audio_frames',0)<=0) for s in samples)):return None
+            return p
+        except (TypeError,ValueError,KeyError):return None
+
+    def speed_read(self,key,selected,start,size,deadline):
+        """Bounded exact-file range, independent of decoding and PC queue time."""
+        url=urllib.parse.urlsplit(self.g['upstream'](selected))
+        connection=http.client.HTTPConnection(url.hostname,url.port,timeout=min(10,max(.001,deadline-time.monotonic())))
+        started=time.monotonic();received=0;first=None;response=None;last_report=started
+        try:
+            headers={**self.g['torr_headers'](),'Range':f'bytes={start}-{start+size-1}'}
+            connection.request('GET',url.path+'?'+url.query,headers=headers)
+            response=connection.getresponse()
+            match=re.fullmatch(r'bytes (\d+)-(\d+)/(\d+)',response.getheader('Content-Range',''))
+            if response.status!=206 or not match or tuple(map(int,match.groups()))!=(start,start+size-1,selected['length']):
+                raise Checkpoint('Speed range attribution unavailable')
+            while received<size:
+                self.g['remaining'](1)
+                left=deadline-time.monotonic()
+                if left<=0:raise SourceTooSlow('Selected source delivery too slow')
+                # Bound each read by startup and whole-test deadlines.
+                if connection.sock:connection.sock.settimeout(min(10,left))
+                block=response.read1(min(65536,size-received))
+                if not block:raise SourceTooSlow('Selected source range ended early')
+                received+=len(block)
+                if first is None:
+                    first=time.monotonic()-started
+                    if first>10:raise SourceTooSlow('Selected source startup too slow')
+                if time.monotonic()-last_report>=.5 or received==size:
+                    self.checkpoint(key,phase='speed verification',source_id=self.sid(selected),received_bytes=received,
+                        speed=round(received/max(.001,time.monotonic()-started)),required_speed=self._speed_required,state='preparing')
+                    last_report=time.monotonic()
+            return {'offset':start,'bytes':received,'seconds':max(.001,time.monotonic()-started),'first_byte_seconds':first}
+        except (TimeoutError,socket.timeout):
+            self.g['remaining'](1)
+            raise SourceTooSlow('Selected source delivery timed out') from None
+        finally:
+            if response is not None:response.close()
+            connection.close()
+
+    def speed_verify(self,key,selected,info,deadline):
+        if selected.get('local'):return {'policy':1,'mode':'local','checked_at':time.time()}
+        duration=float(info.get('format',{}).get('duration') or 0)
+        length=selected.get('length',0)
+        if not math.isfinite(duration) or duration<10 or not isinstance(length,int) or length<=0:
+            raise Checkpoint('Speed verification needs exact size and duration')
+        required=1.5*length/duration;target=max(4*1024**2,min(32*1024**2,int(15*length/duration)))
+        windows=[]
+        with self.lock('global-verification'),self.lock('torrent:'+selected['hash']):
+            test_end=min(deadline,time.monotonic()+60)
+            self.g['remaining'](1)
+            # Activate only this stream, then account for every pre-existing cache
+            # byte pessimistically. No physical file offsets are inferred from
+            # TorrServer's alphabetically sorted file_stats.
+            self._speed_required=round(required)
+            startup=self.speed_read(key,selected,0,1,min(test_end,time.monotonic()+10))
+            measured_start=time.monotonic()
+            cache=self.cache_state(selected)
+            wait_end=min(test_end,time.monotonic()+2)
+            while cache.get('Readers') and time.monotonic()<wait_end:
+                self.g['remaining'](1);time.sleep(.1);cache=self.cache_state(selected)
+            if cache.get('Hash','').lower()!=selected['hash'].lower() or cache.get('Readers') or 'Filled' not in cache or not isinstance(cache.get('Pieces'),dict):
+                raise Checkpoint('Speed cache attribution busy or unavailable')
+            cached=max(int(cache.get('Filled',0)),sum(max(0,int(x.get('Size',0))) for x in (cache.get('Pieces') or {}).values()))
+            size=min(32*1024**2,target+cached);target=size-cached
+            if target<4*1024**2 or size*3>=length:
+                raise Checkpoint('Speed test awaits uncached range budget')
+            for fraction in (.35,.70):
+                self.g['remaining'](1)
+                start=min(length-size,max(0,int(length*fraction)))
+                window_end=min(test_end,time.monotonic()+target/required)
+                self.checkpoint(key,phase='speed verification',source_id=self.sid(selected),required_speed=round(required),state='preparing')
+                try:w=self.speed_read(key,selected,start,size,window_end)
+                except SourceTooSlow:
+                    if deadline<=test_end and time.monotonic()>=deadline:raise Checkpoint('Speed work budget exhausted') from None
+                    raise
+                w['cached_bytes_bound']=cached;w['uncached_bytes_lower_bound']=max(0,w['bytes']-cached)
+                w['bytes_per_second']=w['uncached_bytes_lower_bound']/w['seconds']
+                if w['bytes_per_second']<required:raise SourceTooSlow('Selected source delivery below 1.5x bitrate')
+                windows.append(w)
+                if sum(x['uncached_bytes_lower_bound'] for x in windows)/max(.001,time.monotonic()-measured_start)<required:
+                    raise SourceTooSlow('Selected source sustained delivery below 1.5x bitrate')
+        return {'policy':1,'mode':'torrent','checked_at':time.time(),'required_bytes_per_second':required,
+                'margin':1.5,'startup_seconds':startup['first_byte_seconds'],'windows':windows,'measurement_worker':'server'}
+
     def verify(self,key,selected,info,audio_index,conversion,deadline):
         if conversion:
             track=next(s for s in info['streams'] if s.get('index')==audio_index)
@@ -291,6 +405,11 @@ class Reliability:
         requested=row[1] if row else 0
         sequence=int(prior.get('audit_sequence',-1))+1
         later=round(min(duration-2,max(6,duration*(.25,.5,.75)[sequence%3])),3)
+        accepted=self.decode_proof(key,selected,audio_index,conversion)
+        speed=self.speed_verify(key,selected,info,deadline)
+        if accepted:
+            return {**accepted,'version':VERSION,'decode_reused':True,'decode_checked_at':accepted.get('decode_checked_at',accepted['checked_at']),
+                    'checked_at':time.time(),'speed':speed}
         samples=[]
         for position,seconds in ((0,6),(later,2)):
             # Partial evidence is a checkpoint, not a cached pass. Resume only
@@ -309,11 +428,17 @@ class Reliability:
         return {'version':VERSION,'source_id':self.sid(selected),'source_hash':selected['hash'],
                 'file_index':selected.get('index'),'filename':selected['filename'],'length':selected.get('length'),
                 'selected_audio_index':audio_index,'audio_conversion':conversion,'video_copy':True,
-                'audio_policy':2,'samples':samples,'audit_sequence':sequence,'checked_at':time.time(),
+                'audio_policy':2,'samples':samples,'audit_sequence':sequence,'checked_at':time.time(),'decode_reused':False,'decode_checked_at':time.time(),'speed':speed,
                 'verification_worker':'windows' if getattr(self.g['BUDGET'],'remote_verification',False) and not selected.get('local') else 'server'}
 
     def schedule(self):
         self.db().close()
+        with self.db() as c:
+            c.execute('BEGIN IMMEDIATE')
+            if not c.execute("SELECT 1 FROM cache WHERE key='verification-v6-speed-audit'").fetchone():
+                now=time.time()
+                c.execute("INSERT INTO verification_audit(key,reason,scheduled,completed,result,priority) SELECT key,'speed-v6',?,0,NULL,CASE WHEN key='movie:tt43739386' THEN 1000 ELSE 50 END FROM validation WHERE state='verified' AND COALESCE(json_extract(proof,'$.version'),0)<6 ON CONFLICT(key) DO UPDATE SET reason='speed-v6',scheduled=excluded.scheduled,completed=0,result=NULL,priority=MAX(priority,excluded.priority)",(now,))
+                c.execute("INSERT OR REPLACE INTO cache VALUES ('verification-v6-speed-audit','true',?)",(now+10*365*86400,))
         with self.g['F'].db() as c:
             if c.execute("SELECT 1 FROM cache WHERE key='verification-v5-audit'").fetchone():return
             now=time.time()

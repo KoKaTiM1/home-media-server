@@ -30,7 +30,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 from features import Features
 from metadata_jobs import MetadataJobs, MetadataBusy, from_marker as metadata_coordinator
-from reliability import Reliability, Checkpoint, SourceFailure, DecodeFailure, SourceStalled, VERSION, rank, METADATA_SECONDS, WORK_SECONDS
+from reliability import Reliability, Checkpoint, SourceFailure, DecodeFailure, SourceStalled, SourceTooSlow, VERSION, rank, METADATA_SECONDS, WORK_SECONDS
 from embedded_subtitles import EmbeddedSubtitles
 from playback_diagnostics import PlaybackDiagnostics
 
@@ -111,7 +111,8 @@ def read_bounded(response,size,deadline=None):
 def playback_error_details(error):
     """Return useful error context without exposing exception text or URLs."""
     details={'error_type':type(error).__name__}
-    if isinstance(error,DecodeFailure):details['error_category']='decode_failure'
+    if isinstance(error,SourceTooSlow):details['error_category']='source_too_slow'
+    elif isinstance(error,DecodeFailure):details['error_category']='decode_failure'
     elif isinstance(error,SourceStalled):details['error_category']='source_stalled'
     elif isinstance(error,SourceFailure):details['error_category']='source_failure'
     elif isinstance(error,Checkpoint):details['error_category']='checkpoint'
@@ -1114,7 +1115,7 @@ def prepared(key,background=False,audio_index=None,cancel=None):
 
 
 def durable_playback_evidence(key,audio_index=None):
-    """Reuse accepted exact-source evidence; scheduled audits always decode anew.
+    """Reuse accepted exact-source evidence; audits add fresh speed evidence.
 
     Playback rows survive the five-minute response cache and service reboots.
     They are metadata, not a promise that a torrent is currently reachable.
@@ -1128,8 +1129,9 @@ def durable_playback_evidence(key,audio_index=None):
         saved=json.loads(row[0]);proof=json.loads(row[1] or '{}')
         selected=saved['selected'];sid=REL.sid(selected)
         audio=saved.get('DefaultAudioStreamIndex')
-        if (saved.get('verification_version')!=VERSION or saved.get('audio_policy')!=2
-            or proof.get('version')!=VERSION or proof.get('audio_policy')!=2
+        if (saved.get('verification_version') not in (5,VERSION) or saved.get('audio_policy')!=2
+            or proof.get('version') not in (5,VERSION) or proof.get('audio_policy')!=2
+            or (proof.get('version')==6 and not REL.speed_proof_valid(proof,bool(selected.get('local'))))
             or proof.get('source_id')!=sid or proof.get('source_hash')!=selected.get('hash')
             or proof.get('file_index')!=selected.get('index') or proof.get('filename')!=selected.get('filename')
             or proof.get('length')!=selected.get('length')
@@ -1170,14 +1172,15 @@ def prepare_locked(key,background,audio_index,deadline):
         if LIVE['key'] not in (None,key) and LIVE['active']>0:
             raise PlaybackBusy('Another title is currently streaming; this server supports one stream')
     saved=cached(prepared_key)
-    if not background and saved and saved.get('verification_version')==VERSION and saved.get('audio_policy')==2 and saved.get('subtitle_policy')==5 and F.source_state(key) in ('verified','downloaded'):
+    if not background and saved and saved.get('verification_version') in (5,VERSION) and saved.get('audio_policy')==2 and saved.get('subtitle_policy')==5 and F.source_state(key) in ('verified','downloaded'):
         playback_event(key,'prepared_cache',time.monotonic(),'hit')
         return saved
     verified=cached('verified-'+prepared_key) if not background else None
-    if verified and (verified.get('proof',{}).get('version')!=VERSION or F.source_state(key) not in ('verified','downloaded')
+    if verified and (verified.get('proof',{}).get('version') not in (5,VERSION) or F.source_state(key) not in ('verified','downloaded')
                      or REL.excluded(key,verified['selected']) or bool(F.local_download(key))!=bool(verified['selected'].get('local'))):verified=None
-    if not background and not verified:
+    if not verified:
         verified=durable_playback_evidence(key,audio_index)
+        if verified and background and verified['selected'].get('local'):verified=None
         if verified:playback_event(key,'durable_evidence',time.monotonic(),'hit')
     for attempt in range(3):
         try:
@@ -1209,7 +1212,7 @@ def prepare_locked(key,background,audio_index,deadline):
             needs_conversion=selected_audio is not None and (selected_audio.get('codec_name')!='aac' or selected_audio.get('profile')!='LC')
             if needs_conversion and float(info.get('format',{}).get('duration') or 0)<=0:raise SourceFailure('Converted VOD requires known duration')
             if verified and verified.get('transport_check') and (verified['proof'].get('selected_audio_index')!=(selected_audio['index'] if selected_audio else None) or verified['proof'].get('audio_conversion')!=needs_conversion):verified=None
-            proof=verified['proof'] if verified else REL.verify(key,selected,info,selected_audio['index'] if selected_audio else None,needs_conversion,deadline)
+            proof=verified['proof'] if verified and not background else REL.verify(key,selected,info,selected_audio['index'] if selected_audio else None,needs_conversion,deadline)
             break
         except (ClientCancelled,PlaybackBusy,Checkpoint,TimeoutError,subprocess.TimeoutExpired,sqlite3.OperationalError):raise
         except Exception as error:
@@ -1220,8 +1223,8 @@ def prepare_locked(key,background,audio_index,deadline):
             playback_event(key,'source_rejected',time.monotonic(),'failed',error)
             if not isinstance(error,SourceFailure):raise
             verified=None
-            REL.exclude(key,selected)
-            remember('source-excluded:'+key+':'+selected['hash'],True,900)
+            REL.exclude(key,selected,21600 if isinstance(error,SourceTooSlow) else 900)
+            remember('source-excluded:'+key+':'+selected['hash'],True,21600 if isinstance(error,SourceTooSlow) else 900)
             with db() as conn:conn.execute('DELETE FROM cache WHERE key=?',('resolved:'+key,))
             # Retain torrents/readers: another request may still be playing an
             # older bound source. Only this preparation advances to a fallback.
@@ -1301,12 +1304,12 @@ def prepare_locked(key,background,audio_index,deadline):
         'RunTimeTicks':int(float(info.get('format',{}).get('duration',0))*10000000),
         'Bitrate':int(info.get('format',{}).get('bit_rate',5000000)),
         'languages':sorted(languages),'checked_at':proof.get('checked_at',time.time()),'audio_policy':2,'subtitle_policy':5,
-        'verification_version':VERSION,'PlaybackUrl':REL.source_url('play',key,selected),
+        'verification_version':proof.get('version',VERSION),'PlaybackUrl':REL.source_url('play',key,selected),
         'DefaultAudioStreamIndex':selected_audio['index'] if selected_audio else None,'AudioConversionRequired':needs_conversion}
     if getattr(BUDGET,'speculative',False):remaining(1)
     with db() as conn:
         conn.execute('INSERT OR REPLACE INTO playback VALUES (?,?,?)',(key,json.dumps({**output,'verification_info':info}),time.time()))
-    accepted=True if verified else F.validation_result(key,True,proof=proof)
+    accepted=True if verified and not background else F.validation_result(key,True,proof=proof)
     if accepted is not False:
         REL.success(key,selected)
         remember('verified-'+prepared_key,{'selected':selected,'info':info,'proof':proof},max(1,300-(time.time()-proof.get('checked_at',time.time()))))

@@ -38,7 +38,7 @@ class ReliabilityTests(unittest.TestCase):
     def test_real_lc_samples_decode_beginning_and_rotating_seek(self):
         selected,info=self.fixture()
         proof=a.REL.verify(KEY,selected,info,1,False,time.monotonic()+30)
-        self.assertEqual(proof['version'],5);self.assertEqual([s['seconds'] for s in proof['samples']],[6,2])
+        self.assertEqual(proof['version'],6);self.assertEqual([s['seconds'] for s in proof['samples']],[6,2])
         self.assertGreater(proof['samples'][0]['video_frames'],50)
         a.F.validation_result(KEY,True,proof=proof)
         second=a.REL.verify(KEY,selected,info,1,False,time.monotonic()+30)
