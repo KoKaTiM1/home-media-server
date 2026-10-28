@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-10-28T15:48:02.928225+00:00",
+  "created_utc": "2026-10-28T15:48:45.244806+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -39,7 +39,7 @@
     "deploy/media-stack/catalogue/test_details.py": "abdcf510dd3f0ee28bf74569f2eaecb9e3e75a73068ba2ae33ed91849da20f95",
     "deploy/media-stack/catalogue/test_durable_playback.py": "b3c3b3f4d17f96572f95bb0bfd386c9f7a5139db6980a99a74b8ac5178eb6b19",
     "deploy/media-stack/catalogue/test_embedded_subtitles.py": "b312d77c4237644794dcf16d6aacfa9ba373202dde884d780feb34c2b4cf9243",
-    "deploy/media-stack/catalogue/test_features.py": "621c7c4e9b2e6bf6f91ae333b932a9214421430a40bd5863d37d3d63aa442ca9",
+    "deploy/media-stack/catalogue/test_features.py": "4be026633fd0b5b9861ff842f38738d2b9ca199394063c14734c3d2a4437829a",
     "deploy/media-stack/catalogue/test_feedback.py": "a6ba64b1d253e985880ef2ea3c1fd1e0ff2315201dc322f905ecd0a4a1f91ff1",
     "deploy/media-stack/catalogue/test_holds.py": "f3198fc27c4d422b199577ce11798486df691bd32e4dfc302ce30a64a8bff607",
     "deploy/media-stack/catalogue/test_metadata_lan.py": "52c2baa73576e20a844ed5a27a4a7d744a66bac29ecc6c2a6c438809e2d8249a",

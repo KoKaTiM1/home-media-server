@@ -85,6 +85,22 @@ class FeatureTests(unittest.TestCase):
         with a.F.db() as conn:
             self.assertIn('refresh_pending',{row[1] for row in conn.execute('PRAGMA table_info(localized_metadata)')})
 
+    def test_wikimedia_reads_are_not_limited_by_old_daily_counter(self):
+        import datetime
+        a.remember('wikimedia-request-budget:'+datetime.date.today().isoformat(),{'requests':160},86400)
+        with patch.object(a.F,'fetch',return_value={'search':[]}) as fetch:
+            self.assertEqual(a.F.wikimedia_json('https://www.wikidata.org/w/api.php'),{'search':[]})
+            fetch.assert_called_once()
+
+    def test_newly_verified_title_precedes_older_backfill(self):
+        with a.F.db() as conn:
+            for imdb,checked in [('tt1234567',1),('tt7654321',100)]:
+                conn.execute('INSERT INTO items VALUES (?,?,?,?,?)',('movie:'+imdb,'movie',imdb,json.dumps({'name':'Fixture','id':imdb,'type':'movie'}),'[]'))
+                conn.execute("INSERT INTO validation(key,state,checked) VALUES (?,'verified',?)",('movie:'+imdb,checked))
+        with patch.object(a.F,'hebrew_metadata_busy',return_value=False),patch.object(a.F,'wikidata_title_metadata',return_value=None) as lookup:
+            a.F.refresh_hebrew_metadata(limit=1)
+        self.assertEqual(lookup.call_args.args[1],'tt7654321')
+
     def test_native_localization_update_omits_user_data_and_keeps_identity_year(self):
         a.F._save_localized_metadata('movie','tt1234567',{'title_he':'שם בעברית','description_he':'תיאור בעברית','english_name':'English'})
         def api(path,*args,**kwargs):
