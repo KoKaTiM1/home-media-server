@@ -177,6 +177,55 @@ var count=backing.Items.Count;indexer.EnsureIndexed(movieId,"movie:tt00000000",n
 Check(backing.Items.Count==count && backing.Items[movieId].RunTimeTicks==600000000,"Existing item never overwritten");
 Console.WriteLine("PASS: first-open movie/series/season/episode persistence and no overwrite");
 
+
+BaseItemDto SearchFixture(string imdb, string name, int year) => new()
+{
+    Id = Guid.NewGuid(), Type = Jellyfin.Data.Enums.BaseItemKind.Movie, Name = name, ProductionYear = year,
+    ProviderIds = new Dictionary<string, string> { ["Imdb"] = imdb }
+};
+var localFurious = SearchFixture("tt1000001", "The Furious", 2026);
+localFurious.UserData = new() { Key = "fixture-search", IsFavorite = true, PlaybackPositionTicks = 12345 };
+var canonicalFurious = SearchFixture("tt1000001", "The Furious", 2025);
+var distinctFurious = SearchFixture("tt1000002", "The Furious", 2026);
+var partialFurious = SearchFixture("tt1000003", "The Fast and the Furious", 2001);
+var searchMerged = HomeSearch.Merge(new[] { partialFurious, localFurious }, new[] { canonicalFurious, distinctFurious }, "The Furious");
+Check(searchMerged.Count == 3, "Search identity dedup preserves distinct releases");
+Check(searchMerged.IndexOf(partialFurious) == 2, "Search relevance precedes native/provider origin");
+Check(searchMerged.Single(i => i.Id == localFurious.Id).ProductionYear == 2025, "Same-identity canonical year corrects response");
+Check(localFurious.UserData.IsFavorite && localFurious.UserData.PlaybackPositionTicks == 12345, "Search retains native favorite and progress");
+var yearMerged = HomeSearch.Merge(new[] { partialFurious, localFurious }, new[] { distinctFurious }, "The Furious 2025");
+Check(yearMerged[0].Id == localFurious.Id, "Explicit year affects relevance");
+var manySearch = Enumerable.Range(0, 60).Select(i => SearchFixture("tt" + (2000000+i), "Fixture " + i.ToString("D2"), 2025)).ToArray();
+var allSearch = HomeSearch.Merge(manySearch.Take(30), manySearch.Skip(20), "Fixture");
+var searchPage1 = allSearch.Skip(0).Take(25).ToArray();
+var searchPage2 = allSearch.Skip(25).Take(25).ToArray();
+Check(allSearch.Count == 60 && searchPage1.Select(i => i.Id).Intersect(searchPage2.Select(i => i.Id)).Count() == 0, "Combined search paginates once without duplicates");
+Check(HomeSearch.Plan(25,25) == new HomeSearch.Page(25,25,5000), "Native prefix retained for combined search page");
+Check(HomeSearch.Plan(int.MaxValue,25).Fetch == int.MaxValue, "Search paging arithmetic does not overflow");
+Console.WriteLine("PASS: search identity/year/relevance/native-state/pagination checks");
+
+
+var readyCache = new DynamicItemCache(memory, Microsoft.Extensions.Logging.Abstractions.NullLogger<DynamicItemCache>.Instance);
+var homeFilter = new Jellyfin.Plugin.DynamicLibrary.Filters.HomeCatalogueResultFilter(new ReadyFactory(),
+    Microsoft.Extensions.Logging.Abstractions.NullLogger<Jellyfin.Plugin.DynamicLibrary.Filters.HomeCatalogueResultFilter>.Instance,
+    null!, proxy, readyCache, indexer);
+foreach (var item in new[] { localFurious, distinctFurious, partialFurious })
+{
+    var nativeMovie = new MediaBrowser.Controller.Entities.Movies.Movie { Id = item.Id, Name = item.Name, Path = "/catalogue/movies/" + item.ProviderIds["Imdb"] + "/movie.strm" };
+    nativeMovie.ProviderIds["Imdb"] = item.ProviderIds["Imdb"];backing.Items[item.Id] = nativeMovie;
+}
+var readyNative = await homeFilter.FilterSearchReadyAsync(new[] { partialFurious, localFurious, distinctFurious }, false, CancellationToken.None);
+var firstReadyPage = HomeSearch.Merge(readyNative, Array.Empty<BaseItemDto>(), "The Furious").Take(2).ToArray();
+Check(firstReadyPage.Length == 2 && firstReadyPage.All(i => i.Id != partialFurious.Id), "Unavailable native hits filtered before paging, no empty first page");
+Check((await homeFilter.FilterSearchReadyAsync(new[] { partialFurious, localFurious }, true, CancellationToken.None)).Count == 2, "Explicit favorite search preserves unavailable saved intent");
+var action = new Microsoft.AspNetCore.Mvc.ActionContext(new DefaultHttpContext(), new Microsoft.AspNetCore.Routing.RouteData(),
+    new Microsoft.AspNetCore.Mvc.Controllers.ControllerActionDescriptor { ActionName = "GetSearchHints", ControllerName = "Search" },
+    new Microsoft.AspNetCore.Mvc.ModelBinding.ModelStateDictionary());
+var executing = new Microsoft.AspNetCore.Mvc.Filters.ActionExecutingContext(action, Array.Empty<Microsoft.AspNetCore.Mvc.Filters.IFilterMetadata>(),
+    new Dictionary<string, object?> { ["searchTerm"] = "The Furious" }, new object());
+Check(Jellyfin.Plugin.DynamicLibrary.Extensions.ActionContextExtensions.IsApiSearchAction(executing), "Installed Jellyfin 10.11 GetSearchHints endpoint recognized");
+Console.WriteLine("PASS: native readiness before search paging and installed TV search action");
+
 public class LibraryProxy : DispatchProxy
 {
     public Dictionary<Guid,BaseItem> Items { get; } = new();
@@ -227,4 +276,15 @@ sealed class SubtitleHandler : HttpMessageHandler
         return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
         { Content = new StringContent("1\n00:00:01,000 --> 00:00:02,000\n" + text + "\n", Encoding.UTF8) });
     }
+}
+
+sealed class ReadyFactory : IHttpClientFactory
+{
+    public HttpClient CreateClient(string name) => new(new ReadyHandler());
+}
+sealed class ReadyHandler : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
+        => Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        { Content = new StringContent("{\"titles\":[\"movie:tt1000001\",\"movie:tt1000002\"]}", Encoding.UTF8, "application/json") });
 }

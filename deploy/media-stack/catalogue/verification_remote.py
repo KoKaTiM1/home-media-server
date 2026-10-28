@@ -5,7 +5,7 @@ from pathlib import Path
 import time
 import uuid
 from verification_jobs import DecodeJobs, WorkerWait
-from verification_media import validate_result
+from verification_media import validate_result,MissingVideoFrames,MissingSelectedAudio
 from reliability import Checkpoint, DecodeFailure, SourceStalled, STALL_SECONDS
 
 
@@ -63,7 +63,8 @@ def _execute(runtime,key,selected,operation,params,deadline):
                     raise DecodeFailure('Windows sample decoder rejected source')
                 if not (runtime['cached']('sample-progress:'+token) or {}).get('bytes'):
                     raise Checkpoint('Windows result had no exact-source byte delivery')
-                value=validate_result(operation,params,result.get('data'))
+                try:value=validate_result(operation,params,result.get('data'))
+                except (MissingVideoFrames,MissingSelectedAudio):raise DecodeFailure('Decoded Windows sample coverage incomplete') from None
                 consumed=True;q.count('windows_'+operation+'_validated')
                 return value
             if state in ('cancelled','consumed'):raise Checkpoint('Windows operation lease ended')

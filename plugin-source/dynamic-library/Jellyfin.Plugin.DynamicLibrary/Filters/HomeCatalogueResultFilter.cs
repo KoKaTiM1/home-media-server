@@ -161,6 +161,14 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
     public static bool KeepInResults(bool favoritesQuery, string? key, ISet<string> ready)
         => favoritesQuery || key is null || ready.Contains(key);
 
+    public async Task<List<BaseItemDto>> FilterSearchReadyAsync(IEnumerable<BaseItemDto> items,
+        bool favorites, CancellationToken token)
+    {
+        var keyed = items.Select(i => (Item: i, Key: HomeKey(i.Id, i.Type))).ToArray();
+        var ready = favorites ? new HashSet<string>() : await ReadyAsync(keyed.Select(i => i.Key), token);
+        return keyed.Where(i => KeepInResults(favorites, i.Key, ready)).Select(i => i.Item).ToList();
+    }
+
     private async Task CorrectSeriesProgressAsync(IEnumerable<BaseItemDto> entries, CancellationToken token)
     {
         var series = entries.Where(e => e.Type == BaseItemKind.Series && IsHomeTitle(e)).ToArray();
@@ -255,12 +263,14 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
         // handled by upstream's SearchActionFilter. Populate that interface too.
         if (context.Result is ObjectResult hintResult && hintResult.Value is SearchHintResult hints
             && context.HttpContext.Request.Query.TryGetValue("searchTerm", out var term)
-            && !string.IsNullOrWhiteSpace(term))
+            && !string.IsNullOrWhiteSpace(term)
+            && context.HttpContext.Items[HomeSearch.PageKey] is HomeSearch.Page searchPage)
         {
             var guardedHints = hints.SearchHints.Select(h => (Hint: h, Key: HomeKey(h.Id, h.Type))).ToArray();
             var allowedHints = await ReadyAsync(guardedHints.Select(h => h.Key), context.HttpContext.RequestAborted);
             var baseHints = guardedHints.Where(h => h.Key is null || allowedHints.Contains(h.Key)).Select(h => h.Hint).ToArray();
-            hintResult.Value = new SearchHintResult(baseHints, baseHints.Length);
+            var nativeTotal = Math.Max(baseHints.Length, hints.TotalRecordCount - (hints.SearchHints.Count - baseHints.Length));
+            hintResult.Value = new SearchHintResult(baseHints.Skip(searchPage.Start).Take(searchPage.Limit).ToArray(), nativeTotal);
             try
             {
                 var types = new HashSet<BaseItemKind> { BaseItemKind.Movie, BaseItemKind.Series };
@@ -272,28 +282,32 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
                     context.HttpContext.RequestAborted);
                 var remoteReady = await ReadyAsync(remote.Select(i => HomeKey(i.Id, i.Type)), context.HttpContext.RequestAborted);
                 remote = remote.Where(i => HomeKey(i.Id, i.Type) is not string key || remoteReady.Contains(key)).ToList();
-                var currentHints = baseHints;
-                var present = currentHints.Select(h => (h.Name.ToLowerInvariant(), h.ProductionYear)).ToHashSet();
-                var presentIds = currentHints.Select(h => h.Id).ToHashSet();
-                var extras = remote.Where(item => !presentIds.Contains(item.Id) && !present.Contains(((item.Name ?? "").ToLowerInvariant(), item.ProductionYear)))
-                    .Select(item => new SearchHint
+                if (nativeTotal > searchPage.Fetch) { await next(); return; }
+                var nativeHints = baseHints.GroupBy(h => h.Id).ToDictionary(g => g.Key, g => g.First());
+                var nativeDtos = baseHints.Select(h => new BaseItemDto
+                {
+                    Id = h.Id, Name = h.Name, Type = h.Type, ProductionYear = h.ProductionYear,
+                    ProviderIds = HomeKey(h.Id, h.Type) is string key
+                        ? new Dictionary<string, string> { ["Imdb"] = key.Split(':')[1] } : new()
+                });
+                var merged = HomeSearch.Merge(nativeDtos, remote, term.ToString());
+                var combined = merged.Select(item =>
+                {
+                    if (nativeHints.TryGetValue(item.Id, out var existing))
                     {
-                        Id = item.Id,
-                        Name = item.Name ?? "",
-                        Type = item.Type,
-                        IsFolder = item.IsFolder,
-                        ProductionYear = item.ProductionYear,
-                        RunTimeTicks = item.RunTimeTicks,
-                        PrimaryImageTag = item.ImageTags?.GetValueOrDefault(ImageType.Primary),
-                        MediaType = item.MediaType
-                    }).ToArray();
-                var limit = int.TryParse(context.HttpContext.Request.Query["limit"], out var n) ? Math.Clamp(n, 1, 100) : 25;
-                foreach (var hint in currentHints)
-                    if (itemCache.GetImageUrl(hint.Id) is string image && image.StartsWith("http://<SERVER_LAN_IP>:8092/poster/", StringComparison.Ordinal))
-                        hint.PrimaryImageTag = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(image)));
-                hintResult.Value = new SearchHintResult(
-                    currentHints.Concat(extras).Take(limit).ToArray(),
-                    currentHints.Length + extras.Length);
+                        existing.ProductionYear = item.ProductionYear;
+                        if (itemCache.GetImageUrl(existing.Id) is string image && image.StartsWith("http://<SERVER_LAN_IP>:8092/poster/", StringComparison.Ordinal))
+                            existing.PrimaryImageTag = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(image)));
+                        return existing;
+                    }
+                    return new SearchHint
+                    {
+                        Id = item.Id, Name = item.Name ?? "", Type = item.Type, IsFolder = item.IsFolder,
+                        ProductionYear = item.ProductionYear, RunTimeTicks = item.RunTimeTicks,
+                        PrimaryImageTag = item.ImageTags?.GetValueOrDefault(ImageType.Primary), MediaType = item.MediaType
+                    };
+                }).ToArray();
+                hintResult.Value = new SearchHintResult(combined.Skip(searchPage.Start).Take(searchPage.Limit).ToArray(), combined.Length);
             }
             catch (Exception error)
             {

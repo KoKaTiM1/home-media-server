@@ -28,8 +28,9 @@ public static class ActionContextExtensions
         if (SearchActionNames.Contains(actionName))
             return true;
 
-        // SearchController.Get for /Search/Hints
-        if (actionName == "Get" && ctx.GetControllerName() == "Search")
+        // Jellyfin 10.11 names /Search/Hints GetSearchHints; older versions
+        // used Get. Both need the same merge/paging path as Items searches.
+        if ((actionName == "Get" || actionName == "GetSearchHints") && ctx.GetControllerName() == "Search")
             return true;
 
         return false;

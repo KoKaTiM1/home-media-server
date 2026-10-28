@@ -1,7 +1,7 @@
 # Home media catalogue
 
-Current deployed behavior, reviewed 2026-10-26 against Dynamic Library
-**1.4.0.19**, Jellyfin **10.11.11**, the bridge and systemd units. This is the
+Current deployed behavior, reviewed 2026-10-28 against Dynamic Library
+**1.4.0.21**, Jellyfin **10.11.11**, the bridge and systemd units. This is the
 current operating guide, rather than a chronological list of old features.
 The installed WizdomSubs Downloader version is **0.2.0.0**.
 
@@ -531,3 +531,24 @@ That native extraction issue remains under investigation; no subtitle-source
 expansion or playback-service restart was applied as part of this repair.
 
 Post-verification investigation and acceptance criteria are tracked in [GitHub issue #1](../../../../../issues/1).
+## Search and playback diagnostics
+
+Search includes local ready identities independently of provider result limits,
+preserves distinct IMDb releases, and uses the indexed movie year when regional
+provider metadata labels the same film differently. Actual release dates/months
+remain unchanged. Native and catalogue hits are merged by identity, ranked by
+title/year relevance, and paginated once on both Items and TV Search/Hints.
+Broad native searches above the merge prefix retain ordinary native paging.
+Unavailable titles remain hidden; search never manufactures source readiness.
+
+Foreground request timeouts, HTTP errors, disconnects, checkpoints, local errors
+and unknown faults retain existing video proof. Typed source/binding/stall or
+decode failures request high-priority background verification, hide the title
+while pending, and allow only a fresh authoritative result to restore it. No
+exact-source bytes from a remote decoder process is a transport checkpoint.
+
+OMV Diagnostics > Media workers > Playback events shows the latest200 sanitized
+failures/checkpoints for30days, including title, stage, category and current fresh
+check status. Raw errors, URLs, credentials and device/user identities are not
+stored in that table. Existing successful phase timings remain structured logs.
+

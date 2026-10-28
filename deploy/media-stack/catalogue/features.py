@@ -751,6 +751,66 @@ class Features:
                  'poster':f'https://images.metahub.space/poster/medium/{imdb}/img'}
                 for imdb,name,original,year,genres,he in rows]
 
+    @staticmethod
+    def search_words(value):
+        import unicodedata
+        value=''.join(c for c in unicodedata.normalize('NFKD',str(value or '')) if not unicodedata.combining(c))
+        return re.findall(r'[^\W_]+',value.casefold(),re.UNICODE)
+
+    def search_rank(self,meta,query):
+        words=self.search_words(query)
+        years=[w for w in words if re.fullmatch(r'(19|20)\d{2}',w)]
+        words=[w for w in words if w not in years]
+        scores=[]
+        for name in (meta.get('name'),meta.get('originalName')):
+            title=self.search_words(name);phrase=' '.join(title);wanted=' '.join(words)
+            matches=sum(any(t.startswith(w) for t in title) for w in words)
+            scores.append((1000 if wanted and phrase==wanted else 600 if wanted and phrase.startswith(wanted) else 300 if words and matches==len(words) else 0)+matches*10)
+        year=str(meta.get('releaseInfo',''))[:4]
+        return max(scores,default=0)+(100 if year in years else 0)
+
+    def ready_search(self,kind,query):
+        """Search the small ready identity set before bulk/provider truncation."""
+        ready=sorted(k.split(':')[1] for k in self.ready_titles() if k.startswith(kind+':'))
+        if not ready:return []
+        values={};aliases={}
+        with self.db() as c:
+            for start in range(0,len(ready),400):
+                ids=ready[start:start+400];marks=','.join('?' for _ in ids)
+                for imdb,raw in c.execute('SELECT imdb,meta FROM items WHERE kind=? AND imdb IN ('+marks+')',(kind,*ids)):
+                    values[imdb]=json.loads(raw)
+                aliases.update((imdb,(he,en)) for imdb,he,en in c.execute('SELECT imdb,hebrew,english FROM aliases WHERE imdb IN ('+marks+')',ids))
+        index=self.g['DATA']/'imdb/catalogue.sqlite'
+        if index.is_file():
+            with closing(sqlite3.connect('file:'+str(index)+'?mode=ro',uri=True)) as c:
+                for start in range(0,len(ready),400):
+                    ids=ready[start:start+400];marks=','.join('?' for _ in ids)
+                    for imdb,name,original,year,genres in c.execute('SELECT imdb,name,original,year,genres FROM titles WHERE kind=? AND imdb IN ('+marks+')',(kind,*ids)):
+                        values[imdb]={**values.get(imdb,{}),'id':imdb,'type':kind,'name':name,'originalName':original,'releaseInfo':str(year),'genres':(genres or '').split(',')}
+        words=self.search_words(query);years={w for w in words if re.fullmatch(r'(19|20)\d{2}',w)}
+        words=[w for w in words if w not in years];output=[]
+        for imdb,meta in values.items():
+            he,en=aliases.get(imdb,('',''))
+            names=[meta.get('name'),meta.get('originalName'),he,en]
+            if years and str(meta.get('releaseInfo',''))[:4] not in years:continue
+            if words and not any(all(any(t.startswith(w) for t in self.search_words(name)) for w in words) for name in names):continue
+            meta={**meta,'id':imdb,'type':kind}
+            if he:meta['name']=he+' / '+str(meta.get('name') or en or '')
+            meta.setdefault('poster',f'https://images.metahub.space/poster/medium/{imdb}/img')
+            output.append(meta)
+        return sorted(output,key=lambda m:(-self.search_rank(m,query),str(m.get('name','')).casefold(),m['id']))
+
+    def canonical_movie_year(self,kind,imdb,meta):
+        # Provider regional-release years can differ from the same IMDb film's
+        # indexed year. Keep its real release date/month and all identity data.
+        path=self.g['DATA']/'imdb/catalogue.sqlite'
+        if kind!='movie' or not path.is_file():return meta
+        with closing(sqlite3.connect('file:'+str(path)+'?mode=ro',uri=True)) as c:
+            row=c.execute("SELECT year FROM titles WHERE kind='movie' AND imdb=?",(imdb,)).fetchone()
+        if row and isinstance(row[0],int) and 1800<=row[0]<=dt.date.today().year+10:
+            return {**meta,'releaseInfo':str(row[0])}
+        return meta
+
     def search(self,kind,query):
         query=query.strip()
         if re.fullmatch(r'(19|20)\d{2}-\d{2}(?:\s*\.\.\s*(19|20)\d{2}-\d{2})?',query):
@@ -765,24 +825,25 @@ class Features:
             raw=self.cached(search_cache)
             if raw is None:
                 try:
-                    raw=self.fetch(f"{self.g['CINEMETA']}/catalog/{kind}/top/search={U.quote(query,safe='')}.json",timeout=8).get('metas',[])
+                    raw=self.fetch(f"{self.g['CINEMETA']}/catalog/{kind}/top/search={U.quote(query,safe='')}.json",timeout=3).get('metas',[])
                     self.remember(search_cache,raw,21600)
                 except Exception:
                     raw=[];self.remember(search_cache,raw,300)
+        canonical=self.ready_search(kind,query)
         local=self.index_search(kind,query);seen=set();output=[]
         if re.search('[\u0590-\u05ff]',query):
             for keyword in (self.cached('hebrew-keywords:'+self.search_key(query)) or [])[:5]:
                 local+=self.index_search(kind,keyword)
-        self.decorate_posters(raw+local)
+        self.decorate_posters(canonical+raw+local)
         self.enqueue_many((kind+':'+meta.get('id','')+(':1:1' if kind=='series' else '') for meta in raw+local),100)
         ready=self.ready_titles()
-        for meta in raw+local:
+        for meta in canonical+raw+local:
             imdb=meta.get('id')
             if not imdb or imdb in seen:continue
             if (meta.get('released') or '')[:10]>dt.date.today().isoformat():continue
             if kind+':'+imdb not in ready:continue
             seen.add(imdb);output.append(self.localize(meta))
-        return self.decorate_posters(output)
+        return self.decorate_posters(sorted(output,key=lambda m:(-self.search_rank(m,query),str(m.get('name','')).casefold(),m['id'])))
 
     def repair_stub_title(self,imdb,meta):
         # Read the local native index only; all metadata writes use Jellyfin's
@@ -1010,7 +1071,18 @@ class Features:
                         self.remember('validation-provider-backoff',True,900 if error.code==429 else 300)
                         self.log('Validation paused for source provider cooldown')
                         break
-                    with self.db() as conn:current=conn.execute('SELECT checked FROM validation WHERE key=?',(key,)).fetchone()
+                    from reliability import SourceFailure
+                    with self.db() as conn:current=conn.execute('SELECT checked,proof FROM validation WHERE key=?',(key,)).fetchone()
+                    if isinstance(error,urllib.error.URLError) or (current and current[1] and not isinstance(error,SourceFailure)):
+                        # An HTTP/database/unknown request fault is not a new
+                        # negative media proof. Keep a requested fresh check
+                        # pending and let other eligible titles make progress.
+                        with self.db() as conn:conn.execute('INSERT OR REPLACE INTO metadata_waits VALUES (?,?)',(key,time.time()+30))
+                        if remote:
+                            from verification_remote import jobs
+                            jobs(self.g).count('windows_title_checkpoints')
+                        self.remember(worker_key,{'message':'Request fault checkpointed; source proof retained','started':time.time(),'batch':batch_number},180)
+                        break
                     if not current or current[0]<time.time()-30:self.validation_result(key,False,reason=type(error).__name__,attempt_started=attempt_started,background=True)
                     if remote:
                         from verification_remote import jobs

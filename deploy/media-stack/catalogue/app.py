@@ -29,8 +29,9 @@ import xml.etree.ElementTree as ET
 import zipfile
 from features import Features
 from metadata_jobs import MetadataJobs, MetadataBusy, from_marker as metadata_coordinator
-from reliability import Reliability, Checkpoint, VERSION, rank, METADATA_SECONDS, WORK_SECONDS
+from reliability import Reliability, Checkpoint, SourceFailure, DecodeFailure, SourceStalled, VERSION, rank, METADATA_SECONDS, WORK_SECONDS
 from embedded_subtitles import EmbeddedSubtitles
+from playback_diagnostics import PlaybackDiagnostics
 
 DATA = Path(os.getenv('CATALOGUE_DATA', '/data'))
 LIBRARY = Path(os.getenv('CATALOGUE_LIBRARY', '/catalogue'))
@@ -109,7 +110,12 @@ def read_bounded(response,size,deadline=None):
 def playback_error_details(error):
     """Return useful error context without exposing exception text or URLs."""
     details={'error_type':type(error).__name__}
-    if isinstance(error,urllib.error.HTTPError):
+    if isinstance(error,DecodeFailure):details['error_category']='decode_failure'
+    elif isinstance(error,SourceStalled):details['error_category']='source_stalled'
+    elif isinstance(error,SourceFailure):details['error_category']='source_failure'
+    elif isinstance(error,Checkpoint):details['error_category']='checkpoint'
+    elif isinstance(error,PlaybackBusy):details['error_category']='playback_busy'
+    elif isinstance(error,urllib.error.HTTPError):
         details.update(error_category='upstream_http',http_status=int(error.code))
     elif isinstance(error,(ClientCancelled,BrokenPipeError,ConnectionResetError)):
         details['error_category']='client_disconnect'
@@ -134,6 +140,18 @@ def playback_event(key,phase,started,outcome,error=None):
            'outcome':outcome,**(playback_error_details(error) if error else
                                {'error_type':None,'error_category':None})}
     log('Playback '+json.dumps(event,sort_keys=True))
+    if not getattr(BUDGET,'validation_background',False) and not getattr(BUDGET,'diagnostic_internal',False):
+        try:DIAG.record(event)
+        except (OSError,ValueError,sqlite3.Error):log('Playback diagnostics temporarily unavailable')
+
+
+def playback_failure(key,error):
+    # A failed HTTP request or unknown error cannot invalidate sampled media
+    # evidence. Only typed source/decode evidence requests a fresh background
+    # check; its pending fence prevents any foreground pass clearing that hold.
+    try:return DIAG.recheck(key,error)
+    except (OSError,ValueError,sqlite3.Error):
+        log('Playback recheck scheduling deferred');return False
 
 
 @contextmanager
@@ -288,6 +306,7 @@ def metadata(kind,imdb):
             saved=cached(key)
             if saved is None:raise Checkpoint('Metadata import awaiting retry')
         else:remember(key,saved,21600)
+    saved=F.canonical_movie_year(kind,imdb,saved)
     F.record_dates(kind,[saved])
     return F.localize(saved)
 
@@ -770,29 +789,31 @@ def resolve(key,deadline=None):
                 if not status.get('file_stats'):time.sleep(min(2,remaining(2)))
             if not status.get('file_stats'):
                 if deadline and time.monotonic()>=deadline:raise Checkpoint('Metadata checkpoint')
-                raise RuntimeError('Metadata unavailable')
-            if status.get('hash',infohash).lower()!=infohash:raise ValueError('Torrent identity changed')
+                raise SourceStalled('Metadata unavailable')
+            if status.get('hash',infohash).lower()!=infohash:raise SourceFailure('Torrent identity changed')
             if exact:
                 matches=[f for f in status['file_stats'] if f.get('id')==exact['index'] and f.get('path')==exact['filename'] and f.get('length')==exact['length']]
-                if len(matches)!=1:raise ValueError('Exact source file changed')
+                if len(matches)!=1:raise SourceFailure('Exact source file changed')
                 selected=exact
             else:
-                f=choose_file(status['file_stats'],key,candidate.get('fileIdx'),candidate.get('behaviorHints',{}).get('filename'))
-                if key.startswith('movie:') and not candidate_matches({**candidate,'behaviorHints':{'filename':f['path']}},key):raise ValueError('Movie filename does not match requested title/year')
+                try:f=choose_file(status['file_stats'],key,candidate.get('fileIdx'),candidate.get('behaviorHints',{}).get('filename'))
+                except ValueError:raise SourceFailure('Source file selection rejected') from None
+                if key.startswith('movie:') and not candidate_matches({**candidate,'behaviorHints':{'filename':f['path']}},key):raise SourceFailure('Movie filename does not match requested title/year')
                 selected={'hash':infohash,'index':f['id'],'filename':f['path'],'length':f['length'],
                     'source_name':candidate.get('title',''),'file_count':len(status['file_stats']),'torrent_url':candidate.get('torrentUrl'),'link':candidate.get('torrentUrl') or magnet}
             if REL.excluded(key,selected):continue
             REL.bind(key,selected)
             return remember('resolved:'+key,selected,900)
         except (ClientCancelled,PlaybackBusy,Checkpoint):raise
-        except Exception:
+        except Exception as error:
             remaining(1)
             if deadline and deadline-time.monotonic()<.5:raise Checkpoint('Source checkpoint') from None
             if getattr(BUDGET,'speculative',False):raise
+            if not isinstance(error,SourceFailure):raise
             if exact:REL.exclude(key,exact)
             remember('source-excluded:'+key+':'+infohash,True,900)
             log('Trying next source for '+key)
-    raise RuntimeError('No working compatible torrent source available')
+    raise SourceFailure('No working compatible torrent source available')
 
 
 def upstream(selected):
@@ -1134,6 +1155,8 @@ def durable_playback_evidence(key,audio_index=None):
 
 
 def prepare_locked(key,background,audio_index,deadline):
+    if not background and F.manual_recheck_state(key) in ('pending','failed'):
+        raise Checkpoint('Waiting for requested fresh source verification')
     prepared_key='prepared:'+key+(':'+str(audio_index) if audio_index is not None else '')
     with LIVE_LOCK:
         if LIVE['key'] not in (None,key) and LIVE['active']>0:
@@ -1159,22 +1182,24 @@ def prepare_locked(key,background,audio_index,deadline):
             if cancel and cancel():raise ClientCancelled('Client disconnected') from None
             if getattr(BUDGET,'speculative',False):raise
             remaining(1)
-            remember('source-status:'+key,{'state':'unavailable','checked_at':time.time()},900)
-            F.validation_result(key,False,reason='Source preparation failed ('+type(error).__name__+')')
+            if background and isinstance(error,SourceFailure):
+                remember('source-status:'+key,{'state':'unavailable','checked_at':time.time()},900)
+                F.validation_result(key,False,reason='Source preparation failed ('+type(error).__name__+')')
+            elif not background:playback_failure(key,error)
             raise
         try:
             with playback_phase(key,'video_probe'):info=verified['info'] if verified else probe(selected,key,deadline=deadline)
             video=next((s for s in info.get('streams',[]) if s.get('codec_type')=='video' and not s.get('disposition',{}).get('attached_pic')),{})
             if video.get('codec_name')=='h264' and video.get('pix_fmt') not in ('yuv420p','yuvj420p'):
-                raise RuntimeError('Unsupported H264 pixel format')
+                raise DecodeFailure('Unsupported H264 pixel format')
             if video.get('codec_name') not in ('h264','mpeg4','vp8','vp9'):
-                raise RuntimeError('Source requires unsupported video decoding')
+                raise DecodeFailure('Source requires unsupported video decoding')
             audio=[t for t in info.get('streams',[]) if t.get('codec_type')=='audio']
             ordered=sorted(audio,key=lambda t:0 if t.get('codec_name')=='aac' and t.get('profile')=='LC' else 1)
             selected_audio=next((t for t in ordered if t['index']==audio_index),None) if audio_index is not None else next((t for lang in ('eng','en','heb','he') for t in ordered if t.get('tags',{}).get('language')==lang),ordered[0] if ordered else None)
             if audio_index is not None and selected_audio is None:raise ValueError('Audio track not found')
             needs_conversion=selected_audio is not None and (selected_audio.get('codec_name')!='aac' or selected_audio.get('profile')!='LC')
-            if needs_conversion and float(info.get('format',{}).get('duration') or 0)<=0:raise RuntimeError('Converted VOD requires known duration')
+            if needs_conversion and float(info.get('format',{}).get('duration') or 0)<=0:raise SourceFailure('Converted VOD requires known duration')
             if verified and verified.get('transport_check') and (verified['proof'].get('selected_audio_index')!=(selected_audio['index'] if selected_audio else None) or verified['proof'].get('audio_conversion')!=needs_conversion):verified=None
             proof=verified['proof'] if verified else REL.verify(key,selected,info,selected_audio['index'] if selected_audio else None,needs_conversion,deadline)
             break
@@ -1185,6 +1210,7 @@ def prepare_locked(key,background,audio_index,deadline):
             if getattr(BUDGET,'speculative',False):raise
             remaining(1)
             playback_event(key,'source_rejected',time.monotonic(),'failed',error)
+            if not isinstance(error,SourceFailure):raise
             verified=None
             REL.exclude(key,selected)
             remember('source-excluded:'+key+':'+selected['hash'],True,900)
@@ -1192,8 +1218,10 @@ def prepare_locked(key,background,audio_index,deadline):
             # Retain torrents/readers: another request may still be playing an
             # older bound source. Only this preparation advances to a fallback.
             if attempt==2:
-                remember('source-status:'+key,{'state':'unavailable','checked_at':time.time()},900)
-                F.validation_result(key,False,reason='Video preflight failed ('+type(error).__name__+')')
+                if background and isinstance(error,SourceFailure):
+                    remember('source-status:'+key,{'state':'unavailable','checked_at':time.time()},900)
+                    F.validation_result(key,False,reason='Video preflight failed ('+type(error).__name__+')')
+                elif not background:playback_failure(key,error)
                 raise
     tracks=[]; languages=set()
     for stream in info.get('streams',[]):
@@ -1407,6 +1435,7 @@ class Handler(BaseHTTPRequestHandler):
         key=None;parts=[]
         try:
             parsed=U.urlsplit(self.path); parts=parsed.path.strip('/').split('/')
+            BUDGET.diagnostic_internal=bool(parts and parts[0]=='raw')
             if parsed.path=='/ready':
                 ready=F.ready_keys()
                 ready.update(":".join(key.split(":")[:2]) for key in list(ready))
@@ -1602,13 +1631,14 @@ class Handler(BaseHTTPRequestHandler):
                 self.close_connection=True
         except (BrokenPipeError,ConnectionResetError,ClientCancelled):
             if key:playback_event(key,'request',stream_started,'cancelled')
-        except Checkpoint:
+        except Checkpoint as error:
+            if key:playback_event(key,'request',stream_started,'checkpoint',error)
             if not response_started:self.reply({'error':'Preparing source in background; retry Play shortly.'},503)
-        except PlaybackBusy:
+        except PlaybackBusy as error:
+            if key:playback_event(key,'request',stream_started,'checkpoint',error)
             if not response_started:self.reply({'error':'Another playback preparation is in progress; retry shortly.'},409)
         except urllib.error.HTTPError as error:
             if key:playback_event(key,'request',stream_started,'failed',error)
-            if parts and parts[0]=='play' and error.code!=416:F.validation_result(key,False,reason='Upstream HTTP failure')
             if error.code==416 and not response_started:
                 self.send_response(416)
                 if error.headers.get('Content-Range'):
@@ -1619,9 +1649,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply({'error':'Source provider unavailable; retry later.'},503)
             else: self.close_connection=True
         except Exception as error:
+            if key and parts and parts[0]=='play':playback_failure(key,error)
             if key:playback_event(key,'request',stream_started,'failed',error)
             else:log('Request failed: '+type(error).__name__)
-            if parts and parts[0]=='play':F.validation_result(key,False,reason='Stream read failure')
             try:
                 if not response_started:
                     self.reply({'error':'Source unavailable; retry later or select another title.'},503)
@@ -1666,4 +1696,5 @@ def main():
 F=Features(globals())
 REL=Reliability(globals())
 EMBED=EmbeddedSubtitles(globals())
+DIAG=PlaybackDiagnostics(globals())
 if __name__=='__main__': main()

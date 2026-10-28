@@ -34,8 +34,9 @@ class Checkpoint(RuntimeError):
 
 
 class ResourceCheckpoint(Checkpoint):pass
-class DecodeFailure(RuntimeError):pass
-class SourceStalled(RuntimeError):pass
+class SourceFailure(RuntimeError):pass
+class DecodeFailure(SourceFailure):pass
+class SourceStalled(SourceFailure):pass
 
 
 def rank(candidate):
@@ -236,7 +237,10 @@ class Reliability:
                     try:
                         out,err=process.communicate(timeout=min(POLL_SECONDS,max(.01,deadline-time.monotonic())))
                         if process.returncode<0 or re.search(rb'Cannot allocate memory|Resource temporarily unavailable|pthread_create failed',err,re.I):raise ResourceCheckpoint('Verification resource limit; retry serially')
-                        if process.returncode or (command[command.index('-v')+1]=='error' and err):raise DecodeFailure('Playback sample process failed')
+                        if process.returncode or (command[command.index('-v')+1]=='error' and err):
+                            if not selected.get('local') and not (self.g['cached']('sample-progress:'+token) or {}).get('bytes'):
+                                raise Checkpoint('Sample transport delivered no exact-source bytes')
+                            raise DecodeFailure('Playback sample process failed')
                         return subprocess.CompletedProcess(command,process.returncode,out,err)
                     except subprocess.TimeoutExpired as waiting:
                         err=waiting.stderr or b''
@@ -271,15 +275,17 @@ class Reliability:
             from verification_remote import execute as remote_execute
             with self.lock('torrent:'+selected['hash']):
                 return remote_execute(self.g,key,selected,'sample',params,deadline)
-        result=media_execute('sample',params,source,lambda command,phase:self.run(command,key,phase,selected,token,deadline),self.g['DATA'])
-        return {'position':position,'seconds':seconds,**evidence(result['crc'],seconds,audio_index is not None)}
+        try:
+            result=media_execute('sample',params,source,lambda command,phase:self.run(command,key,phase,selected,token,deadline),self.g['DATA'])
+            return {'position':position,'seconds':seconds,**evidence(result['crc'],seconds,audio_index is not None)}
+        except (MissingVideoFrames,MissingSelectedAudio):raise DecodeFailure('Decoded sample coverage incomplete') from None
 
     def verify(self,key,selected,info,audio_index,conversion,deadline):
         if conversion:
             track=next(s for s in info['streams'] if s.get('index')==audio_index)
-            if track.get('codec_name') not in AUDIO_CODECS:raise RuntimeError('Unsupported audio conversion')
+            if track.get('codec_name') not in AUDIO_CODECS:raise DecodeFailure('Unsupported audio conversion')
         duration=float(info.get('format',{}).get('duration') or 0)
-        if duration<10 or not math.isfinite(duration):raise RuntimeError('No usable sample duration')
+        if duration<10 or not math.isfinite(duration):raise SourceFailure('No usable sample duration')
         with self.db() as c:row=c.execute('SELECT proof FROM validation WHERE key=?',(key,)).fetchone()
         prior=json.loads(row[0]) if row and row[0] else {}
         sequence=int(prior.get('audit_sequence',-1))+1

@@ -7,6 +7,7 @@ class HomeMediaWorkers extends \OMV\Rpc\ServiceAbstract
         $this->registerMethod('getWorkers');
         $this->registerMethod('getCounts');
         $this->registerMethod('getOverview');
+        $this->registerMethod('getPlaybackEvents');
     }
     private function readSection($section, $params, $context) {
         $this->validateMethodContext($context, ['role' => OMV_ROLE_ADMINISTRATOR]);
@@ -19,4 +20,5 @@ class HomeMediaWorkers extends \OMV\Rpc\ServiceAbstract
     public function getWorkers($params, $context) { return $this->readSection('workers', $params, $context); }
     public function getCounts($params, $context) { return $this->readSection('counts', $params, $context); }
     public function getOverview($params, $context) { return $this->readSection('overview', $params, $context); }
+    public function getPlaybackEvents($params, $context) { return $this->readSection('events', $params, $context); }
 }

@@ -71,3 +71,5 @@ User report counters show keys awaiting a fresh check, failed on the latest
 reported check and passed after a report. These are latest per-key states, not
 a count of every click. Reports are prioritized by the ordinary source worker
 and obey its playback/navigation/provider pauses.
+
+Playback events shows the latest 200 structured foreground failure/checkpoint events for 30 days: title, stage, category and current fresh-check status. Request/network/unknown errors preserve existing proof; confirmed source/decode failures request authoritative re-verification. This administrator-only view never reads raw exception messages or stream URLs.

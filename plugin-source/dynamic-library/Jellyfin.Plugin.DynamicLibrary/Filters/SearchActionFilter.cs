@@ -16,15 +16,18 @@ public class SearchActionFilter : IAsyncActionFilter, IOrderedFilter
     private readonly DynamicLibraryService _dynamicLibraryService;
     private readonly ILibraryManager _libraryManager;
     private readonly ILogger<SearchActionFilter> _logger;
+    private readonly HomeCatalogueResultFilter _homeResults;
 
     public SearchActionFilter(
         DynamicLibraryService dynamicLibraryService,
         ILibraryManager libraryManager,
-        ILogger<SearchActionFilter> logger)
+        ILogger<SearchActionFilter> logger,
+        HomeCatalogueResultFilter homeResults)
     {
         _dynamicLibraryService = dynamicLibraryService;
         _libraryManager = libraryManager;
         _logger = logger;
+        _homeResults = homeResults;
     }
 
     public int Order => 1;
@@ -65,110 +68,39 @@ public class SearchActionFilter : IAsyncActionFilter, IOrderedFilter
         context.TryGetActionArgument("startIndex", out var startIndex, 0);
         context.TryGetActionArgument("limit", out var limit, 25);
 
-        // Let the original action execute first to get real results
+        var page = HomeSearch.Plan(startIndex, limit);
+        context.HttpContext.Items[HomeSearch.PageKey] = page;
+        // Retrieve a common native prefix, then paginate the combined result
+        // once. Very broad searches retain native paging without truncating it.
+        if (context.ActionArguments.ContainsKey("startIndex")) context.ActionArguments["startIndex"] = 0;
+        if (context.ActionArguments.ContainsKey("limit")) context.ActionArguments["limit"] = page.Fetch;
         if (context.ActionArguments.ContainsKey("recursive") && !context.HttpContext.Request.Query.ContainsKey("recursive"))
             context.ActionArguments["recursive"] = true;
         var resultContext = await next();
-
-        // If the original action failed, don't modify
-        // Note: Jellyfin returns ObjectResult, not OkObjectResult
-        if (resultContext.Result is not ObjectResult objectResult)
-        {
-            return;
-        }
-
-        // Get the original results
-        var originalResults = objectResult.Value as QueryResult<BaseItemDto>;
-        if (originalResults is null)
-        {
-            return;
-        }
-
+        if (resultContext.Result is not ObjectResult objectResult || objectResult.Value is not QueryResult<BaseItemDto> original) return;
+        var native = await _homeResults.FilterSearchReadyAsync(original.Items,
+            HomeCatalogueResultFilter.IsFavoritesQuery(context.HttpContext.Request.Query), context.HttpContext.RequestAborted);
+        var results = native.ToList();
+        var total = Math.Max(native.Count, original.TotalRecordCount - (original.Items.Count - native.Count));
         try
         {
-            // Search our APIs
-            var dynamicResults = await _dynamicLibraryService.SearchAsync(
-                searchTerm,
-                requestedTypes,
-                context.HttpContext.RequestAborted);
-
-            if (dynamicResults.Count == 0)
+            if (original.TotalRecordCount <= page.Fetch)
             {
-                return;
+                var dynamic = await _dynamicLibraryService.SearchAsync(searchTerm, requestedTypes, context.HttpContext.RequestAborted);
+                results = HomeSearch.Merge(native, dynamic, searchTerm);
+                total = results.Count;
             }
-
-            // Get IDs of existing items from search results to avoid duplicates
-            var existingTmdbIds = originalResults.Items
-                .Where(i => i.ProviderIds?.ContainsKey("Tmdb") == true)
-                .Select(i => i.ProviderIds["Tmdb"])
-                .ToHashSet();
-
-            var existingTvdbIds = originalResults.Items
-                .Where(i => i.ProviderIds?.ContainsKey("Tvdb") == true)
-                .Select(i => i.ProviderIds["Tvdb"])
-                .ToHashSet();
-
-            var existingImdbIds = originalResults.Items
-                .Where(i => i.ProviderIds?.ContainsKey("Imdb") == true)
-                .Select(i => i.ProviderIds["Imdb"])
-                .ToHashSet();
-
-            // Deduplicate against actual results, not every indexed item. A
-            // Hebrew alias can find an indexed title whose stored English name
-            // did not match the native query; dropping it would erase that hit.
-
-            // Filter out duplicates from dynamic results
-            var existingIds = originalResults.Items.Select(item => item.Id).ToHashSet();
-            var filteredDynamicResults = dynamicResults.Where(d =>
-            {
-                if (existingIds.Contains(d.Id)) return false;
-                if (d.ProviderIds == null) return true;
-
-                if (d.ProviderIds.TryGetValue("Imdb", out var imdbId) && existingImdbIds.Contains(imdbId))
-                    return false;
-
-                if (d.ProviderIds.TryGetValue("Tmdb", out var tmdbId) && existingTmdbIds.Contains(tmdbId))
-                    return false;
-
-                if (d.ProviderIds.TryGetValue("Tvdb", out var tvdbId) && existingTvdbIds.Contains(tvdbId))
-                    return false;
-
-                return true;
-            }).ToList();
-
-            if (filteredDynamicResults.Count == 0)
-            {
-                _logger.LogDebug("All dynamic results were duplicates of existing items");
-                return;
-            }
-
-            // Merge results: original items first, then dynamic items
-            var mergedItems = originalResults.Items.ToList();
-            mergedItems.AddRange(filteredDynamicResults);
-
-            // Apply pagination to merged results
-            var totalCount = mergedItems.Count;
-            var pagedItems = mergedItems.Skip(startIndex).Take(limit).ToArray();
-
-            _logger.LogInformation(
-                "Search for '{Query}' merged {OriginalCount} original + {DynamicCount} dynamic results (total: {Total})",
-                searchTerm,
-                originalResults.Items.Count,
-                filteredDynamicResults.Count,
-                totalCount);
-
-            // Replace the result
-            resultContext.Result = new OkObjectResult(new QueryResult<BaseItemDto>
-            {
-                Items = pagedItems,
-                TotalRecordCount = totalCount
-            });
         }
-        catch (Exception ex)
+        catch (Exception error)
         {
-            _logger.LogError(ex, "Error merging dynamic search results for '{Query}'", searchTerm);
-            // Keep original results on error
+            // Retain the requested native page even when catalogue search fails.
+            _logger.LogWarning("Home search merge deferred ({Category})", error.GetType().Name);
         }
+        resultContext.Result = new OkObjectResult(new QueryResult<BaseItemDto>
+        {
+            Items = results.Skip(page.Start).Take(page.Limit).ToArray(),
+            TotalRecordCount = total
+        });
     }
 
     /// <summary>

@@ -64,7 +64,7 @@ class DeadlineTests(unittest.TestCase):
                 self.assertEqual(error.exception.code,503)
                 self.assertLess(time.monotonic()-started,.7)
                 resolve.assert_called_once()
-                invalidated.assert_called_once_with(KEY,False,reason='Stream read failure')
+                invalidated.assert_not_called()
         finally:bridge.shutdown();bridge.server_close();thread.join()
 
     def test_http_range_is_preserved_by_stream_proxy(self):
@@ -88,7 +88,7 @@ class DeadlineTests(unittest.TestCase):
                 with a.R.urlopen('http://127.0.0.1:'+str(bridge.server_port)+'/play/'+KEY+'?sig=fixture&source='+('a'*64),timeout=2) as response:
                     with self.assertRaises(http.client.IncompleteRead):response.read()
                 resolve.assert_called_once()
-                invalidated.assert_called_once_with(KEY,False,reason='Stream read failure')
+                invalidated.assert_not_called()
         finally:bridge.shutdown();bridge.server_close();thread.join()
 
     def test_locked_preparation_returns_busy_without_invalidating_source(self):
@@ -125,7 +125,7 @@ class DeadlineTests(unittest.TestCase):
         other={**SELECTED,'hash':'b'*40}
         deadlines=[]
         def resolve(key,deadline):deadlines.append(deadline);return SELECTED if len(deadlines)==1 else other
-        with tempfile.TemporaryDirectory() as directory,patch.object(a,'DATA',Path(directory)),patch.object(a,'resolve',side_effect=resolve),patch.object(a,'probe',side_effect=[RuntimeError('bad source'),INFO]),patch.object(a.REL,'verify',return_value={'version':5}),patch.object(a,'signature',return_value='fixture'),patch.object(a,'stream_candidates',return_value=[{'infoHash':other['hash']}]),patch.object(a,'torr',return_value={}),patch.object(a,'external_subtitles',return_value=[]):
+        with tempfile.TemporaryDirectory() as directory,patch.object(a,'DATA',Path(directory)),patch.object(a,'resolve',side_effect=resolve),patch.object(a,'probe',side_effect=[a.DecodeFailure('bad source'),INFO]),patch.object(a.REL,'verify',return_value={'version':5}),patch.object(a,'signature',return_value='fixture'),patch.object(a,'stream_candidates',return_value=[{'infoHash':other['hash']}]),patch.object(a,'torr',return_value={}),patch.object(a,'external_subtitles',return_value=[]):
             result=a.prepared(KEY)
             self.assertEqual(result['selected']['hash'],other['hash'])
             self.assertEqual(deadlines[0],deadlines[1])

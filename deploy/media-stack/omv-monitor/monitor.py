@@ -14,7 +14,7 @@ import time
 DATA=Path('/srv/dev-disk-by-uuid-bd267f22-f18a-4966-94ae-409a27252905/appdata/catalogue')
 JOBS=[
  ('media-source-availability','Stream verification','Repeated batches; 1 minute between batches'),
- ('media-remote-availability','Windows LAN source verification','Optional parallel worker; 15 seconds between batches'),
+ ('media-remote-availability','Windows LAN source verification','Optional parallel worker; 3 seconds between batches'),
  ('media-verification-coordinator','LAN media verification gateway','Continuous; sends exact-source media samples to the Windows worker'),
  ('media-verification-guard','Windows verification memory gate','Every 15 seconds; protects server memory'),
  ('media-catalogue-sync','New-title discovery','00:00, 06:00, 12:00, 18:00; up to 2 minutes jitter'),
@@ -337,9 +337,27 @@ def overview(data=DATA,snapshot=None):
         add('Windows worker','Status unavailable','Live operation state will return when the coordinator is readable')
     return rows
 
+def playback_events(data=DATA):
+    """Read only the bounded structured fields, never exception messages/URLs."""
+    try:
+        with closing(sqlite3.connect('file:'+str(data/'catalogue.sqlite')+'?mode=ro',uri=True,timeout=2)) as c:
+            exists=c.execute("SELECT 1 FROM sqlite_master WHERE name='playback_events'").fetchone()
+            if not exists:return []
+            rows=c.execute('SELECT e.id,e.created,e.key,e.phase,e.category,e.outcome,e.http_status,COALESCE(m.status,\'none\') FROM playback_events e LEFT JOIN manual_rechecks m ON m.key=e.key WHERE e.created>=? ORDER BY e.id DESC LIMIT 200',(time.time()-30*86400,)).fetchall()
+            output=[]
+            for ident,created,key,phase,category,outcome,status,recheck in rows:
+                item=c.execute('SELECT meta FROM items WHERE key=?',(':'.join(key.split(':')[:2]),)).fetchone()
+                meta=json.loads(item[0]) if item else {}
+                title=str(meta.get('name') or key)[:180]
+                output.append({'id':ident,'time':stamp(created),'title':title,'stage':phase.replace('_',' '),
+                    'category':category.replace('_',' '),'outcome':outcome,'recheck':recheck,
+                    'detail':('HTTP '+str(status)+' · ' if status else '')+('Fresh verification '+recheck if recheck!='none' else 'No source recheck requested')})
+            return output
+    except (sqlite3.Error,OSError,ValueError):return []
+
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('section',choices=('workers','counts','snapshot','overview'));args=parser.parse_args()
-    try:rows=workers() if args.section=='workers' else overview() if args.section=='overview' else counts(refresh=args.section=='snapshot')
+    parser=argparse.ArgumentParser();parser.add_argument('section',choices=('workers','counts','snapshot','overview','events'));args=parser.parse_args()
+    try:rows=workers() if args.section=='workers' else overview() if args.section=='overview' else playback_events() if args.section=='events' else counts(refresh=args.section=='snapshot')
     except sqlite3.OperationalError:
         if args.section=='snapshot' and foreground_busy():
             print('Counter snapshot yielded to navigation; previous snapshot retained')

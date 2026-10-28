@@ -10,6 +10,22 @@ spec=importlib.util.spec_from_file_location('monitor',Path(__file__).with_name('
 m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 
 class MonitorTests(unittest.TestCase):
+    def test_playback_events_show_current_recheck_and_hide_expired_events(self):
+        with tempfile.TemporaryDirectory() as directory:
+            data=Path(directory)
+            with sqlite3.connect(data/'catalogue.sqlite') as c:
+                c.execute('CREATE TABLE playback_events(id INTEGER PRIMARY KEY,created REAL,key TEXT,phase TEXT,category TEXT,outcome TEXT,http_status INTEGER)')
+                c.execute('CREATE TABLE manual_rechecks(key TEXT PRIMARY KEY,status TEXT)')
+                c.execute('CREATE TABLE items(key TEXT PRIMARY KEY,meta TEXT)')
+                c.execute('INSERT INTO items VALUES (?,?)',('movie:tt1234567',json.dumps({'name':'Fixture title'})))
+                c.execute('INSERT INTO manual_rechecks VALUES (?,?)',('movie:tt1234567','pending'))
+                c.executemany('INSERT INTO playback_events VALUES (?,?,?,?,?,?,?)',[
+                    (1,time.time()-31*86400,'movie:tt1234567','request','timeout','failed',None),
+                    (2,time.time(),'movie:tt1234567','video_probe','decode_failure','failed',None)])
+            rows=m.playback_events(data)
+            self.assertEqual(len(rows),1);self.assertEqual(rows[0]['title'],'Fixture title')
+            self.assertEqual(rows[0]['recheck'],'pending');self.assertEqual(rows[0]['category'],'decode failure')
+            self.assertNotIn('url',rows[0])
     def test_lan_page_prioritizes_current_verifier_and_gateway(self):
         units={'media-verification-coordinator.service':{'ActiveState':'active','Result':'success','UnitFileState':'enabled'}}
         with patch.object(m,'systemd',return_value=units),patch.object(m,'context',return_value={}):rows=m.workers()
