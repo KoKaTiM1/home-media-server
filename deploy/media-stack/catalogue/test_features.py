@@ -78,6 +78,26 @@ class FeatureTests(unittest.TestCase):
         self.assertEqual(description_only['name'],'English show')
         self.assertEqual(description_only['description'],'תיאור בעברית')
 
+    def test_existing_localization_schema_gets_refresh_migration(self):
+        with a.F.db() as conn:
+            conn.execute('DROP TABLE localized_metadata')
+            conn.execute("CREATE TABLE localized_metadata(kind TEXT,imdb TEXT,title_he TEXT,description_he TEXT,source TEXT,state TEXT,checked_at REAL,next_attempt REAL,nfo_written INTEGER)")
+        with a.F.db() as conn:
+            self.assertIn('refresh_pending',{row[1] for row in conn.execute('PRAGMA table_info(localized_metadata)')})
+
+    def test_native_localization_update_omits_user_data_and_keeps_identity_year(self):
+        a.F._save_localized_metadata('movie','tt1234567',{'title_he':'שם בעברית','description_he':'תיאור בעברית','english_name':'English'})
+        def api(path,*args,**kwargs):
+            if path.startswith('/Items?'):return {'Items':[{'Id':'native-fixture','Type':'Movie','Path':str(a.LIBRARY/'movies/tt1234567/movie.strm'),'ProviderIds':{'Imdb':'tt1234567'}}]}
+            if path=='/Users':return [{'Id':'user-fixture','Policy':{'IsAdministrator':True}}]
+            if path.startswith('/Users/'):return {'Id':'native-fixture','Name':'English','ProductionYear':2001,'ProviderIds':{'Imdb':'tt1234567'},'UserData':{'Played':True,'IsFavorite':True}}
+            return None
+        with patch.object(a.F,'jf',side_effect=api) as mocked,patch.object(a.F,'hebrew_metadata_busy',return_value=False):
+            self.assertEqual(a.F.refresh_localized_items([('movie','tt1234567')]),1)
+        payload=next(call.args[1] for call in mocked.call_args_list if call.args[0]=='/Items/native-fixture')
+        self.assertNotIn('UserData',payload)
+        self.assertEqual((payload['Name'],payload['Overview'],payload['ProductionYear'],payload['ProviderIds']['Imdb']),('שם בעברית','תיאור בעברית',2001,'tt1234567'))
+
     def test_wikidata_requires_exact_imdb_and_uses_hebrew_article_summary(self):
         wrong={'claims':{'P345':[{'mainsnak':{'datavalue':{'value':'tt7654321'}}}]},'labels':{'he':{'value':'לא נכון'}}}
         right={'claims':{'P345':[{'mainsnak':{'datavalue':{'value':'tt1234567'}}}]},

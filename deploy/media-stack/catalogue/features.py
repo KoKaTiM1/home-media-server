@@ -41,6 +41,10 @@ class Features:
             refresh_pending INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY(kind,imdb))''')
         conn.execute('CREATE INDEX IF NOT EXISTS localized_metadata_due ON localized_metadata(state,next_attempt)')
+        if 'refresh_pending' not in {row[1] for row in conn.execute('PRAGMA table_info(localized_metadata)')}:
+            try:conn.execute('ALTER TABLE localized_metadata ADD COLUMN refresh_pending INTEGER NOT NULL DEFAULT 0')
+            except sqlite3.OperationalError:
+                if 'refresh_pending' not in {row[1] for row in conn.execute('PRAGMA table_info(localized_metadata)')}:raise
         conn.execute('CREATE TABLE IF NOT EXISTS downloads (key TEXT PRIMARY KEY, value TEXT)')
         conn.execute("CREATE TABLE IF NOT EXISTS validation (key TEXT PRIMARY KEY, state TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, next_check REAL NOT NULL DEFAULT 0, checked REAL NOT NULL DEFAULT 0, proof TEXT, reason TEXT, priority INTEGER NOT NULL DEFAULT 0)")
         conn.execute('CREATE TABLE IF NOT EXISTS audio_recheck (key TEXT PRIMARY KEY, completed REAL NOT NULL DEFAULT 0)')
@@ -241,11 +245,24 @@ class Features:
             native=self.jf('/Items?Recursive=true&IncludeItemTypes=Movie,Series&Fields=ProviderIds,Path&Limit=5000',timeout=20).get('Items',[])
             ids={(('movie' if item.get('Type')=='Movie' else 'series'),item.get('ProviderIds',{}).get('Imdb')):item.get('Id')
                  for item in native if str(item.get('Path','')).startswith(str(self.g['LIBRARY']))}
+            users=self.jf('/Users',timeout=5)
+            user=next((u for u in users if u.get('Policy',{}).get('IsAdministrator')),users[0] if users else None)
+            if not user:raise RuntimeError('No native metadata user')
             refreshed=0
             for kind,imdb in identities:
                 ident=ids.get((kind,imdb))
                 if not ident:continue
-                self.jf('/Items/'+ident+'/Refresh?Recursive=false&MetadataRefreshMode=FullRefresh&ImageRefreshMode=None&ReplaceAllMetadata=false',{},method='POST')
+                if self.hebrew_metadata_busy():break
+                with self.db() as conn:
+                    localized=conn.execute('SELECT title_he,description_he FROM localized_metadata WHERE kind=? AND imdb=?',(kind,imdb)).fetchone()
+                    alias=conn.execute('SELECT english FROM aliases WHERE imdb=?',(imdb,)).fetchone()
+                dto=dict(self.jf('/Users/'+user['Id']+'/Items/'+ident,timeout=5))
+                dto.pop('UserData',None)
+                if localized and localized[0]:dto['Name']=localized[0]
+                if localized and localized[1]:dto['Overview']=localized[1]
+                if alias and alias[0]:dto['OriginalTitle']=alias[0]
+                if dto.get('Tags') is None:dto['Tags']=[]
+                self.jf('/Items/'+ident,dto,method='POST',timeout=5)
                 with self.db() as conn:conn.execute('UPDATE localized_metadata SET refresh_pending=0 WHERE kind=? AND imdb=?',(kind,imdb))
                 refreshed+=1
             return refreshed
