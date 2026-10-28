@@ -107,9 +107,9 @@ checkpoint, not a failed source. Lost replies replay the same result identity.
    real PC results and fallback on stopping the PC. Preserve protected titles,
    watch progress, favourites and downloads. Do not restart a playing service.
 
-For bounded lookahead, set private guard `prefetch_per_lane` to `2` or `3` (default
+For bounded lookahead, set private guard `prefetch_per_lane` to `2`, `3` or `4` (default
 `1`). The active lease limit remains `max_windows_jobs`; the total operation
-queue limit is their product, at most twelve. At three active slots and depth two, restore the
+queue limit is their product, at most sixteen. At three active slots and depth two, restore the
 `media-remote-lookahead@4`, `@5` and `@6` timer instances alongside the ordinary
 three producers. At four active slots, also restore `@7` and `@8`, for eight
 producer slots in total. The depth-three throughput pilot uses four active
@@ -130,7 +130,7 @@ Windows producer timers retry after three seconds (one-second timer accuracy).
 The controller checks leased operation results every 250 ms and queued work
 every 500 ms; it does not insert a separate two-second pause between remote
 titles. These remove scheduling delays, not torrent startup or download time.
-The four active decoder/twelve maximum total queued-work limits, exclusive source/title
+The four active decoder/sixteen maximum total queued-work limits, exclusive source/title
 leases, provider backoff and playback/resource guards still apply. Existing
 producer processes finish their current batch before loading updated code.
 
@@ -150,3 +150,5 @@ unavailable outcome, without a new TorrServer OOM or restart. Continuous PC
 assistance was enabled after that review; the existing memory and playback
 guards still pause it as needed. A physical Windows stop/reconnect and longer
 throughput review remain open in issue #4.
+
+The 16-operation supply pilot uses four active decoders, prefetch depth four, and lookahead producers @4 through @16 (ordinary producers 1–3). Existing playback and resource guards apply; measure useful outcomes and queue starvation before increasing further.

@@ -79,24 +79,24 @@ class QueueTests(unittest.TestCase):
         self.q.finish(job);self.q.set('enabled',False)
         self.assertIsNone(gateway.claim_wait(self.q,WORKER,15))
 
-    def test_twelve_ready_operations_keep_four_worker_hard_limit(self):
-        self.q.set('max_windows_jobs',4);self.q.set('prefetch_per_lane',3)
+    def test_sixteen_ready_operations_keep_four_worker_hard_limit(self):
+        self.q.set('max_windows_jobs',4);self.q.set('prefetch_per_lane',4)
         workers=[WORKER,'prefetch-pc2','prefetch-pc3','prefetch-pc4']
         for worker in workers:self.q.seen(worker)
-        for n in range(12):self.q.submit(f'movie:tt00000{n:02}',SID,'probe',{},f'http://127.0.0.1:8092/raw/movie:tt00000{n:02}',120)
-        self.assertEqual(self.q.status()['windows_queue_capacity'],12)
+        for n in range(16):self.q.submit(f'movie:tt00000{n:02}',SID,'probe',{},f'http://127.0.0.1:8092/raw/movie:tt00000{n:02}',120)
+        self.assertEqual(self.q.status()['windows_queue_capacity'],16)
         with self.assertRaises(WorkerWait):self.submit()
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
             tasks=list(pool.map(self.q.claim,workers))
         self.assertEqual(len({t['job_id'] for t in tasks}),4)
         self.assertEqual(self.q.status()['jobs']['leased'],4)
-        self.assertEqual(self.q.status()['jobs']['pending'],8)
+        self.assertEqual(self.q.status()['jobs']['pending'],12)
         for worker,task in zip(workers,tasks):self.assertEqual(self.q.claim(worker)['lease_id'],task['lease_id'])
         self.assertEqual(self.q.status()['jobs']['leased'],4)
-        self.q.producer(12,KEY,'source preparation')
-        with self.assertRaises(InvalidJob):self.q.producer(13,KEY,'source preparation')
+        self.q.producer(16,KEY,'source preparation')
+        with self.assertRaises(InvalidJob):self.q.producer(17,KEY,'source preparation')
         self.q.set('prefetch_per_lane',100)
-        self.assertEqual(self.q.status()['windows_queue_capacity'],12)
+        self.assertEqual(self.q.status()['windows_queue_capacity'],16)
     def test_server_observes_completed_windows_work_without_two_second_gap(self):
         import verification_remote as remote
         from reliability import Checkpoint

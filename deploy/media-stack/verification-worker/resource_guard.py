@@ -39,7 +39,7 @@ def main():
     except Exception:reason='Resource status unavailable; Windows verification paused'
     q.set('enabled',permitted);q.set('reason',reason);q.set('health',health)
     q.set('max_windows_jobs',max(1,min(4,int(cfg.get('max_windows_jobs',1)))))
-    q.set('prefetch_per_lane',max(1,min(3,int(cfg.get('prefetch_per_lane',1)))))
+    q.set('prefetch_per_lane',max(1,min(4,int(cfg.get('prefetch_per_lane',1)))))
     print(reason)
 
 if __name__=='__main__':main()
