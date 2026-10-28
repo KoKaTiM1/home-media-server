@@ -1688,7 +1688,7 @@ def main():
     parser.add_argument('command',choices=('serve','sync','collections','badges','trailers','discovery-sync','availability','downloads','imdb-sync','metadata-import','remote-availability','embedded-subtitles','hebrew-metadata'),default='serve',nargs='?')
     parser.add_argument('--movies',type=int,default=1000)
     parser.add_argument('--shows',type=int,default=200)
-    parser.add_argument('--slot',type=int,choices=range(1,9),default=1)
+    parser.add_argument('--slot',type=int,choices=range(1,13),default=1)
     parser.add_argument('--limit',type=int,default=8)
     args=parser.parse_args()
     BUDGET.metadata_background=args.command!='serve'

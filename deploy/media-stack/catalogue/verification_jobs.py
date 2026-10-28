@@ -75,9 +75,9 @@ class DecodeJobs:
                     'totals':dict(c.execute('SELECT key,value FROM totals').fetchall())}
     def queue_capacity(self,c):
         capacity=max(1,min(4,int(self.setting(c,'max_windows_jobs',1))))
-        return capacity*max(1,min(2,int(self.setting(c,'prefetch_per_lane',1))))
+        return capacity*max(1,min(3,int(self.setting(c,'prefetch_per_lane',1))))
     def producer(self,slot,key,phase):
-        if slot not in range(1,9) or not re.fullmatch('(movie:tt[0-9]{5,12}|series:tt[0-9]{5,12}:[0-9]+:[0-9]+)',key):raise InvalidJob('Invalid producer')
+        if slot not in range(1,13) or not re.fullmatch('(movie:tt[0-9]{5,12}|series:tt[0-9]{5,12}:[0-9]+:[0-9]+)',key):raise InvalidJob('Invalid producer')
         if phase not in ('source preparation','torrent_resolution','video_probe','preparation','waiting for decoder','probe','sample','finished'):raise InvalidJob('Invalid producer phase')
         self.set('producer:'+str(slot),{'key':key,'phase':phase,'updated':time.time()})
     def seen(self,worker):

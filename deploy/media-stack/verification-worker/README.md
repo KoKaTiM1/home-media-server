@@ -107,12 +107,21 @@ checkpoint, not a failed source. Lost replies replay the same result identity.
    real PC results and fallback on stopping the PC. Preserve protected titles,
    watch progress, favourites and downloads. Do not restart a playing service.
 
-For bounded lookahead, set private guard `prefetch_per_lane` to `2` (default
+For bounded lookahead, set private guard `prefetch_per_lane` to `2` or `3` (default
 `1`). The active lease limit remains `max_windows_jobs`; the total operation
-queue limit is their product, at most eight. At three active slots, restore the
+queue limit is their product, at most twelve. At three active slots and depth two, restore the
 `media-remote-lookahead@4`, `@5` and `@6` timer instances alongside the ordinary
 three producers. At four active slots, also restore `@7` and `@8`, for eight
-producer slots in total. Keep all dispatchers gated off until the staged memory gate
+producer slots in total. The depth-three throughput pilot uses four active
+Windows leases with twelve preparation slots: also enable `@9` through `@12`.
+The bridge has a 768 MiB memory allowance for the additional preparation
+processes. The expanded pilot uses a separate 1.5 GiB TorrServer allowance:
+measured working memory briefly reached 866 MiB with twelve preparation slots,
+crossing the former 1 GiB allowance's 80% pause threshold. The 80/70% guard,
+OOM/restart checks and host-memory guard remain unchanged.
+The bridge CPU quota is two logical CPUs on the four-thread source host. The
+former one-CPU quota throttled source preparation under the expanded pool.
+Keep additional dispatchers gated off until the staged memory gate
 and pilot are approved. Producer slots are not extra decoder slots. Add the
 catalogue `verification_jobs.py` and `verification_remote.py` read-only source
 mounts from Compose when restoring; compare deployed module hashes with source.
@@ -121,7 +130,7 @@ Windows producer timers retry after three seconds (one-second timer accuracy).
 The controller checks leased operation results every 250 ms and queued work
 every 500 ms; it does not insert a separate two-second pause between remote
 titles. These remove scheduling delays, not torrent startup or download time.
-The four active decoder/eight total queued-work limits, exclusive source/title
+The four active decoder/twelve maximum total queued-work limits, exclusive source/title
 leases, provider backoff and playback/resource guards still apply. Existing
 producer processes finish their current batch before loading updated code.
 

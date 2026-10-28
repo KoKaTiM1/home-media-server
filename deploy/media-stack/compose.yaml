@@ -65,7 +65,7 @@ services:
       - /srv/dev-disk-by-uuid-bd267f22-f18a-4966-94ae-409a27252905/streaming-cache:/streaming-cache
     ports:
       - "<SERVER_LAN_IP>:8090:8090/tcp"
-    mem_limit: 1g
+    mem_limit: 1536m
     cpus: 1.0
     restart: unless-stopped
 
@@ -99,8 +99,8 @@ services:
       - opensubtitles
     ports:
       - "<SERVER_LAN_IP>:8092:8092/tcp"
-    mem_limit: 512m
-    cpus: 1.0
+    mem_limit: 768m
+    cpus: 2.0
     cap_drop:
       - ALL
     security_opt:
