@@ -442,6 +442,7 @@ class Reliability:
         self.db().close()
         with self.db() as c:
             c.execute('BEGIN IMMEDIATE')
+            c.execute("UPDATE verification_audit SET completed=0,result=NULL WHERE reason='speed-v6' AND completed>0 AND result='passed' AND key IN (SELECT key FROM validation WHERE state='verified' AND COALESCE(json_extract(proof,'$.version'),0)<6)")
             if not c.execute("SELECT 1 FROM cache WHERE key='verification-v6-speed-audit'").fetchone():
                 now=time.time()
                 c.execute("INSERT INTO verification_audit(key,reason,scheduled,completed,result,priority) SELECT key,'speed-v6',?,0,NULL,CASE WHEN key='movie:tt43739386' THEN 1000 ELSE 50 END FROM validation WHERE state='verified' AND COALESCE(json_extract(proof,'$.version'),0)<6 ON CONFLICT(key) DO UPDATE SET reason='speed-v6',scheduled=excluded.scheduled,completed=0,result=NULL,priority=MAX(priority,excluded.priority)",(now,))

@@ -81,6 +81,7 @@ class SpeedTests(DurablePlaybackTests):
             self.assertEqual(c.execute('SELECT state FROM validation WHERE key=?',(KEY,)).fetchone()[0],'verified')
             self.assertEqual(c.execute('SELECT reason,completed FROM verification_audit WHERE key=?',(KEY,)).fetchone(),('speed-v6',0.0))
             c.execute("UPDATE verification_audit SET completed=1,result='passed' WHERE key=?",(KEY,))
+            c.execute("UPDATE validation SET proof=json_set(proof,'$.version',6) WHERE key=?",(KEY,))
         a.REL.schedule()
         with a.F.db() as c:self.assertEqual(c.execute('SELECT completed FROM verification_audit WHERE key=?',(KEY,)).fetchone()[0],1)
     def test_invalid_speed_proof_cannot_be_reused_for_playback(self):
@@ -96,3 +97,9 @@ class SpeedTests(DurablePlaybackTests):
         self.assertEqual(a.REL.decode_proof(KEY,SELECTED,1,False)['samples'],old['samples'])
         a.F.validation_result(KEY,False,reason='Video preflight failed (DecodeFailure)')
         self.assertIsNone(a.REL.decode_proof(KEY,SELECTED,1,False))
+
+    def test_legacy_inflight_pass_cannot_finish_speed_migration(self):
+        self.seed();a.REL.schedule()
+        with a.F.db() as c:c.execute("UPDATE verification_audit SET completed=1,result='passed' WHERE key=?",(KEY,))
+        a.REL.schedule()
+        with a.F.db() as c:self.assertEqual(c.execute('SELECT completed FROM verification_audit WHERE key=?',(KEY,)).fetchone()[0],0)
