@@ -1,0 +1,11 @@
+[Unit]
+Description=Enrich verified titles with cached Hebrew metadata while idle
+After=docker.service media-stack.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker exec catalogue-bridge python3 /app/app.py hebrew-metadata --limit 16
+TimeoutStartSec=5min
+Nice=15
+

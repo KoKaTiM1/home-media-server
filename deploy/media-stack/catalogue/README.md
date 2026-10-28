@@ -561,10 +561,13 @@ Hebrew description. Title and description are selected independently, so a
 missing Hebrew field leaves its English value intact. Original and English
 names remain stored as search aliases. Provider failures retain cached values.
 
-The six-hour discovery sync enriches at most eight already-ready movie/show
-identities per run. Work is resumable in the catalogue database, serializes
-Wikimedia requests and caps this integration at 160 requests per Jerusalem day
-to leave room for interactive Hebrew searches. New titles use the same cached
+A dedicated worker runs every five minutes while idle, handling up to sixteen
+ready movie/show identities with a 90-second processing budget per invocation.
+Newly verified identities receive priority, with older entries interleaved to
+keep the backfill moving. Work is resumable in the catalogue database. Wikimedia
+requests are serialized at one per second, with provider Retry-After/backoff
+respected; there is no daily quota imposed by this integration. The six-hour
+discovery sync can also advance the same queue under its shared process lock. New titles use the same cached
 localization when they are opened/imported. Existing NFO files are updated
 atomically with only title, original title and plot; other tags and media proofs
 are preserved. Jellyfin refreshes only the affected parent items, and the batch

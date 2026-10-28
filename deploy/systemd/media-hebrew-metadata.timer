@@ -1,0 +1,10 @@
+[Unit]
+Description=Process Hebrew metadata backlog every five minutes while idle
+
+[Timer]
+OnBootSec=4min
+OnUnitInactiveSec=5min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-10-28T15:25:33.070400+00:00",
+  "created_utc": "2026-10-28T15:48:02.928225+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -17,7 +17,7 @@
     "backup/test_export_privacy.py": "5c9e19fcbb8d5dbe9832eb552cc0024e3199db0b0b665715c0b8547f1b887a5e",
     "deploy/media-stack/README.md": "f172ae8bae911e2a7645b8f19ed4d847ad136deb71251c6b7d239123e9e6af2f",
     "deploy/media-stack/catalogue/Dockerfile": "c60c51a2ba842e4e5cb88a0873e229df12020e3a123a3f6e3548698581f46bde",
-    "deploy/media-stack/catalogue/README.md": "06d1cf48586ec23fe4667191d04a65018f72afc73e4a669892ba44b1569c19a5",
+    "deploy/media-stack/catalogue/README.md": "5a8237c64d0dca776223af9554e1997398d45a797f03256d465b9ff2f1c8d98c",
     "deploy/media-stack/catalogue/app.py": "9e904b35346ccf432c4f8461cffe5e8249253a54256ef10bba0d2ab53bda56b6",
     "deploy/media-stack/catalogue/bootstrap.py": "002cb58a203f36b9ee66d83900cf939a273e73e75637dfd8b342a67b48edfad9",
     "deploy/media-stack/catalogue/check_audio_conversion.py": "669463dd9be988b0becf34db0014739e559e2f1fa6c350be11d5dd4a81c4a899",
@@ -31,7 +31,7 @@
     "deploy/media-stack/catalogue/check_subtitle_delivery.py": "cc143d9c5ad787bcfc3e66a8b26cb48e465afb487d5d2e4e35872486bbc439f9",
     "deploy/media-stack/catalogue/check_tv_recovery.py": "e1ba91df58983dd47155461b6a199aee661d04f825c4281b1ac3551b451e59d4",
     "deploy/media-stack/catalogue/embedded_subtitles.py": "e4d03f9f10a928500fc0b8c44270c283ca10ab9b52e9b861e92731f31737e0c1",
-    "deploy/media-stack/catalogue/features.py": "84614944428f8560ea0c6efdd1cbcfab820a5c0b6910a64df81b807fb98d14c3",
+    "deploy/media-stack/catalogue/features.py": "d29330e99c88fd33a3446963c00cead6cd5326a6da7c694b012b2738bb3ea88a",
     "deploy/media-stack/catalogue/metadata_jobs.py": "1754fe90b7c20426a2afc35ed49afe16084770288bb630922d5f81471ed021dc",
     "deploy/media-stack/catalogue/playback_diagnostics.py": "3557a7986747c80f0e1aac06ffc203731c240c89b84a288acb74996d4fc134db",
     "deploy/media-stack/catalogue/reliability.py": "9ba028f2bc79eb01d0952c67dcc6602c03332583824a8d12cd983c91c54d826c",
@@ -128,6 +128,8 @@
     "deploy/systemd/media-cleanup.timer": "b1a9d707286c5630d392b458bfdb2b7954a3050e5a1139e8537e77319b3590db",
     "deploy/systemd/media-embedded-subtitles.service": "2a39f2cfe3e92b64113ef35ad1b935784d25ff25cc0e510944eeda1a2a77fdb1",
     "deploy/systemd/media-embedded-subtitles.timer": "4378d2137d5683bcdb83e835e2a29f0dbd11cc24c5563efa4aca6e913f8568d0",
+    "deploy/systemd/media-hebrew-metadata.service": "3942054e0fdaeb20e3e4b8b10995756829f54b7ac87d48778b1e5172432b9d92",
+    "deploy/systemd/media-hebrew-metadata.timer": "cac4dd14a0bc3b58640128ac32aa1ed091ba5cd2ff7af9b4dc76588f78ea32c8",
     "deploy/systemd/media-metadata-coordinator.service": "371986b5653fdb332a9f39f42a7236fb8832e06df6460b470d1f7940b3930f6d",
     "deploy/systemd/media-metadata-import.service": "d79df28dd3c634f0a677f87456371aa27804a7a4b73252b9c41d58b622d73c99",
     "deploy/systemd/media-metadata-import.timer": "5c25f77151d5263bb9ac9d97f3788814786a093bcd9a36c87e81a54a5f0b42cb",

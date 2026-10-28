@@ -146,24 +146,35 @@ class Features:
         return result
 
     def wikimedia_json(self,url,timeout=8):
-        """Use a shared daily request budget and serialize polite Wikimedia reads."""
+        """Serialize Wikimedia reads at one per second and honor provider backoff."""
         lock_path=self.g['DATA']/'wikimedia-api.lock'
         lock_path.parent.mkdir(parents=True,exist_ok=True)
         with lock_path.open('a+') as lock:
             try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
             except BlockingIOError:raise RuntimeError('Wikimedia provider busy') from None
-            day=dt.date.today().isoformat();budget_key='wikimedia-request-budget:'+day
+            budget_key='wikimedia-request-pacing-v2'
             with self.db() as conn:
                 row=conn.execute('SELECT value FROM cache WHERE key=?',(budget_key,)).fetchone()
                 budget=json.loads(row[0]) if row else {'requests':0,'last_request':0}
-                if budget.get('requests',0)>=160:raise RuntimeError('Wikimedia daily request budget reached')
-                pause=max(0,.25-(time.time()-budget.get('last_request',0)))
+                if budget.get('retry_until',0)>time.time():raise RuntimeError('Wikimedia provider backoff')
+                pause=max(0,1-(time.time()-budget.get('last_request',0)))
                 if pause:time.sleep(pause)
                 budget={'requests':budget.get('requests',0)+1,'last_request':time.time()}
                 conn.execute('INSERT OR REPLACE INTO cache VALUES (?,?,?)',
                              (budget_key,json.dumps(budget),time.time()+86400))
             headers={'User-Agent':'HomeMediaCatalogue/1.0 (+https://github.com/<GITHUB_OWNER>/home-media-server)'}
-            return self.fetch(url,headers=headers,timeout=timeout)
+            try:
+                result=self.fetch(url,headers=headers,timeout=timeout)
+                if isinstance(result,dict) and result.get('error'):
+                    self.remember(budget_key,{**budget,'retry_until':time.time()+60},86400)
+                    raise RuntimeError('Wikimedia provider temporarily unavailable')
+                return result
+            except urllib.error.HTTPError as error:
+                if error.code in (429,503):
+                    try:delay=max(5,min(86400,int(error.headers.get('Retry-After','60'))))
+                    except (TypeError,ValueError):delay=60
+                    self.remember(budget_key,{**budget,'retry_until':time.time()+delay},86400)
+                raise
 
     @staticmethod
     def _hebrew(value):
@@ -270,7 +281,13 @@ class Features:
             self.log('Hebrew NFO refresh deferred; local metadata remains safely saved')
             return 0
 
-    def refresh_hebrew_metadata(self,limit=8):
+    def refresh_hebrew_metadata(self,limit=16):
+        with (self.g['DATA']/'hebrew-metadata-worker.lock').open('a+') as lock:
+            try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            except BlockingIOError:return 0
+            return self._refresh_hebrew_metadata(limit)
+
+    def _refresh_hebrew_metadata(self,limit=16):
         """Resumable, ready-only Hebrew metadata enrichment and local NFO refresh."""
         if self.hebrew_metadata_busy():
             self.log('Hebrew metadata backfill deferred during playback or foreground catalogue work');return 0
@@ -281,6 +298,9 @@ class Features:
         ready=self.ready_titles()
         with self.db() as conn:
             rows=conn.execute('SELECT kind,imdb,meta FROM items ORDER BY rowid').fetchall()
+            freshness={}
+            for key,checked in conn.execute('SELECT key,checked FROM home_ready'):
+                identity=tuple(key.split(':')[:2]);freshness[identity]=max(checked,freshness.get(identity,0))
             discovery={(kind,imdb):raw for kind,imdb,raw in conn.execute('SELECT kind,imdb,meta FROM discovery')}
             known={(kind,imdb):(state,next_attempt,title,description,nfo_written,source) for kind,imdb,state,next_attempt,title,description,nfo_written,source in
                    conn.execute('SELECT kind,imdb,state,next_attempt,title_he,description_he,nfo_written,source FROM localized_metadata')}
@@ -288,10 +308,25 @@ class Features:
         ordered=[(kind,imdb) for kind,imdb,_ in rows if kind+':'+imdb in ready]
         ordered.extend((kind,imdb) for key in sorted(ready)
                        for kind,imdb in [key.split(':',1)] if (kind,imdb) not in item_metadata)
+        index_metadata={};index=self.g['DATA']/'imdb/catalogue.sqlite'
+        if index.is_file():
+            with closing(sqlite3.connect('file:'+str(index)+'?mode=ro',uri=True)) as conn:
+                for kind,imdb in ordered:
+                    if (kind,imdb) in item_metadata or (kind,imdb) in discovery:continue
+                    row=conn.execute('SELECT name,original,year,genres FROM titles WHERE kind=? AND imdb=?',(kind,imdb)).fetchone()
+                    if row:index_metadata[(kind,imdb)]={'id':imdb,'type':kind,'name':row[0],'originalName':row[1],'releaseInfo':str(row[2]),'genres':(row[3] or '').split(',')}
+        newest=sorted(ordered,key=lambda identity:(-freshness.get(identity,0),identity))
+        oldest=iter(reversed(newest));fair=[];seen=set()
+        for start in range(0,len(newest),3):
+            group=newest[start:start+3]+[next(oldest,None)]
+            for identity in group:
+                if identity is not None and identity not in seen:fair.append(identity);seen.add(identity)
+        ordered=fair
         candidates=[];missing_index=[];batch_limit=max(1,min(16,int(limit)))
         for kind,imdb in ordered:
             meta=item_metadata.get((kind,imdb))
             if meta is None and (kind,imdb) in discovery:meta=json.loads(discovery[(kind,imdb)])
+            if meta is None:meta=index_metadata.get((kind,imdb))
             if meta is None:missing_index.append((kind,imdb));continue
             meta={**meta,'id':imdb,'type':kind}
             state,next_attempt,title_he,description_he,nfo_written,source=known.get((kind,imdb),('',0,None,None,0,None))
@@ -315,7 +350,9 @@ class Features:
                         if len(candidates)>=batch_limit:break
         if not candidates:return 0
         enriched=changed=0;refresh=[]
+        deadline=time.monotonic()+90
         for kind,imdb,meta,cached_title,cached_description,nfo_written,cached_source in candidates:
+            if time.monotonic()>deadline or self.hebrew_metadata_busy():break
             title=meta.get('name') or meta.get('originalName') or imdb
             value=None
             if cached_title or cached_description:
@@ -323,6 +360,7 @@ class Features:
             else:
                 try:value=self.wikidata_title_metadata(kind,imdb,title,include_article=True)
                 except Exception as error:
+                    if isinstance(error,RuntimeError) or isinstance(error,urllib.error.HTTPError) and error.code in (429,503):break
                     retry=1
                     if isinstance(error,urllib.error.HTTPError):
                         try:retry=max(1,min(7,int(error.headers.get('Retry-After','3600'))//86400 or 1))
