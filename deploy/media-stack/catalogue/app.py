@@ -756,6 +756,9 @@ def candidate_matches(candidate,key):
 def resolve(key,deadline=None):
     local=F.local_download(key)
     if local:return local
+    background=getattr(BUDGET,'validation_background',False)
+    metadata_pending=bool(cached('metadata-pending:'+key))
+    deferred_metadata=0
     # Persisted sources precede discovery, including previously verified
     # alternatives. A healthy preferred source never triggers a provider search.
     def candidates():
@@ -781,7 +784,12 @@ def resolve(key,deadline=None):
             status={}
             work=REL.checkpoint(key)
             metadata_started=work.get('metadata_started',time.time()) if work.get('metadata_hash')==infohash else time.time()
-            end=min(time.monotonic()+max(0,METADATA_SECONDS-(time.time()-metadata_started)),deadline or float('inf'))
+            metadata_age=max(0,time.time()-metadata_started)
+            # A background producer should not occupy one of sixteen slots for
+            # the full metadata timeout. Yield after 30s, retain the title and
+            # source for retry, then continue with another candidate/title.
+            metadata_window=min(METADATA_SECONDS,30) if background else METADATA_SECONDS
+            end=min(time.monotonic()+max(0,min(metadata_window,METADATA_SECONDS-metadata_age)),deadline or float('inf'))
             REL.checkpoint(key,phase='metadata',state='preparing',source_hash=infohash,metadata_hash=infohash,metadata_started=metadata_started)
             try:status=torr({'action':'get','hash':infohash},timeout=2)
             except (ClientCancelled,PlaybackBusy,Checkpoint):raise
@@ -798,6 +806,17 @@ def resolve(key,deadline=None):
                 if not status.get('file_stats'):time.sleep(min(2,remaining(2)))
             if not status.get('file_stats'):
                 if deadline and time.monotonic()>=deadline:raise Checkpoint('Metadata checkpoint')
+                if background and time.time()-metadata_started<METADATA_SECONDS:
+                    metadata_pending=True;deferred_metadata+=1
+                    remember('metadata-pending:'+key,True,900)
+                    remember('source-excluded:'+key+':'+infohash,True,300)
+                    REL.checkpoint(key,phase='metadata_pending',state='checkpoint',metadata_hash=infohash,
+                                   metadata_started=metadata_started,metadata_pending=True)
+                    if deferred_metadata>=2:
+                        from verification_remote import producer_phase
+                        producer_phase(globals(),key,'waiting for source metadata')
+                        raise Checkpoint('Torrent metadata pending; retry other titles')
+                    continue
                 raise SourceStalled('Metadata unavailable')
             if status.get('hash',infohash).lower()!=infohash:raise SourceFailure('Torrent identity changed')
             if exact:
@@ -811,6 +830,7 @@ def resolve(key,deadline=None):
                 selected={'hash':infohash,'index':f['id'],'filename':f['path'],'length':f['length'],
                     'source_name':candidate.get('title',''),'file_count':len(status['file_stats']),'torrent_url':candidate.get('torrentUrl'),'link':candidate.get('torrentUrl') or magnet}
             if REL.excluded(key,selected):continue
+            remember('metadata-pending:'+key,False,0)
             REL.bind(key,selected)
             return remember('resolved:'+key,selected,900)
         except (ClientCancelled,PlaybackBusy,Checkpoint):raise
@@ -822,6 +842,10 @@ def resolve(key,deadline=None):
             if exact:REL.exclude(key,exact)
             remember('source-excluded:'+key+':'+infohash,True,900)
             log('Trying next source for '+key)
+    if metadata_pending:
+        from verification_remote import producer_phase
+        producer_phase(globals(),key,'waiting for source metadata')
+        raise Checkpoint('Torrent metadata pending; retry other titles')
     raise SourceFailure('No working compatible torrent source available')
 
 

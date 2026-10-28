@@ -1337,6 +1337,18 @@ class Features:
                         self.remember(worker_key,{'message':'Metadata pending on helper; checking other titles','started':time.time(),'batch':batch_number},180)
                         continue
                     transient=tuple(self.g[name] for name in ('ClientCancelled','PlaybackBusy','Checkpoint') if isinstance(self.g.get(name),type))
+                    checkpoint=self.g.get('Checkpoint')
+                    if checkpoint and isinstance(error,checkpoint) and str(error).startswith('Torrent metadata pending'):
+                        # A swarm whose file list is still loading is unknown,
+                        # not unavailable. Cool down just this title so the
+                        # same producer can feed another ready candidate.
+                        with self.db() as conn:conn.execute('INSERT OR REPLACE INTO metadata_waits VALUES (?,?)',(key,time.time()+60))
+                        if remote:
+                            from verification_remote import jobs
+                            jobs(self.g).count('windows_title_checkpoints')
+                        self.remember(worker_key,{'message':'Torrent metadata pending; moving to another title','started':time.time(),'batch':batch_number},180)
+                        checked+=1
+                        continue
                     if isinstance(error,sqlite3.OperationalError) or transient and isinstance(error,transient):
                         # Cache-only attribution waits must not monopolize all
                         # producers by immediately reclaiming the same title.

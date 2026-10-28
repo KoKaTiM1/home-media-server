@@ -308,8 +308,20 @@ def overview(data=DATA,snapshot=None):
         capacity=max(1,min(4,int(control.get('max_windows_jobs',1))))
         add('Windows lanes',f'{online} / {capacity}','Connected verifier containers / allowed simultaneous Windows operations','success' if online and control.get('enabled') else 'muted')
         queue_capacity=capacity*max(1,min(4,int(control.get('prefetch_per_lane',1))))
-        preparing=sum(k.startswith('producer:') and v.get('updated',0)>now-45 and v.get('phase') in ('source preparation','preparation','torrent_resolution','video_probe') for k,v in control.items() if isinstance(v,dict))
-        add('Windows decode queue',f"{queue_counts.get('leased',0)} active / {queue_counts.get('pending',0)} ready",f'Active limit {capacity}; total queue limit {queue_capacity}; server preparing {preparing} titles')
+        producer_phases={}
+        for key,value in control.items():
+            if not key.startswith('producer:') or not isinstance(value,dict) or value.get('updated',0)<=now-45:continue
+            phase=value.get('phase','')
+            producer_phases[phase]=producer_phases.get(phase,0)+1
+        preparing=sum(count for phase,count in producer_phases.items() if phase in
+                      ('source preparation','preparation','torrent_resolution','waiting for source metadata',
+                       'video_probe','waiting for speed check','speed verification'))
+        labels={'torrent_resolution':'source lookup','waiting for source metadata':'metadata wait',
+                'waiting for speed check':'speed-check wait','speed verification':'speed check',
+                'waiting for decoder':'waiting for decoder','video_probe':'probe preparation'}
+        phase_summary=', '.join(f'{labels[phase]} {count}' for phase,count in producer_phases.items() if phase in labels)
+        phase_summary=phase_summary or 'no producer phase reported'
+        add('Windows decode queue',f"{queue_counts.get('leased',0)} active / {queue_counts.get('pending',0)} ready",f'Active limit {capacity}; total queue limit {queue_capacity}; server preparing {preparing} titles ({phase_summary})')
         if active:
             key=active['key'];details=context(data,cache_key='remote-validation-worker')
             title=details.get('name') if details.get('key')==key else None

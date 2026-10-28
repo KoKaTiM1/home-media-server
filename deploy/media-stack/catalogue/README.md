@@ -139,7 +139,7 @@ Temporary HLS files use the configured Jellyfin cache.
 | Foreground preparation | Shared 27-second budget for lock waits, provider calls, resolution, probing, conversion checks and subtitle wait |
 | Plugin request for preparation | 30-second HTTP timeout; failure returns `NoCompatibleStream`, never a successful empty source list |
 | Initial stream data | Separate 15-second first-byte budget after preparation; successful video headers require actual data |
-| Background validation | Eight-minute resumable batch slice; 90 seconds for metadata, then fallback only after 45 seconds without useful selected-file progress |
+| Background validation | Eight-minute resumable batch slice; a torrent may use up to 90 seconds total to expose its file list, but a PC producer yields after 30 seconds, cools that title for 60 seconds, and tries other titles/candidates. The unresolved source remains pending rather than being marked unavailable. Selected-file delivery still uses a separate 45-second useful-progress clock. |
 
 These are per-request limits, not a promise about total TV app time if it retries.
 Alternate compatible sources are tried within the preparation budget; the server
