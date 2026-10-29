@@ -147,7 +147,8 @@ data:
         - type: info
           text: Counters refresh in the background; the snapshot timestamp shows their
             age. Source and episode checks are counted separately from visible movies
-            and shows. Failed sources remain saved for retries.
+            and shows. Unavailable-title counts are grouped by the latest saved
+            reason and fall when a title passes; checkpoints are not failures.
     - label: Playback events
       type: datatable
       config:

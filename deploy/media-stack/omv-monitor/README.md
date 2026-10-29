@@ -12,7 +12,10 @@ It provides three read-only tabs:
   state, schedule, next run/countdown, last start/result and current check.
 - **Catalogue queue and progress**: pending movies/shows/episodes, failed and
   due retries, passed source checks, distinct movies/shows, visible indexed
-  counts, metadata outside the queue, recent activity and audio resync progress.
+  counts, metadata outside the queue, recent activity and current proof audits.
+  Current unavailable titles are grouped by their latest saved failure reason;
+  counts update with the normal counter snapshot and drop when a title passes.
+  Worker checkpoints are not included in these failure counts.
 
 The active Windows LAN source verifier and its gateway appear ahead of routine
 jobs. Retired metadata-only helper rows are omitted from this page. The source
@@ -45,6 +48,11 @@ Waiting between successful oneshot runs is healthy. Failed jobs and disabled
 timers are reported separately. Counter generation uses limited CPU/IO and a
 192 MiB memory limit. The page is read-only, requires the OMV administrator role,
 and exposes no shell input, service controls, source URLs or credentials.
+
+The catalogue table omits the one-time audio-resync scheduling marker and the
+local AAC demonstration-file status; neither describes current verification
+progress. It also avoids repeating the conversion count already shown in the
+stronger-check breakdown.
 
 The validation scheduler allocates probes across new titles/first show episodes,
 extra episodes, due failures and older audio-proof audits. Many verified episodes

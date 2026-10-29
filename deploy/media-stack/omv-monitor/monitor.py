@@ -126,6 +126,18 @@ def foreground_busy(data=DATA):
     try:return float((data.parent.parent/'catalogue/.foreground-read-until').read_text())>time.time()
     except (OSError,ValueError):return False
 
+def failure_reason_label(reason):
+    """Return a short safe label for the latest saved unavailable reason."""
+    reason=(reason or '').strip()
+    if not reason:return 'No reason recorded'
+    match=re.fullmatch(r'(Source preparation failed|Video preflight failed)(?: \(([A-Za-z][A-Za-z0-9_]{0,40})\))?',reason)
+    if match:
+        stage='Source preparation' if match.group(1)=='Source preparation failed' else 'Video preflight'
+        return f'{stage} — {match.group(2) or "unspecified"}'
+    known={'Stream read failure':'Stream read failure','OperationalError':'Database / I/O error',
+           'Saved copy removed; online source needs verification':'Saved copy removed'}
+    return known.get(reason,'Other recorded reason')
+
 def counts(data=DATA,refresh=False):
     if foreground_busy(data):
         try:return json.loads(Path('/run/media-worker-counts.json').read_text())['rows']
@@ -148,11 +160,15 @@ def counts(data=DATA,refresh=False):
                        audit_done=0,audit_total=0)
         add('Waiting for verification / recheck',grouped.get('pending',0),'Movie, first-episode and additional-episode source keys')
         add('Failed / not passed — retained for retry',grouped.get('unavailable',0),'Not deleted; retry waits increase up to 30 days')
+        reason_counts={}
+        for reason,count in conn.execute("SELECT reason,COUNT(*) FROM validation WHERE state='unavailable' GROUP BY reason"):
+            label=f'Unavailable — {failure_reason_label(reason)}'
+            reason_counts[label]=reason_counts.get(label,0)+count
+        for label,count in sorted(reason_counts.items(),key=lambda item:(-item[1],item[0])):
+            add(label,count,'Current unavailable titles by latest saved reason; count drops when a title passes')
         due=conn.execute("SELECT COUNT(*) FROM validation WHERE state='unavailable' AND next_check<=?",(now,)).fetchone()[0]
         add('Failed checks due for retry now',due,'One in five probes is reserved for due failures')
         add('Passed source / episode checks',grouped.get('verified',0),'Several episode checks can belong to one visible show')
-        converted=conn.execute("SELECT COUNT(*) FROM validation WHERE state='verified' AND json_extract(proof,'$.audio_policy')=2 AND json_extract(proof,'$.audio_conversion')=1").fetchone()[0]
-        add('Passed sources using verified AAC-LC conversion',converted,'Video stays unchanged; sources with direct AAC-LC do not need conversion')
         if conn.execute("SELECT 1 FROM sqlite_master WHERE name='verification_audit'").fetchone():
             audit_by_reason={}
             for reason,state,count in conn.execute("SELECT reason,CASE WHEN completed=0 THEN 'pending' ELSE result END,COUNT(*) FROM verification_audit GROUP BY 1,2"):
@@ -189,13 +205,6 @@ def counts(data=DATA,refresh=False):
         elif conn.execute("SELECT 1 FROM sqlite_master WHERE name='audio_recheck'").fetchone():
             audits=conn.execute('SELECT COUNT(*) FROM audio_recheck WHERE completed=0').fetchone()[0]
             add('Passed sources awaiting new audio-policy audit',audits,'Audited gradually without clearing the verified catalogue')
-        marker=conn.execute("SELECT value FROM cache WHERE key IN ('audio-policy-resync-v1','audio-policy-resync-v2') ORDER BY key DESC LIMIT 1").fetchone()
-        if marker:
-            migration=json.loads(marker[0])
-            if isinstance(migration,dict):
-                add('Previously failed entries scheduled for audio resync',migration.get('failed_scheduled',0),'One-time resync; later failures keep normal increasing retry waits')
-                add('Audio resync scheduled at',stamp(migration.get('scheduled_at',0)))
-
         if conn.execute("SELECT 1 FROM sqlite_master WHERE name='manual_rechecks'").fetchone():
             reports=dict(conn.execute('SELECT status,COUNT(*) FROM manual_rechecks GROUP BY status'))
             add('User reports awaiting fresh check',reports.get('pending',0),'Prioritized ahead of discovery; waits while playback or navigation is active')
@@ -212,11 +221,6 @@ def counts(data=DATA,refresh=False):
         add('Keys with a completed check in the last hour',recent[0],'Latest result per key; includes failures, not a count of new visible titles')
         latest=conn.execute('SELECT MAX(checked) FROM validation').fetchone()[0]
         add('Most recent completed check',stamp(latest))
-        sample=data.parent.parent/'media/movies/Tests/AAC Main TV test/AAC Main TV test.mp4'
-        status='Ready for TV test; confirmation pending' if sample.is_file() else 'Test sample not available'
-        try:status=json.loads((data/'aac-main-tv-result.json').read_text()).get('status',status)
-        except (OSError,ValueError,TypeError):pass
-        add('AAC Main TV test (Big Buck Bunny)',status,'AAC-LC reference is in local Movies; reported TV results are saved separately from source validation')
         conn.execute('ATTACH DATABASE ? AS bulk',('file:'+str(data/'imdb/catalogue.sqlite')+'?mode=ro',))
         index=data/'imdb/catalogue.sqlite';identity=[index.stat().st_ino,index.stat().st_mtime_ns]
         metadata_file=Path('/run/media-worker-index-counts.json');metadata=None
