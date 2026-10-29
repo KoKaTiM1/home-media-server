@@ -19,7 +19,9 @@ def ready(runtime):
     try:
         q=jobs(runtime)
         if not q:return False
-        s=q.status();return s['enabled'] and s['windows_online']
+        s=q.status()
+        local_ready=(s.get('local_torrent_enabled') and s.get('local_torrent_permitted') and s.get('local_torrent_backends',0)>0)
+        return s['windows_online'] and (s['enabled'] or local_ready)
     except (OSError,ValueError,sqlite3.Error):return False
 
 

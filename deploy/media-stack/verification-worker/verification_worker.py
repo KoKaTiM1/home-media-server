@@ -114,7 +114,56 @@ class Proxy(BaseHTTPRequestHandler):
 
 class ProxyServer(ThreadingHTTPServer):daemon_threads=True
 
+_LOCAL_HEALTH={'time':0,'available':False}
+def local_torrent_available():
+    if time.monotonic()-_LOCAL_HEALTH['time']<15:return _LOCAL_HEALTH['available']
+    import urllib.request
+    try:
+        with urllib.request.urlopen(os.environ.get('LOCAL_TORRSERVER_URL','http://home-media-verification-torrserver:8090')+'/echo',timeout=2) as reply:
+            available=reply.status==200
+    except (OSError,ValueError):available=False
+    _LOCAL_HEALTH.update(time=time.monotonic(),available=available)
+    return available
+
+
+def run_local_task(api,worker,task,status):
+    """The child has isolated title state and a fixed local TorrServer endpoint."""
+    from verification_title import validate_task
+    validate_task(task['params'])
+    if not local_torrent_available():return {'status':'checkpoint','reason':'transport'}
+    root=Path('/data/title-jobs')/task['job_id'];root.mkdir(parents=True,exist_ok=True)
+    payload=root/'payload.json';output=root/'result.json'
+    payload.write_text(json.dumps(task['params']))
+    phase='torrent resolution';status(phase)
+    command=['python','-u','/worker/local_verifier.py','--payload',str(payload),'--state',str(root/'state'),'--output',str(output)]
+    # Only sanitized phase files cross from child to the console.
+    with subprocess.Popen(command,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True) as proc:
+        last=0
+        try:
+            while proc.poll() is None:
+                if STOP.is_set() or time.time()>=task['deadline']:return {'status':'checkpoint','reason':'interrupted'}
+                try:
+                    current=json.loads((root/'state/progress.json').read_text()).get('phase')
+                    if current in PHASES and current!=phase:phase=current;status(phase)
+                except (OSError,ValueError):pass
+                if time.monotonic()-last>=10:
+                    if not api.request('/renew',{'worker_id':worker,'task':task,'phase':phase,'local_torrent_available':local_torrent_available()})['active']:return {'status':'checkpoint','reason':'interrupted'}
+                    last=time.monotonic()
+                STOP.wait(.25)
+            if proc.returncode or not output.is_file():return {'status':'checkpoint','reason':'transport'}
+            result=json.loads(output.read_text())
+            if len(json.dumps(result).encode())>2*1024*1024:return {'status':'checkpoint','reason':'validation'}
+            return result
+        finally:
+            if proc.poll() is None:
+                import signal
+                try:os.killpg(proc.pid,signal.SIGKILL)
+                except ProcessLookupError:pass
+            proc.wait()
+
+
 def run_task(api,worker,task,status):
+    if task['operation']=='verify_title':return run_local_task(api,worker,task,status)
     validate_recipe(task['operation'],task['params'])
     if not re.fullmatch('[a-f0-9]{32}',task['job_id']) or task['stream_path']!=PREFIX+'/stream/'+task['job_id']+'/'+task['lease_id']:raise ValueError('Invalid task stream')
     cancel=threading.Event();proxy=ProxyServer(('127.0.0.1',0),Proxy);proxy.api=api;proxy.task=task;proxy.cancel=cancel
@@ -124,6 +173,7 @@ def run_task(api,worker,task,status):
         while not cancel.wait(10):
             try:
                 body={'worker_id':worker,'task':task}
+                body['local_torrent_available']=local_torrent_available()
                 if current_phase['value']:body['phase']=current_phase['value']
                 if not api.request('/renew',body)['active']:cancel.set()
             except Exception:cancel.set()
@@ -192,7 +242,7 @@ def main():
             try:
                 row=db.execute('SELECT task,result FROM current WHERE id=1').fetchone()
                 if not row:
-                    reply=api.request('/claim',{'worker_id':worker,'wait_seconds':15});task=reply.get('task')
+                    reply=api.request('/claim',{'worker_id':worker,'wait_seconds':15,'capabilities':['local-torrent-v1'],'local_torrent_available':local_torrent_available()});task=reply.get('task')
                     server_status=reply.get('status',{});summary['server']=server_status
                     totals=server_status.get('totals',{})
                     summary['server_final_titles']={'verified':totals.get('windows_titles_verified',0),'unavailable':totals.get('windows_titles_unavailable',0)}
@@ -217,7 +267,11 @@ def main():
                         completed=get('completed',0)+1
                         db.execute('INSERT OR REPLACE INTO settings VALUES (?,?)',('completed',json.dumps(completed)))
                         db.execute('DELETE FROM current WHERE id=1')
-                    summary['completed_operations']=completed;status('Server acknowledged '+task['operation']+' ('+result['status']+'); '+str(completed)+' operations acknowledged on this worker (not final titles)')
+                    summary['completed_operations']=completed
+                    if task['operation']=='verify_title':
+                        import shutil
+                        shutil.rmtree(folder/'title-jobs'/task['job_id'],ignore_errors=True)
+                    status('Server acknowledged '+task['operation']+' ('+result['status']+'); '+str(completed)+' operations acknowledged on this worker (not final titles)')
                 elif reply.get('ack')=='stale':
                     try:
                         archive_stale_result(folder,task,result)
@@ -226,6 +280,9 @@ def main():
                         STOP.wait(15)
                         continue
                     with db:db.execute('DELETE FROM current WHERE id=1')
+                    if task['operation']=='verify_title':
+                        import shutil
+                        shutil.rmtree(folder/'title-jobs'/task['job_id'],ignore_errors=True)
                     status('Expired result retained; requesting new work')
                 else:raise TransportWait('Result not acknowledged')
             except (TransportWait,OSError,http.client.HTTPException,ValueError,sqlite3.Error):

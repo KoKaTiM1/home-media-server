@@ -753,6 +753,18 @@ def candidate_matches(candidate,key):
     return bool(re.fullmatch(r'\d{4}',year) and re.search(r'(?<!\d)'+year+r'(?!\d)',title))
 
 
+def verification_candidates(key):
+    seen=set()
+    for selected in REL.choices(key):
+        if selected.get('local'):continue
+        seen.add(selected['hash'])
+        yield {'infoHash':selected['hash'],'torrentUrl':selected.get('torrent_url'),'_exact':selected}
+    selected=cached('resolved:'+key)
+    if selected and selected.get('hash') not in seen and not REL.excluded(key,selected):
+        seen.add(selected['hash']);yield {'infoHash':selected['hash'],'torrentUrl':selected.get('torrent_url'),'_exact':selected}
+    for candidate in stream_candidates(key):
+        if candidate['infoHash'].lower() not in seen and candidate_matches(candidate,key):yield candidate
+
 def resolve(key,deadline=None):
     local=F.local_download(key)
     if local:return local
@@ -761,18 +773,7 @@ def resolve(key,deadline=None):
     deferred_metadata=0
     # Persisted sources precede discovery, including previously verified
     # alternatives. A healthy preferred source never triggers a provider search.
-    def candidates():
-        seen=set()
-        for selected in REL.choices(key):
-            if selected.get('local'):continue
-            seen.add(selected['hash'])
-            yield {'infoHash':selected['hash'],'torrentUrl':selected.get('torrent_url'),'_exact':selected}
-        selected=cached('resolved:'+key)
-        if selected and selected.get('hash') not in seen and not REL.excluded(key,selected):
-            seen.add(selected['hash']);yield {'infoHash':selected['hash'],'torrentUrl':selected.get('torrent_url'),'_exact':selected}
-        for candidate in stream_candidates(key):
-            if candidate['infoHash'].lower() not in seen and candidate_matches(candidate,key):yield candidate
-    for candidate in candidates():
+    for candidate in verification_candidates(key):
         remaining(1)
         infohash=candidate['infoHash'].lower()
         if cached('source-excluded:'+key+':'+infohash):continue
@@ -1258,6 +1259,11 @@ def prepare_locked(key,background,audio_index,deadline):
                     F.validation_result(key,False,reason='Video preflight failed ('+type(error).__name__+')')
                 elif not background:playback_failure(key,error)
                 raise
+    return finish_preparation(key,background,deadline,selected,info,proof,selected_audio,needs_conversion,verified,prepared_key)
+
+
+def finish_preparation(key,background,deadline,selected,info,proof,selected_audio,needs_conversion,verified=None,prepared_key=None):
+    prepared_key=prepared_key or 'prepared:'+key
     tracks=[]; languages=set()
     for stream in info.get('streams',[]):
         typ=stream.get('codec_type')

@@ -2,3 +2,6 @@ config/*.local.json
 data/
 *.tar.gz
 SHA256SUMS.json
+
+data-*/
+torrent-state/

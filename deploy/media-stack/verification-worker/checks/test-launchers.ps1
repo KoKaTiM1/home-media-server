@@ -12,14 +12,18 @@ $Before=@{}
 foreach($Leaf in @('config','data','data-2','data-3','data-4')){$Before[$Leaf]=Get-Content -Raw ('/test/'+$Leaf+'/preserve.txt')}
 $null=Run Update
 $S=State
-Assert ($S.containers.Count -eq 4) 'Update must start four containers'
-foreach($C in $S.containers.Values){Assert $C.State.Running 'Every worker should run';Assert ($C.Config.Image -eq 'home-media-verification-worker:0.2.2') 'Image not updated'}
+Assert ($S.containers.Count -eq 5) 'Update must start four workers and TorrServer'
+foreach($C in $S.containers.Values){Assert $C.State.Running 'Every worker should run';Assert ($C.Config.Image -in @('home-media-verification-worker:0.3.0','home-media-verification-torrserver:0.3.0')) 'Image not updated'}
 Assert (-not (Test-Path /test/08-START-SECOND.cmd)) 'Old launcher was not removed'
 Assert (Test-Path /test/unrelated.cmd) 'Unrelated script was removed'
 foreach($Leaf in $Before.Keys){Assert ((Get-Content -Raw ('/test/'+$Leaf+'/preserve.txt')) -eq $Before[$Leaf]) 'Saved data changed'}
+Assert (Test-Path /test/torrent-state/config/settings.json) 'Torrent settings were not created'
+$SettingsBefore=Get-Content -Raw /test/torrent-state/config/settings.json
 $Count=@(Calls|Where-Object {$_[0] -eq 'run'}).Count
 $null=Run Start
 Assert (@(Calls|Where-Object {$_[0] -eq 'run'}).Count -eq $Count) 'Start is not idempotent'
+Assert ((Get-Content -Raw /test/torrent-state/config/settings.json) -eq $SettingsBefore) 'Existing torrent settings were overwritten'
+Assert (@(Calls|Where-Object {$_ -contains '--publish' -or $_ -contains '-p'}).Count -eq 0) 'Torrent API must not be published'
 $Logs=Run Logs
 foreach($Lane in 1..4){$Name=if($Lane -eq 1){'home-media-verification-worker'}else{'home-media-verification-worker-'+$Lane};Assert ($Logs.Contains('['+$Name+'] fixture progress')) 'Missing worker log prefix'}
 $null=Run Stop

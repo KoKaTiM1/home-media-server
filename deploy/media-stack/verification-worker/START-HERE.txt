@@ -1,12 +1,13 @@
-Home media verification worker - simple launcher package 0.2.3
+Home media verification worker - local torrent package 0.3.0
 
 Keep Docker Desktop running in Linux-container mode.
-Keep config/ and EVERY existing data folder: data/, data-2/, data-3/, data-4/.
+Keep config/, torrent-state/ and EVERY existing data folder:
+data/, data-2/, data-3/, data-4/.
 Extract this package over the existing HomeMediaVerificationWorker folder.
 
 01-UPDATE-AND-START.cmd
-  Checks and installs the included image, safely restarts/starts all four
-  workers, and removes the old per-worker launchers after success.
+  Checks and installs both included images, safely starts the private local
+  torrent service and all four workers, then removes old launchers after success.
   Configuration, identities, progress and pending results stay in place.
 
 02-START-ALL.cmd
@@ -22,4 +23,6 @@ Extract this package over the existing HomeMediaVerificationWorker folder.
 Only four CMD launchers are needed. worker.ps1, SHA256SUMS.json and the image
 archive are supporting files; do not delete them before running an update.
 The server controls active-job capacity and may pause assignments independently.
-Windows is optional. The server keeps verifying if this PC is offline.
+The local torrent service has no published LAN port. Windows is optional. The
+server keeps verifying independently if this PC is offline, and falls back to
+its own verifier if a Windows complete-title job fails.

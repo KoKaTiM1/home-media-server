@@ -1313,7 +1313,15 @@ class Features:
                         if time.monotonic()-last_session_check[0]>=2:
                             last_session_check[:]=[time.monotonic(),bool(busy())]
                         return last_session_check[1]
-                    self.g['prepared'](key,background=True,**({'audio_index':audio_index} if audio_index is not None else {}),cancel=interrupted)
+                    handled=False
+                    if remote and audio_index is None:
+                        from verification_remote import jobs
+                        local_queue=jobs(self.g)
+                        if local_queue and local_queue.setting_read('local_torrent_enabled',False) and local_queue.local_workers():
+                            from verification_title import execute_title
+                            handled=execute_title(self.g,key,interrupted)
+                    if not handled:
+                        self.g['prepared'](key,background=True,**({'audio_index':audio_index} if audio_index is not None else {}),cancel=interrupted)
                     if remote:
                         from verification_remote import jobs
                         jobs(self.g).count('windows_titles_verified')

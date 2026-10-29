@@ -88,6 +88,7 @@ services:
       - ./catalogue/features.py:/app/features.py:ro
       - ./catalogue/verification_jobs.py:/app/verification_jobs.py:ro
       - ./catalogue/verification_remote.py:/app/verification_remote.py:ro
+      - ./catalogue/verification_title.py:/app/verification_title.py:ro
       - ./catalogue/embedded_subtitles.py:/app/embedded_subtitles.py:ro
       - ./catalogue/playback_diagnostics.py:/app/playback_diagnostics.py:ro
       - ./catalogue/reliability.py:/app/reliability.py:ro

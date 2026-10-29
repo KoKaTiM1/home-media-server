@@ -1,8 +1,9 @@
 # Optional Windows verification worker
 
-Windows decodes fixed media samples; the server owns source selection and final
-v5 proofs. Package 0.2.3 simplifies the launchers; its decoder image remains
-`home-media-verification-worker:0.2.2` with the queue/progress improvements.
+Windows can run complete V6 source checks with its own private TorrServer; the
+Debian server still owns candidate ranking, evidence acceptance and final proof
+commits. Package 0.3.0 contains worker image `home-media-verification-worker:0.3.0`
+and a private, container-network-only `home-media-verification-torrserver:0.3.0`.
 
 ## Four launchers
 
@@ -14,7 +15,7 @@ v5 proofs. Package 0.2.3 simplifies the launchers; its decoder image remains
 | `04-STOP-ALL.cmd` | Stop all four, retaining every saved result and identity. |
 
 Extract over the existing worker folder. Preserve `config/`, `data/`, `data-2/`,
-`data-3/` and `data-4/`; each container has a separate durable identity. Run
+`data-3/`, `data-4/` and `torrent-state/`; each container has a separate durable identity. Run
 `01-UPDATE-AND-START.cmd` once after extracting. No per-worker start/stop actions
 are needed. Fresh installations need their private connection JSON under
 `config/verification.local.json` before Update or Start.
@@ -29,7 +30,7 @@ from server-side or mocked launcher tests.
 
 ## Queue and progress
 
-Each container runs one operation at a time. Four connected containers do not
+Each container runs one operation or one complete title check at a time. Four connected containers do not
 necessarily mean four active jobs: the private server resource guard sets that
 limit independently, and can stage up to two operations per active lane.
 Additional server producers prepare independent titles ahead of time under
@@ -47,6 +48,31 @@ starts, previously running containers can resume without manually starting each
 worker. A deliberate Stop keeps them stopped until Start/Update. Windows can be
 shut down without stopping the primary server verifier.
 
+## Local torrent verification and fallback
+
+For a complete-title job, Debian sends up to 20 ranked public info hashes and
+the title identity. Windows resolves the file list locally, applies the same
+file selector, probes the chosen file, measures two uncached ranges, decodes the
+beginning and rotating later sample, and tests AAC-LC conversion when required.
+The local torrent API is available only inside the dedicated Docker network;
+it is not published on the PC or LAN. Its memory is capped at 2 GiB and its
+in-memory cache starts at 16 MiB so cached bytes cannot masquerade as network
+speed in the two range measurements.
+
+Debian validates the exact hash, file index/name/length, raw sample checksums,
+codec policy, range offsets, byte counts, timing and proof freshness before it
+commits a result. A local service failure, disconnect, expired lease or invalid
+result causes one normal Debian verification fallback. It does not create a
+false unavailable title. The ordinary Debian worker continues independently
+when Windows is off. A Windows speed pass describes delivery on the Windows PC;
+it is intentionally not repeated on Debian and therefore does not guarantee the
+same speed from the server's network path.
+
+The first rollout is capped at exactly 20 dispatched complete-title jobs. Old
+0.2.x workers remain compatible and receive their earlier fixed probe/sample
+operations. Only a 0.3.0 worker that reports a healthy local torrent backend can
+claim complete-title work.
+
 ## Restricted transport and evidence
 
 The dedicated TLS gateway requires a separate verification token, a pinned server
@@ -63,7 +89,7 @@ bytes flow over the scoped HTTPS gateway; private signed upstream URLs stay on
 the server. Reader connections close on cancellation/disconnect/lease expiry.
 The gateway can write only its separate operation queue, never the catalogue.
 
-Both hosts use `catalogue/verification_media.py` for the same fixed v5 recipes.
+Both hosts use `catalogue/verification_media.py` for the same fixed V6 recipes.
 The server checks decoded frame/audio evidence, required AAC-LC stereo/video-copy
 results, exact-source byte delivery and source binding before its ordinary proof
 commit. A disconnect, expired lease, transport problem or resource limit is a
@@ -73,7 +99,8 @@ checkpoint, not a failed source. Lost replies replay the same result identity.
 
 1. Build the normal catalogue image first. From the stack directory build the
    helper with `docker build -f verification-worker/Dockerfile -t
-   home-media-verification-worker:0.2.2 .`. Export this image privately; compiled
+   home-media-verification-worker:0.3.0 .`. Tag the pinned TorrServer image as
+   `home-media-verification-torrserver:0.3.0` and export both images privately; compiled
    image archives are not part of the public repository.
 2. Install `coordinator.py`, `resource_guard.py` and the shared
    `catalogue/verification_jobs.py` / `verification_media.py` under

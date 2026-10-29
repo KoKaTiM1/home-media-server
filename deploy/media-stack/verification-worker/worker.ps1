@@ -1,7 +1,10 @@
 param([ValidateSet('Update','Start','Logs','Stop','Status')][string]$Action='Status')
 $ErrorActionPreference='Stop'
 $Root=$PSScriptRoot
-$Image='home-media-verification-worker:0.2.2'
+$Image='home-media-verification-worker:0.3.0'
+$TorrentImage='home-media-verification-torrserver:0.3.0'
+$TorrentName='home-media-verification-torrserver'
+$Network='home-media-verification'
 function Invoke-DockerExecutable {
  & docker.exe @args
  if($LASTEXITCODE -ne 0){throw 'Docker failed. See the message above.'}
@@ -17,7 +20,8 @@ function Get-Container([string]$Name) {
  $Raw=& docker.exe inspect $Id
  if($LASTEXITCODE -ne 0){throw 'Could not inspect container.'}
  $Container=@($Raw|ConvertFrom-Json)[0]
- if($Container.Config.Labels.'home-media.component' -ne 'verification-worker'){
+ $Expected=if($Name -eq $TorrentName){'verification-torrent'}else{'verification-worker'}
+ if($Container.Config.Labels.'home-media.component' -ne $Expected){
   throw ('Container name is occupied by another application: '+$Name)
  }
  return $Container
@@ -35,15 +39,38 @@ function Assert-Config {
 }
 function Stop-All {
  $Containers=@(Get-ManagedContainers)
+ $Torrent=Get-Container $TorrentName
  $Names=@($Containers|Where-Object {$_.State.Running}|ForEach-Object {$_.Name.TrimStart('/')})
  if($Names.Count -gt 0){Invoke-DockerExecutable stop --time 45 @Names}
- Write-Host 'All verifier workers stopped. Every data folder and pending result is retained.'
+ if($Torrent -and $Torrent.State.Running){Invoke-DockerExecutable stop --time 20 $TorrentName}
+ Write-Host 'All verifier workers and their local torrent service stopped. Every data folder and pending result is retained.'
 }
 function Start-All {
  Assert-Config
  Invoke-DockerExecutable image inspect $Image --format '{{.Id}}' | Out-Null
+ Invoke-DockerExecutable image inspect $TorrentImage --format '{{.Id}}' | Out-Null
  # Check every occupied name before changing any container.
  $null=@(Get-ManagedContainers)
+ $Torrent=Get-Container $TorrentName
+ $Found=& docker.exe network ls --filter ('name=^'+$Network+'$') --format '{{.Name}}'
+ if($LASTEXITCODE -ne 0){throw 'Could not inspect verifier network.'}
+ if(-not $Found){Invoke-DockerExecutable network create --label 'home-media.component=verification-worker' $Network|Out-Null}
+ $State=Join-Path $Root 'torrent-state'
+ $Config=Join-Path $State 'config'
+ New-Item -ItemType Directory -Force $Config|Out-Null
+ $Settings=Join-Path $Config 'settings.json'
+ if(-not (Test-Path -LiteralPath $Settings)){
+  '{"CacheSize":16777216,"PreloadCache":0,"ReaderReadAHead":25,"UseDisk":false,"RemoveCacheOnDrop":true,"ConnectionsLimit":25,"DisableUPNP":true,"EnableIPv6":false,"StoreSettingsInJson":true}'|Set-Content -Encoding Ascii -LiteralPath $Settings
+ }
+ if($Torrent -and $Torrent.Config.Image -ne $TorrentImage){
+  if($Torrent.State.Running){Invoke-DockerExecutable stop --time 20 $TorrentName}
+  Invoke-DockerExecutable rm $TorrentName
+  $Torrent=$null
+ }
+ if(-not $Torrent){
+  $TorrentConfig='type=bind,source='+$Config+',target=/opt/ts/config'
+  Invoke-DockerExecutable run --detach --name $TorrentName --label 'home-media.component=verification-torrent' --restart unless-stopped --network $Network --memory 2g --cpus 2 --pids-limit 128 --cap-drop ALL --security-opt no-new-privileges --log-opt max-size=2m --log-opt max-file=2 --tmpfs '/tmp:rw,nosuid,nodev,size=128m' --env 'TS_LOG_PATH=/tmp/server.log' --env 'TS_TORR_DIR=/tmp/torrents' --mount $TorrentConfig $TorrentImage
+ } elseif(-not $Torrent.State.Running){Invoke-DockerExecutable start $TorrentName}
  foreach($Lane in 1..4){
   $Name=Get-LaneName $Lane
   $Current=Get-Container $Name
@@ -58,10 +85,10 @@ function Start-All {
    New-Item -ItemType Directory -Force $DataDirectory|Out-Null
    $Cfg='type=bind,source='+(Join-Path $Root 'config')+',target=/config,readonly'
    $Data='type=bind,source='+$DataDirectory+',target=/data'
-   Invoke-DockerExecutable run --detach --name $Name --label 'home-media.component=verification-worker' --restart unless-stopped --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 96 --memory 512m --cpus 2 --log-opt max-size=2m --log-opt max-file=2 --tmpfs '/tmp:rw,nosuid,nodev,size=128m' --mount $Cfg --mount $Data $Image run
+   Invoke-DockerExecutable run --detach --name $Name --label 'home-media.component=verification-worker' --restart unless-stopped --network $Network --env ('LOCAL_TORRSERVER_URL=http://'+$TorrentName+':8090') --mount ('type=bind,source='+$State+',target=/torrent-state') --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 96 --memory 512m --cpus 2 --log-opt max-size=2m --log-opt max-file=2 --tmpfs '/tmp:rw,nosuid,nodev,size=128m' --mount $Cfg --mount $Data $Image run
   }
  }
- Write-Host 'All four verifier containers are running. The server controls how many receive work.'
+ Write-Host 'Local TorrServer and all four verifier containers are running. The server controls how many receive work.'
  Write-Host 'Use 03-LOGS.cmd for combined live progress, or 04-STOP-ALL.cmd to stop all workers.'
 }
 function Remove-OldLaunchers {
@@ -106,6 +133,7 @@ try {
   'Update' {
    Assert-Config
    $null=@(Get-ManagedContainers)
+   $null=Get-Container $TorrentName
    $Manifest=Get-Content -Raw (Join-Path $Root 'SHA256SUMS.json')|ConvertFrom-Json
    $Archive=Join-Path $Root 'verification-worker-image.tar.gz'
    if((Get-FileHash -Algorithm SHA256 $Archive).Hash.ToLowerInvariant() -ne $Manifest.'verification-worker-image.tar.gz'){throw 'Image checksum mismatch. Existing workers were not stopped.'}
@@ -119,6 +147,8 @@ try {
   'Stop' {Stop-All}
   'Logs' {Show-Logs}
   'Status' {
+   $Torrent=Get-Container $TorrentName
+   Write-Host ('Local torrent service: '+$(if($Torrent){$Torrent.State.Status}else{'not created'}))
    foreach($Lane in 1..4){
     $Name=Get-LaneName $Lane;$Current=Get-Container $Name
     Write-Host ($Name+': '+$(if($Current){$Current.State.Status}else{'not created'}))

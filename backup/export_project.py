@@ -30,7 +30,7 @@ METADATA_WORKER_FILES = (
 
 VERIFICATION_WORKER_FILES = (
     '.gitignore', 'Dockerfile', 'README.md', 'START-HERE.txt', 'config.example.json',
-    'coordinator.py', 'resource_guard.py', 'verification_worker.py', 'worker.ps1',
+    'coordinator.py', 'resource_guard.py', 'verification_worker.py', 'local_verifier.py', 'package.py', 'worker.ps1',
     '01-UPDATE-AND-START.cmd', '02-START-ALL.cmd', '03-LOGS.cmd', '04-STOP-ALL.cmd',
     'checks/mock-docker.ps1', 'checks/test-launchers.ps1', 'checks/run-launcher-checks.py',
 )

@@ -11,3 +11,5 @@ ENTRYPOINT ["python", "-u", "/app/app.py"]
 COPY verification_media.py /app/verification_media.py
 COPY verification_jobs.py /app/verification_jobs.py
 COPY verification_remote.py /app/verification_remote.py
+
+COPY verification_title.py /app/verification_title.py

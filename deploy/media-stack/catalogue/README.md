@@ -602,5 +602,11 @@ migration. Speed failures exclude that exact source for six hours, trying other
 matching sources; titles with no accepted alternative remain retryable. Daily
 background audits refresh speed evidence without redecoding unchanged torrents.
 Local files retain their decode checks and bypass torrent-speed requirements.
-Speed evidence describes server delivery conditions, not future peer availability
-or the client Wi-Fi path. The optional Windows image does not need an update.
+Speed evidence describes the machine and network path that measured it, not
+future peer availability or the client Wi-Fi path. Optional Windows package
+0.3.0 can perform the complete V6 check with a private local TorrServer before
+Debian retrieves torrent metadata. Debian still ranks candidates, validates raw
+evidence and commits the final proof. Exact accepted V5 samples can be reused;
+Windows supplies the new speed evidence. Windows-local failures use one normal
+Debian fallback when its resource gate is healthy, otherwise the title remains
+pending. Old Windows workers keep their fixed probe/sample workflow.

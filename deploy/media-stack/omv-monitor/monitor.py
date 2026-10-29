@@ -318,7 +318,7 @@ def overview(data=DATA,snapshot=None):
         with closing(sqlite3.connect('file:'+str(queue)+'?mode=ro',uri=True,timeout=1)) as conn:
             conn.row_factory=sqlite3.Row
             totals=dict(conn.execute('SELECT key,value FROM totals'))
-            control={key:json.loads(value) for key,value in conn.execute("SELECT key,value FROM control WHERE key IN ('enabled','reason','max_windows_jobs','prefetch_per_lane') OR key LIKE 'producer:%'")}
+            control={key:json.loads(value) for key,value in conn.execute("SELECT key,value FROM control WHERE key IN ('enabled','reason','max_windows_jobs','prefetch_per_lane','local_torrent_enabled','local_torrent_permitted','local_torrent_reason','local_torrent_pilot_remaining') OR key LIKE 'producer:%' OR key LIKE 'backend:%' OR key LIKE 'capability:%'")}
             queue_counts=dict(conn.execute("SELECT state,COUNT(*) FROM decode_jobs WHERE controller>? AND deadline>? GROUP BY state",(now,now)))
             seen=[]
             # Count every separately enrolled Windows lane. Older dashboard
@@ -335,6 +335,18 @@ def overview(data=DATA,snapshot=None):
         add('Windows worker','Connected' if connected else 'Offline',control.get('reason','Waiting for resource gate') if connected else 'Server verification continues without the PC','success' if connected and control.get('enabled') else 'muted')
         capacity=max(1,min(4,int(control.get('max_windows_jobs',1))))
         add('Windows lanes',f'{online} / {capacity}','Connected verifier containers / allowed simultaneous Windows operations','success' if online and control.get('enabled') else 'muted')
+        local_backends=sum(isinstance(value,dict) and value.get('available') is True and value.get('reported',0)>now-45
+                           for key,value in control.items() if key.startswith('backend:'))
+        capable=sum(isinstance(value,dict) and value.get('local-torrent-v1') is True
+                    for key,value in control.items() if key.startswith('capability:'))
+        if control.get('local_torrent_enabled'):
+            remaining=max(0,int(control.get('local_torrent_pilot_remaining',0)))
+            detail=f"{remaining} of 20 bounded pilot dispatches remain; {control.get('local_torrent_reason','resource gate pending')}"
+            tone='success' if local_backends and control.get('local_torrent_permitted') else ('muted' if not capable else 'error')
+            add('Windows local torrent',f'{local_backends} healthy / {capable} capable',detail,tone)
+            add('Windows local V6 passes',f"{totals.get('windows_local_titles_verified',0):,}",f"{totals.get('windows_local_server_fallbacks',0):,} requested Debian fallback; {totals.get('windows_local_fallback_deferred',0):,} deferred for its resource gate; {totals.get('windows_local_invalid_results',0):,} invalid Windows results rejected",'success')
+        else:
+            add('Windows local torrent','Awaiting updated PC package','Existing Windows sample workers remain compatible; Debian verification continues')
         queue_capacity=capacity*max(1,min(8,int(control.get('prefetch_per_lane',1))))
         producer_phases={}
         for key,value in control.items():
@@ -358,6 +370,10 @@ def overview(data=DATA,snapshot=None):
             phase=active['phase'] or ''
             if active['state']=='pending':stage='Queued for Windows'
             elif active['state']=='result':stage='Result received; server checking'
+            elif active['operation']=='verify_title' and phase=='torrent resolution':stage='Resolving torrent on Windows'
+            elif active['operation']=='verify_title' and phase=='speed verification':stage='Measuring two uncached Windows ranges'
+            elif active['operation']=='verify_title' and phase=='title validation':stage='Validating the complete Windows V6 proof'
+            elif active['operation']=='verify_title' and phase=='server fallback':stage='Using the Debian fallback'
             elif phase=='video probe':stage='Probing video/audio'
             elif phase=='audio conversion':stage='Converting audio sample'
             elif phase=='conversion probe':stage='Checking converted audio'

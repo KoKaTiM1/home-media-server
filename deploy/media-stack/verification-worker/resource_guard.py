@@ -9,7 +9,7 @@ from verification_jobs import DecodeJobs
 def main():
     p=argparse.ArgumentParser();p.add_argument('--config',required=True);a=p.parse_args()
     cfg=json.loads(Path(a.config).read_text());q=DecodeJobs(cfg['queue_path']);q.initialize()
-    permitted=False;reason='Memory gate has not been approved';health={}
+    permitted=False;local_permitted=False;reason='Memory gate has not been approved';local_reason=reason;health={}
     try:
         def cgroup(name):
             item=json.loads(subprocess.check_output(['docker','inspect',name],timeout=5))[0]
@@ -44,10 +44,26 @@ def main():
             permitted=True
             lanes=max(1,min(4,int(cfg.get('max_windows_jobs',1))))
             reason=f'Parallel verification permitted: one server and up to {lanes} Windows '+('job' if lanes==1 else 'jobs')
-    except Exception:reason='Resource status unavailable; Windows verification paused'
+        # Complete-title Windows jobs do not read through Debian TorrServer.
+        # Keep the host, OOM and bridge protections, but do not inherit the old
+        # server-TorrServer working-memory pause.
+        if not cfg.get('requested'):local_reason='Windows verification has not been enabled'
+        elif not cfg.get('memory_gate_passed'):local_reason='Waiting for viewing-safe memory investigation / parallel pilot'
+        elif item['RestartCount']>cfg['baseline_restarts'] or int(events.get('oom_kill',0))>cfg['baseline_oom']:
+            local_reason='TorrServer restart or OOM observed; review required'
+        elif health['bridge_oom_kill']>bridge_oom_baseline:local_reason='Catalogue bridge OOM observed; review required'
+        elif available<256*1024*1024:local_reason='Host memory pressure; Windows-local verification paused'
+        elif bridge_limit<=0 or bridge_working>bridge_limit*(.8 if status.get('local_torrent_permitted') else .7):local_reason='Catalogue bridge memory pressure; Windows-local verification paused'
+        else:
+            local_permitted=True
+            local_reason='Windows-local torrent verification permitted; Debian fallback remains resource gated'
+    except Exception:
+        reason='Resource status unavailable; Windows verification paused'
+        local_reason='Resource status unavailable; Windows-local verification paused'
     q.set('enabled',permitted);q.set('reason',reason);q.set('health',health)
+    q.set('local_torrent_permitted',local_permitted);q.set('local_torrent_reason',local_reason)
     q.set('max_windows_jobs',max(1,min(4,int(cfg.get('max_windows_jobs',1)))))
     q.set('prefetch_per_lane',max(1,min(8,int(cfg.get('prefetch_per_lane',1)))))
-    print(reason)
+    print(reason+'; '+local_reason)
 
 if __name__=='__main__':main()

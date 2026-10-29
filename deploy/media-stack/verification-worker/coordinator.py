@@ -16,13 +16,13 @@ import time
 from urllib.parse import urlsplit
 from verification_jobs import DecodeJobs,InvalidJob,PROTOCOL,PREFIX
 
-def claim_wait(jobs,worker,seconds):
-    task=jobs.claim(worker);end=time.monotonic()+seconds
+def claim_wait(jobs,worker,seconds,capabilities=None):
+    task=jobs.claim(worker,capabilities);end=time.monotonic()+seconds
     while task is None and time.monotonic()<end:
         status=jobs.status()
         if not status['enabled']:break
         if status['jobs'].get('pending',0) and status['jobs'].get('leased',0)<status['windows_capacity']:
-            task=jobs.claim(worker)
+            task=jobs.claim(worker,capabilities)
             if task:break
         time.sleep(min(.25,max(0,end-time.monotonic())))
     return task
@@ -67,10 +67,11 @@ class Handler(BaseHTTPRequestHandler):
             p=json.loads(self.rfile.read(int(size)))
             if not isinstance(p,dict) or p.get('protocol')!=PROTOCOL:raise InvalidJob('Invalid protocol')
             worker=p.get('worker_id');q=self.server.jobs;q.seen(worker)
+            q.backend_health(worker,p.get('local_torrent_available'))
             if self.path==PREFIX+'/claim':
                 wait=p.get('wait_seconds',10)
                 if not isinstance(wait,(int,float)) or not 0<=wait<=15:raise InvalidJob('Invalid claim wait')
-                task=claim_wait(q,worker,wait)
+                task=claim_wait(q,worker,wait,p.get('capabilities'))
                 return self.reply(200,{'task':task,'status':q.status()})
             if self.path==PREFIX+'/renew':return self.reply(200,{'active':q.renew(worker,p.get('task',{}),p.get('phase'))})
             if self.path==PREFIX+'/result':

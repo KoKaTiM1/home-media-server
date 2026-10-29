@@ -12,7 +12,7 @@ from verification_media import validate_recipe
 
 PROTOCOL = 'home-media-verification/1'
 PREFIX = '/v1/verification-worker'
-PHASES = frozenset(('video probe','audio conversion','conversion probe','sample decode'))
+PHASES = frozenset(('video probe','audio conversion','conversion probe','sample decode','torrent resolution','speed verification','title validation','server fallback'))
 REASONS = frozenset(('interrupted','resource','transport','decoder','validation'))
 CLIENT_TABLES = ('client','second_client','third_client','fourth_client')
 
@@ -66,12 +66,19 @@ class DecodeJobs:
             capacity=max(1,min(4,int(self.setting(c,'max_windows_jobs',1))))
             producers={k.removeprefix('producer:'):json.loads(v) for k,v in c.execute("SELECT key,value FROM control WHERE key LIKE 'producer:%'")}
             producers={k:v for k,v in producers.items() if v.get('updated',0)>now-45}
+            local_backends=sum(self.setting(c,'backend:'+r[0],{}).get('available',False) and self.setting(c,'backend:'+r[0],{}).get('reported',0)>now-45 and r[1]>now-45
+                               for table in CLIENT_TABLES for r in c.execute('SELECT worker,seen FROM '+table) if r[0])
             return {'protocol':PROTOCOL,'enabled':self.setting(c,'enabled',False),'reason':self.setting(c,'reason','Awaiting memory gate / Windows pilot'),
                     'windows_seen':max(seen,default=0), 'windows_online':online>0,'windows_slots_online':online,
                     'windows_capacity':capacity,'windows_queue_capacity':self.queue_capacity(c),
                     'producer_activity':producers,
                     'activity':self.setting(c,'activity',{}),'backlog':self.setting(c,'backlog',{}),
                     'jobs':dict(c.execute('SELECT state,COUNT(*) FROM decode_jobs GROUP BY state').fetchall()),
+                    'local_torrent_enabled':self.setting(c,'local_torrent_enabled',False),
+                    'local_torrent_permitted':self.setting(c,'local_torrent_permitted',False),
+                    'local_torrent_reason':self.setting(c,'local_torrent_reason','Awaiting Windows-local resource gate'),
+                    'local_torrent_backends':local_backends,
+                    'local_torrent_pilot_remaining':self.setting(c,'local_torrent_pilot_remaining',0),
                     'totals':dict(c.execute('SELECT key,value FROM totals').fetchall())}
     def queue_capacity(self,c):
         capacity=max(1,min(4,int(self.setting(c,'max_windows_jobs',1))))
@@ -79,9 +86,17 @@ class DecodeJobs:
     def producer(self,slot,key,phase):
         if slot not in range(1,33) or not re.fullmatch('(movie:tt[0-9]{5,12}|series:tt[0-9]{5,12}:[0-9]+:[0-9]+)',key):raise InvalidJob('Invalid producer')
         if phase not in ('source preparation','torrent_resolution','waiting for source metadata','video_probe','preparation',
-                         'waiting for decoder','waiting for speed check','speed verification','probe','sample','finished'):
+                         'waiting for decoder','waiting for speed check','speed verification','probe','sample','finished','windows local torrent','server fallback'):
             raise InvalidJob('Invalid producer phase')
         self.set('producer:'+str(slot),{'key':key,'phase':phase,'updated':time.time()})
+    def setting_read(self,key,default=None):
+        with self.db() as c:return self.setting(c,key,default)
+    def backend_health(self,worker,available):
+        if type(available) is bool:self.set('backend:'+worker,{'available':available,'reported':time.time()})
+    def local_workers(self):
+        with self.db() as c:
+            return sum(bool(self.setting(c,'capability:'+r[0],{}).get('local-torrent-v1')) and self.setting(c,'backend:'+r[0],{}).get('available',False) and self.setting(c,'backend:'+r[0],{}).get('reported',0)>time.time()-45 and r[1]>time.time()-45
+                       for table in CLIENT_TABLES for r in c.execute('SELECT worker,seen FROM '+table) if r[0])
     def seen(self,worker):
         if not isinstance(worker,str) or not re.fullmatch('[a-zA-Z0-9_.:-]{1,128}',worker):raise InvalidJob('Invalid worker')
         with self.db(True) as c:
@@ -91,26 +106,39 @@ class DecodeJobs:
             if table is None:raise InvalidJob('Four enrolled workers already exist')
             c.execute('UPDATE '+table+' SET worker=?,seen=?',(worker,time.time()))
     def submit(self,key,sid,operation,params,url,seconds):
-        validate_recipe(operation,params)
+        if operation=='verify_title':
+            from verification_title import validate_task
+            validate_task(params)
+            if params['key']!=key or url:raise InvalidJob('Invalid title binding')
+        else:validate_recipe(operation,params)
         u=urlsplit(url)
-        if u.scheme!='http' or u.hostname is None or not u.path.startswith('/raw/') or len(url)>4096:raise InvalidJob('Invalid trusted source')
+        if operation!='verify_title' and (u.scheme!='http' or u.hostname is None or not u.path.startswith('/raw/') or len(url)>4096):raise InvalidJob('Invalid trusted source')
         if not re.fullmatch('(movie:tt[0-9]{5,12}|series:tt[0-9]{5,12}:[0-9]+:[0-9]+)',key) or not re.fullmatch('[a-f0-9]{64}',sid):raise InvalidJob('Invalid source identity')
         now=time.time();job=uuid.uuid4().hex
         with self.db(True) as c:
             seen=max(c.execute('SELECT seen FROM '+table).fetchone()[0] for table in CLIENT_TABLES)
-            if not self.setting(c,'enabled',False) or seen<now-45:raise WorkerWait('Windows verification worker offline or gated')
+            permitted=(self.setting(c,'local_torrent_enabled',False) and self.setting(c,'local_torrent_permitted',False)) if operation=='verify_title' else self.setting(c,'enabled',False)
+            if not permitted or seen<now-45:raise WorkerWait('Windows verification worker offline or gated')
             c.execute("DELETE FROM decode_jobs WHERE created<? AND state IN ('consumed','cancelled')",(now-7*86400,))
             active=c.execute("SELECT COUNT(*) FROM decode_jobs WHERE state IN ('pending','leased') AND controller>?",(now,)).fetchone()[0]
             if active>=self.queue_capacity(c):raise WorkerWait('Windows ready queue full')
             if c.execute("SELECT COUNT(*) FROM decode_jobs WHERE state IN ('pending','leased','result')").fetchone()[0]>=32:raise WorkerWait('Decode work capacity reached')
+            if operation=='verify_title':
+                remaining=self.setting(c,'local_torrent_pilot_remaining',20)
+                if remaining<=0 or not self.setting(c,'local_torrent_enabled',False) or not self.setting(c,'local_torrent_permitted',False):raise WorkerWait('Local torrent pilot paused')
+                c.execute('INSERT OR REPLACE INTO control VALUES (?,?)',('local_torrent_pilot_remaining',json.dumps(remaining-1)))
             c.execute('INSERT INTO decode_jobs(id,key,sid,operation,params,url,state,created,controller,deadline,phase,phase_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
                       (job,key,sid,operation,json.dumps(params),url,'pending',now,now+30,now+min(480,max(1,seconds)),'queued',now))
         return job
-    def claim(self,worker):
+    def claim(self,worker,capabilities=None):
         self.seen(worker);now=time.time()
+        capable=isinstance(capabilities,list) and 'local-torrent-v1' in capabilities
+        if capabilities is not None:self.set('capability:'+worker,{'local-torrent-v1':capable})
         with self.db(True) as c:
             c.execute("UPDATE decode_jobs SET state='cancelled' WHERE state IN ('pending','leased') AND (controller<? OR deadline<?)",(now,now))
-            if not self.setting(c,'enabled',False):return None
+            server_permitted=self.setting(c,'enabled',False)
+            local_permitted=self.setting(c,'local_torrent_enabled',False) and self.setting(c,'local_torrent_permitted',False)
+            if not server_permitted and not (local_permitted and capable):return None
             old=c.execute("SELECT * FROM decode_jobs WHERE state='leased' AND worker=? AND expires>?",(worker,now)).fetchone()
             if old:return self.public(old)
             # An expired lease is fenced; its controller must restart this operation.
@@ -119,7 +147,8 @@ class DecodeJobs:
             # ready work never lets a fourth client bypass a three-slot gate.
             active=c.execute("SELECT COUNT(*) FROM decode_jobs WHERE state='leased'").fetchone()[0]
             if active>=max(1,min(4,int(self.setting(c,'max_windows_jobs',1)))):return None
-            r=c.execute("SELECT * FROM decode_jobs WHERE state='pending' ORDER BY created LIMIT 1").fetchone()
+            r=c.execute("SELECT * FROM decode_jobs WHERE state='pending' AND ((operation='verify_title' AND ?) OR (operation!='verify_title' AND ?)) ORDER BY created LIMIT 1",
+                        (int(capable and local_permitted),int(server_permitted))).fetchone()
             if not r:return None
             lease=uuid.uuid4().hex
             c.execute("UPDATE decode_jobs SET state='leased',worker=?,lease=?,expires=?,phase='claimed',phase_at=? WHERE id=?",(worker,lease,now+180,now,r['id']))
