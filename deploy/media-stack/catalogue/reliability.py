@@ -31,6 +31,8 @@ AUDIO_CODECS = {'aac','ac3','eac3','dts','truehd','flac','mp3','mp2','opus','vor
 
 class Checkpoint(RuntimeError):
     """Work remains useful or was interrupted; do not record a negative proof."""
+    def __init__(self,message,code='unclassified'):
+        super().__init__(message);self.code=code
 
 
 class ResourceCheckpoint(Checkpoint):pass
@@ -324,7 +326,7 @@ class Reliability:
             response=connection.getresponse()
             match=re.fullmatch(r'bytes (\d+)-(\d+)/(\d+)',response.getheader('Content-Range',''))
             if response.status!=206 or not match or tuple(map(int,match.groups()))!=(start,start+size-1,selected['length']):
-                raise Checkpoint('Speed range attribution unavailable')
+                raise Checkpoint('Speed range attribution unavailable','range_mismatch')
             while received<size:
                 self.g['remaining'](1)
                 left=deadline-time.monotonic()
@@ -354,7 +356,7 @@ class Reliability:
         duration=float(info.get('format',{}).get('duration') or 0)
         length=selected.get('length',0)
         if not math.isfinite(duration) or duration<10 or not isinstance(length,int) or length<=0:
-            raise Checkpoint('Speed verification needs exact size and duration')
+            raise Checkpoint('Speed verification needs exact size and duration','missing_media_size')
         required=1.5*length/duration;target=max(4*1024**2,min(32*1024**2,int(15*length/duration)))
         windows=[]
         if getattr(self.g['BUDGET'],'remote_verification',False):
@@ -377,12 +379,12 @@ class Reliability:
                 self.g['remaining'](1);time.sleep(.1);cache=self.cache_state(selected)
             if cache.get('Hash','').lower()!=selected['hash'].lower() or cache.get('Readers') or 'Filled' not in cache or not isinstance(cache.get('Pieces'),dict):
                 self.checkpoint(key,speed_status='cache_wait')
-                raise Checkpoint('Speed cache attribution busy or unavailable')
+                raise Checkpoint('Speed cache attribution busy or unavailable','cache_attribution')
             cached=max(int(cache.get('Filled',0)),sum(max(0,int(x.get('Size',0))) for x in (cache.get('Pieces') or {}).values()))
             size=min(32*1024**2,target+cached);target=size-cached
             if target<4*1024**2 or size*3>=length:
                 self.checkpoint(key,speed_status='cache_wait')
-                raise Checkpoint('Speed test awaits uncached range budget')
+                raise Checkpoint('Speed test awaits uncached range budget','uncached_range_budget')
             for fraction in (.35,.70):
                 self.g['remaining'](1)
                 start=min(length-size,max(0,int(length*fraction)))
@@ -390,7 +392,7 @@ class Reliability:
                 self.checkpoint(key,phase='speed verification',source_id=self.sid(selected),required_speed=round(required),state='preparing')
                 try:w=self.speed_read(key,selected,start,size,window_end)
                 except SourceTooSlow:
-                    if deadline<=test_end and time.monotonic()>=deadline:raise Checkpoint('Speed work budget exhausted') from None
+                    if deadline<=test_end and time.monotonic()>=deadline:raise Checkpoint('Speed work budget exhausted','speed_work_budget') from None
                     raise
                 w['cached_bytes_bound']=cached;w['uncached_bytes_lower_bound']=max(0,w['bytes']-cached)
                 w['bytes_per_second']=w['uncached_bytes_lower_bound']/w['seconds']

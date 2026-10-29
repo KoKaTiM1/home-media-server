@@ -11,7 +11,7 @@ import tempfile
 import zipfile
 
 ROOT=Path(__file__).resolve().parent
-VERSION='0.4.0'
+VERSION='0.4.1'
 IMAGES=('home-media-verification-worker:'+VERSION,
         'home-media-verification-torrserver:0.3.0')
 FILES=('worker.ps1','START-HERE.txt','README.md','config.example.json',
@@ -23,7 +23,7 @@ def digest(path):
         for chunk in iter(lambda:source.read(1024*1024),b''):value.update(chunk)
     return value.hexdigest()
 
-def build(destination=Path('<SERVICE_HOME>/verification-worker-v0.4.0.zip')):
+def build(destination=Path('<SERVICE_HOME>/verification-worker-v0.4.1.zip')):
     with tempfile.TemporaryDirectory(prefix='verification-worker-package-') as temporary:
         temporary=Path(temporary);folder=temporary/'HomeMediaVerificationWorker';folder.mkdir()
         for name in FILES:shutil.copy2(ROOT/name,folder/name)

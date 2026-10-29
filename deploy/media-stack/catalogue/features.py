@@ -1264,7 +1264,7 @@ class Features:
             self.seed_validation()
             self.g['REL'].schedule()
             self.repair_cached_series(limit=2)
-            batch_number=0
+            batch_number=0;queue=None
             if remote:
                 try:
                     from verification_remote import jobs
@@ -1273,7 +1273,9 @@ class Features:
                     batch_number=queue.status()['totals'].get('windows_batches_started',0)
                 except sqlite3.Error:self.log('Windows batch counter deferred')
             started=time.monotonic();checked=0
-            self.g['BUDGET'].worker_deadline=started+480
+            local_title_mode=bool(remote and queue and queue.setting_read('local_torrent_enabled',False) and queue.local_workers()) if remote else False
+            if local_title_mode:limit=1
+            self.g['BUDGET'].worker_deadline=started+(960 if local_title_mode else 480)
             slot=int((self.cached('verification-v5-slot') or {}).get('slot',0))
             while checked<limit and time.monotonic()-started<480:
                 blocked=busy()

@@ -83,7 +83,7 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(p,dict) or p.get('protocol')!=PROTOCOL:raise InvalidJob('Invalid protocol')
             if self.path==PREFIX+'/configure':
                 return self.reply(200,{'topology':self.server.jobs.configure(p.get('workers'),p.get('torrservers'))})
-            worker=p.get('worker_id');q=self.server.jobs;q.seen(worker,p.get("lane"))
+            worker=p.get('worker_id');q=self.server.jobs;q.seen(worker,p.get("lane"),p.get("client_version"))
             q.backend_health(worker,p.get('local_torrent_available'),p.get('backend_id'))
             if self.path==PREFIX+'/claim':
                 wait=p.get('wait_seconds',10)

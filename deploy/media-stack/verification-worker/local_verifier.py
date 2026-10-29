@@ -18,11 +18,11 @@ def verify(payload,state,output):
     validate_task(payload);key=payload['key'];state.mkdir(parents=True,exist_ok=True)
     a.DATA=state;a.TORR=os.environ.get('LOCAL_TORRSERVER_URL','http://home-media-verification-torrserver:8090')
     a.torr_headers=lambda:{}
-    diagnostic={}
+    diagnostic={};lock_wait_seconds=0.0;run_started=time.monotonic()
     def record_failure(error,stage):
         typ=type(error).__name__
         category={'SourceTooSlow':'speed_rejected','SourceStalled':'stream_stall','DecodeFailure':'decoder','ResourceCheckpoint':'resource','TimeoutError':'torrent_timeout' if stage=='torrent resolution' else 'stream_stall'}.get(typ,'transport')
-        diagnostic.update(category=category,failure_type=typ,phase=stage)
+        diagnostic.update(category=category,failure_type=typ,phase=stage,code=getattr(error,'code','unclassified'))
     current_phase='torrent resolution'
     progress=state/'progress.json'
     def phase(name):
@@ -42,13 +42,20 @@ def verify(payload,state,output):
         def source_url(self,route,key,selected,progress=None):return a.upstream(selected)
         @contextmanager
         def lock(self,name):
+            nonlocal lock_wait_seconds
             import hashlib
             folder=Path(os.getenv('LOCAL_TORRENT_STATE','/torrent-state'))/'locks';folder.mkdir(parents=True,exist_ok=True)
             with (folder/hashlib.sha256(name.encode()).hexdigest()).open('a') as f:
-                while True:
-                    a.remaining(1)
-                    try:fcntl.flock(f,fcntl.LOCK_EX|fcntl.LOCK_NB);break
-                    except BlockingIOError:time.sleep(.1)
+                waiting=time.monotonic();previous_phase=current_phase;announced=False
+                try:
+                    while True:
+                        a.remaining(1)
+                        try:fcntl.flock(f,fcntl.LOCK_EX|fcntl.LOCK_NB);break
+                        except BlockingIOError:
+                            if not announced:phase('waiting for backend lock');announced=True
+                            time.sleep(.1)
+                finally:lock_wait_seconds+=time.monotonic()-waiting
+                if announced:phase(previous_phase)
                 try:yield
                 finally:fcntl.flock(f,fcntl.LOCK_UN)
         def checkpoint(self,key,**details):
@@ -61,11 +68,11 @@ def verify(payload,state,output):
                 try:
                     while True:
                         a.remaining(1)
-                        if time.monotonic()>=min(end,deadline):raise Checkpoint('Local verification budget')
+                        if time.monotonic()>=min(end,deadline):raise Checkpoint('Local verification budget','local_work_budget')
                         try:
                             out,err=proc.communicate(timeout=.5)
-                            if len(out)>1024*1024:raise Checkpoint('Local output bound')
-                            if proc.returncode<0 or re.search(rb'Cannot allocate memory|Resource temporarily unavailable|pthread_create failed|Connection refused|Connection reset|HTTP error|Server returned|Input/output error',err,re.I):raise Checkpoint('Local resource/transport checkpoint')
+                            if len(out)>1024*1024:raise Checkpoint('Local output bound','local_output_bound')
+                            if proc.returncode<0 or re.search(rb'Cannot allocate memory|Resource temporarily unavailable|pthread_create failed|Connection refused|Connection reset|HTTP error|Server returned|Input/output error',err,re.I):raise Checkpoint('Local resource/transport checkpoint','local_transport')
                             if proc.returncode or err:raise DecodeFailure('Local decoder rejected source')
                             return subprocess.CompletedProcess(command,0,out,b'')
                         except subprocess.TimeoutExpired:continue
@@ -108,6 +115,7 @@ def verify(payload,state,output):
         # Only bounded categories/type names cross the PC boundary.
         if not diagnostic:record_failure(error,current_phase)
         result={'status':'checkpoint','reason':'transport','diagnostic':diagnostic,'data':{'backend':'windows-torrent'}}
+    result['metrics']={'lock_wait_seconds':round(lock_wait_seconds,3),'active_seconds':round(max(0,time.monotonic()-run_started-lock_wait_seconds),3)}
     tmp=output.with_suffix('.tmp');tmp.write_text(json.dumps(result));tmp.replace(output)
 
 if __name__=='__main__':

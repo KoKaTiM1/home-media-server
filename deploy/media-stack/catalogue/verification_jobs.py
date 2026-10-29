@@ -12,8 +12,10 @@ from verification_media import validate_recipe
 
 PROTOCOL = 'home-media-verification/1'
 PREFIX = '/v1/verification-worker'
-PHASES = frozenset(('video probe','audio conversion','conversion probe','sample decode','torrent resolution','speed verification','title validation','server fallback'))
+PHASES = frozenset(('video probe','audio conversion','conversion probe','sample decode','torrent resolution','speed verification','title validation','server fallback','waiting for backend lock'))
 REASONS = frozenset(('interrupted','resource','transport','decoder','validation'))
+DIAGNOSTIC_CODES = frozenset(('range_mismatch','missing_media_size','cache_attribution','uncached_range_budget','speed_work_budget','local_work_budget','local_output_bound','local_transport','unclassified'))
+CANCEL_CODES = frozenset(('queue_timeout','execution_timeout','controller_lost','lease_expired','controller_budget','foreground_interrupted','controller_error','receipt_interrupted','unclassified'))
 MAX_WORKERS = 16
 CLIENT_TABLES = ('client','second_client','third_client','fourth_client')
 
@@ -58,7 +60,7 @@ class DecodeJobs:
             if 'stream_started' not in {r[1] for r in c.execute('PRAGMA table_info(decode_jobs)')}:c.execute('ALTER TABLE decode_jobs ADD COLUMN stream_started REAL DEFAULT 0')
             columns={r[1] for r in c.execute('PRAGMA table_info(decode_jobs)')}
             for name,definition in (('phase',"TEXT DEFAULT ''"),('phase_at','REAL DEFAULT 0'),
-                                    ('outcome',"TEXT DEFAULT ''"),('reason_code',"TEXT DEFAULT ''"),('finished','REAL DEFAULT 0'),('failure_category',"TEXT DEFAULT ''"),('failure_type',"TEXT DEFAULT ''")):
+                                    ('outcome',"TEXT DEFAULT ''"),('reason_code',"TEXT DEFAULT ''"),('finished','REAL DEFAULT 0'),('failure_category',"TEXT DEFAULT ''"),('failure_type',"TEXT DEFAULT ''"),('checkpoint_code',"TEXT DEFAULT ''"),('cancel_code',"TEXT DEFAULT ''"),('claimed_at','REAL DEFAULT 0'),('execution_seconds','REAL DEFAULT 0'),('lock_wait_seconds','REAL DEFAULT 0'),('active_seconds','REAL DEFAULT 0')):
                 if name not in columns:c.execute('ALTER TABLE decode_jobs ADD COLUMN '+name+' '+definition)
             c.execute("INSERT OR IGNORE INTO control VALUES('enabled','false')")
             c.execute("INSERT OR IGNORE INTO control VALUES('generation',?)",(json.dumps(uuid.uuid4().hex),))
@@ -78,7 +80,7 @@ class DecodeJobs:
             local_backends=sum(self.setting(c,'backend:'+r[0],{}).get('available',False) and self.setting(c,'backend:'+r[0],{}).get('reported',0)>now-45 and r[1]>now-45
                                for r in c.execute('SELECT worker,seen FROM workers') if r[0])
             backend_ids={self.setting(c,'backend:'+r[0],{}).get('id','legacy-1') for r in c.execute('SELECT worker,seen FROM workers') if r[1]>now-45 and self.setting(c,'backend:'+r[0],{}).get('available') and self.setting(c,'backend:'+r[0],{}).get('reported',0)>now-45}
-            return {'desired_workers':self.setting(c,'requested_windows_jobs',capacity),'desired_torrservers':self.setting(c,'requested_torrservers',1),'healthy_torrservers':len(backend_ids),'protocol':PROTOCOL,'enabled':self.setting(c,'enabled',False),'reason':self.setting(c,'reason','Awaiting memory gate / Windows pilot'),
+            return {'desired_workers':self.setting(c,'requested_windows_jobs',capacity),'desired_torrservers':self.setting(c,'requested_torrservers',1),'healthy_torrservers':len(backend_ids),'client_versions':{version:sum(1 for w,t in c.execute('SELECT worker,seen FROM workers') if t>now-45 and self.setting(c,'client_version:'+w,'legacy')==version) for version in {self.setting(c,'client_version:'+w,'legacy') for w,t in c.execute('SELECT worker,seen FROM workers') if t>now-45}},'protocol':PROTOCOL,'enabled':self.setting(c,'enabled',False),'reason':self.setting(c,'reason','Awaiting memory gate / Windows pilot'),
                     'windows_seen':max(seen,default=0), 'windows_online':online>0,'windows_slots_online':online,
                     'windows_capacity':capacity,'windows_queue_capacity':self.queue_capacity(c),
                     'producer_activity':producers,
@@ -109,10 +111,12 @@ class DecodeJobs:
         with self.db() as c:
             return sum(bool(self.setting(c,'capability:'+r[0],{}).get('local-torrent-v1')) and self.setting(c,'backend:'+r[0],{}).get('available',False) and self.setting(c,'backend:'+r[0],{}).get('reported',0)>time.time()-45 and r[1]>time.time()-45
                        for r in c.execute('SELECT worker,seen FROM workers') if r[0])
-    def seen(self,worker,lane=None):
+    def seen(self,worker,lane=None,client_version=None):
         if not isinstance(worker,str) or not re.fullmatch('[a-zA-Z0-9_.:-]{1,128}',worker):raise InvalidJob('Invalid worker')
         if lane is not None and (type(lane) is not int or not 1<=lane<=MAX_WORKERS):raise InvalidJob('Invalid worker lane')
+        if client_version is not None and (not isinstance(client_version,str) or not re.fullmatch(r'[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}',client_version)):raise InvalidJob('Invalid client version')
         with self.db(True) as c:
+            if client_version:c.execute('INSERT OR REPLACE INTO control VALUES (?,?)',('client_version:'+worker,json.dumps(client_version)))
             row=c.execute('SELECT slot,lane FROM workers WHERE worker=?',(worker,)).fetchone()
             if lane is not None:
                 other=c.execute('SELECT worker FROM workers WHERE lane=?',(lane,)).fetchone()
@@ -130,12 +134,13 @@ class DecodeJobs:
             for k,v in (('requested_windows_jobs',workers),('requested_torrservers',torrservers),('max_windows_jobs',workers),('prefetch_per_lane',2)):
                 c.execute('INSERT OR REPLACE INTO control VALUES (?,?)',(k,json.dumps(v)))
         return {'workers':workers,'torrservers':torrservers}
-    def submit(self,key,sid,operation,params,url,seconds):
+    def submit(self,key,sid,operation,params,url,seconds,execution_seconds=0):
         if operation=='verify_title':
             from verification_title import validate_task
             validate_task(params)
             if params['key']!=key or url:raise InvalidJob('Invalid title binding')
         else:validate_recipe(operation,params)
+        if execution_seconds not in (0,480) or (execution_seconds and operation!='verify_title'):raise InvalidJob('Invalid execution budget')
         u=urlsplit(url)
         if operation!='verify_title' and (u.scheme!='http' or u.hostname is None or not u.path.startswith('/raw/') or len(url)>4096):raise InvalidJob('Invalid trusted source')
         if not re.fullmatch('(movie:tt[0-9]{5,12}|series:tt[0-9]{5,12}:[0-9]+:[0-9]+)',key) or not re.fullmatch('[a-f0-9]{64}',sid):raise InvalidJob('Invalid source identity')
@@ -155,13 +160,14 @@ class DecodeJobs:
                 if not continuous:c.execute('INSERT OR REPLACE INTO control VALUES (?,?)',('local_torrent_pilot_remaining',json.dumps(remaining-1)))
             c.execute('INSERT INTO decode_jobs(id,key,sid,operation,params,url,state,created,controller,deadline,phase,phase_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
                       (job,key,sid,operation,json.dumps(params),url,'pending',now,now+30,now+min(480,max(1,seconds)),'queued',now))
+            if execution_seconds:c.execute('UPDATE decode_jobs SET execution_seconds=? WHERE id=?',(execution_seconds,job))
         return job
     def claim(self,worker,capabilities=None):
         self.seen(worker);now=time.time()
         capable=isinstance(capabilities,list) and 'local-torrent-v1' in capabilities
         if capabilities is not None:self.set('capability:'+worker,{'local-torrent-v1':capable})
         with self.db(True) as c:
-            c.execute("UPDATE decode_jobs SET state='cancelled' WHERE state IN ('pending','leased') AND (controller<? OR deadline<?)",(now,now))
+            c.execute("UPDATE decode_jobs SET state='cancelled',cancel_code=CASE WHEN deadline<? THEN CASE WHEN state='pending' THEN 'queue_timeout' ELSE 'execution_timeout' END ELSE 'controller_lost' END WHERE state IN ('pending','leased') AND (controller<? OR deadline<?)",(now,now,now))
             server_permitted=self.setting(c,'enabled',False)
             local_permitted=self.setting(c,'local_torrent_enabled',False) and self.setting(c,'local_torrent_permitted',False)
             if not server_permitted and not (local_permitted and capable):return None
@@ -170,7 +176,7 @@ class DecodeJobs:
             slot=c.execute('SELECT COALESCE(lane,slot) FROM workers WHERE worker=?',(worker,)).fetchone()[0]
             if slot>self.setting(c,'requested_windows_jobs',MAX_WORKERS):return None
             # An expired lease is fenced; its controller must restart this operation.
-            c.execute("UPDATE decode_jobs SET state='cancelled' WHERE state='leased' AND expires<=?",(now,))
+            c.execute("UPDATE decode_jobs SET state='cancelled',cancel_code='lease_expired' WHERE state='leased' AND expires<=?",(now,))
             # Queue capacity and active decode capacity are independent. Extra
             # ready work never lets a fourth client bypass a three-slot gate.
             active=c.execute("SELECT COUNT(*) FROM decode_jobs WHERE state='leased'").fetchone()[0]
@@ -179,7 +185,7 @@ class DecodeJobs:
                         (int(capable and local_permitted),int(server_permitted))).fetchone()
             if not r:return None
             lease=uuid.uuid4().hex
-            c.execute("UPDATE decode_jobs SET state='leased',worker=?,lease=?,expires=?,phase='claimed',phase_at=? WHERE id=?",(worker,lease,now+180,now,r['id']))
+            c.execute("UPDATE decode_jobs SET state='leased',worker=?,lease=?,expires=?,phase='claimed',phase_at=?,claimed_at=?,deadline=CASE WHEN execution_seconds>0 THEN ?+execution_seconds ELSE deadline END WHERE id=?",(worker,lease,now+180,now,now,now,r['id']))
             return self.public(c.execute('SELECT * FROM decode_jobs WHERE id=?',(r['id'],)).fetchone())
     def public(self,r):
         return {'job_id':r['id'],'key':r['key'],'source_id':r['sid'],'operation':r['operation'],'params':json.loads(r['params']),
@@ -233,6 +239,13 @@ class DecodeJobs:
             failure_type=diagnostic.get('failure_type','') if isinstance(diagnostic,dict) else ''
             if category not in ('torrent_timeout','stream_stall','speed_rejected','decoder','resource','coordinator','transport','interrupted','validation'):category=''
             if failure_type not in ('TimeoutError','URLError','HTTPError','Checkpoint','SourceStalled','SourceFailure','SourceTooSlow','ResourceCheckpoint','DecodeFailure','ValueError','RuntimeError','OSError','ConnectionError'):failure_type=''
+            code=diagnostic.get('code','') if isinstance(diagnostic,dict) else ''
+            if code not in DIAGNOSTIC_CODES:code=''
+            metrics=result.get('metrics',{})
+            def metric(name):
+                v=metrics.get(name,0) if isinstance(metrics,dict) else 0
+                return float(v) if type(v) in (int,float) and 0<=v<=960 else 0
+            c.execute('UPDATE decode_jobs SET checkpoint_code=?,lock_wait_seconds=?,active_seconds=? WHERE id=?',(code,metric('lock_wait_seconds'),metric('active_seconds'),r['id']))
             stage=diagnostic.get('phase') if isinstance(diagnostic,dict) else None
             if stage in PHASES:c.execute('UPDATE decode_jobs SET phase=? WHERE id=?',(stage,r['id']))
             c.execute('UPDATE decode_jobs SET failure_category=?,failure_type=? WHERE id=?',(category,failure_type,r['id']))
@@ -244,10 +257,18 @@ class DecodeJobs:
         with self.db(True) as c:
             r=c.execute('SELECT * FROM decode_jobs WHERE id=?',(job,)).fetchone()
             if not r:return 'cancelled',None
-            if r['state'] not in ('cancelled','consumed'):c.execute('UPDATE decode_jobs SET controller=? WHERE id=?',(time.time()+30,job))
+            now=time.time()
+            if r['state'] in ('pending','leased') and (r['deadline']<=now or (r['state']=='leased' and r['expires']<=now)):
+                code=('queue_timeout' if r['state']=='pending' else 'execution_timeout') if r['deadline']<=now else 'lease_expired'
+                c.execute("UPDATE decode_jobs SET state='cancelled',cancel_code=? WHERE id=?",(code,job))
+                return 'cancelled',None
+            if r['state'] not in ('cancelled','consumed'):c.execute('UPDATE decode_jobs SET controller=? WHERE id=?',(now+30,job))
             return r['state'],json.loads(r['result']) if r['result'] else None
-    def finish(self,job,consumed=False):
-        with self.db(True) as c:c.execute("UPDATE decode_jobs SET state=?,url='',params='{}',result=NULL,outcome=CASE WHEN outcome='' THEN ? ELSE outcome END,finished=? WHERE id=?",
+    def finish(self,job,consumed=False,cancel_code='unclassified'):
+        if cancel_code not in CANCEL_CODES:cancel_code='unclassified'
+        with self.db(True) as c:
+            c.execute("UPDATE decode_jobs SET cancel_code=CASE WHEN outcome='' AND cancel_code='' AND ?=0 THEN CASE WHEN deadline<=? THEN CASE WHEN claimed_at=0 THEN 'queue_timeout' ELSE 'execution_timeout' END ELSE ? END ELSE cancel_code END WHERE id=?",(int(consumed),time.time(),cancel_code,job))
+            c.execute("UPDATE decode_jobs SET state=?,url='',params='{}',result=NULL,outcome=CASE WHEN outcome='' THEN ? ELSE outcome END,finished=? WHERE id=?",
                                        ('consumed' if consumed else 'cancelled','ok' if consumed else 'cancelled',time.time(),job))
     def count(self,label):
         with self.db(True) as c:c.execute('INSERT INTO totals VALUES(?,1) ON CONFLICT(key) DO UPDATE SET value=value+1',(label,))

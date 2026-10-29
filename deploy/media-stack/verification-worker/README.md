@@ -82,7 +82,7 @@ separate measurements. No raw error text or source URLs appear in these metrics.
 
 Build the worker Dockerfile with an allowlisted context containing catalogue/*.py
 and the verifier sources; exclude secrets and runtime data. package.py produces
-verification-worker-v0.4.0.zip from the worker 0.4.0 image and torrent backend 0.3.0.
+verification-worker-v0.4.1.zip from the worker 0.4.1 image and torrent backend 0.3.0.
 The archive contains exactly four CMD launchers and no enrolled data or credentials.
 On restore, install the coordinator and resource gate, provision private TLS/token
 configuration, then copy the package to Windows and run Update. The topology is
@@ -92,3 +92,26 @@ retains existing capacity until the updated launcher requests a new topology.
 Issue #4 tracks throughput; issue #3 tracks the host TorrServer OOM review. The
 100+ distinct completed title checks/hour target requires measurement. Preserve
 all V6 quality checks when evaluating more workers or torrent backends.
+
+## Queue timing and throughput trial (0.4.1)
+
+New whole-title jobs may wait up to eight minutes in the ready queue, then have
+eight minutes from first claim to report their result. Renewing a lease does not
+extend execution time. Windows-local producers handle one title per invocation;
+old decode jobs keep their original deadlines. Each remote producer service needs
+`TimeoutStartSec=18min`, including the lookahead template.
+
+Results retain safe checkpoint codes and cumulative backend-lock wait / active
+processing seconds. Active time includes source transport and decoding; it does
+not mean CPU utilization. OMV also reports queue times and cancellation causes.
+
+The authorized capacity trial starts with a timing-fixed 8-worker/2-backend
+30-minute baseline, then sets `config/workers.json` to
+`{"workers":8,"torrservers":4}` and runs `02-START-ALL.cmd`. Four backends require
+at least 14 GiB Docker VM memory and 4 GiB available Windows memory. Each backend
+retains its exclusive speed-test lock; four backends permit four simultaneous
+speed tests. Local probes and decoded samples can overlap. This does not guarantee a particular title rate.
+The launcher default remains 8/2; an existing topology is preserved on update.
+Compare final passes/failures, checkpoints, cancellations and lock waits, then
+observe a promising configuration for an hour. Revert the JSON to 8/2 and Start
+if memory/backend stability or playback regresses. No data folders are removed.

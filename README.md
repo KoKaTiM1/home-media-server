@@ -218,3 +218,5 @@ the USB's compiled image archive and all live credentials/state are excluded.
 
 
 Optional Windows source verification is implemented separately from metadata fetching. See [worker operation and recovery](deploy/media-stack/verification-worker/README.md). The server remains authoritative. The first 20-title PC pilot completed with 19 verified and one unavailable result; continuous PC assistance is now enabled under the memory and playback guards. Issue #3 tracks the host TorrServer memory investigation; issue #4 tracks current throughput and configurable Windows capacity.
+
+Windows verifier package 0.4.1 adds separate eight-minute queue and execution budgets, precise speed-checkpoint/cancellation diagnostics, and backend-lock timing. The throughput trial compares 8 workers on 2 versus 4 TorrServers while preserving V6 evidence requirements. Four backends require 14 GiB Docker VM memory and 4 GiB available Windows RAM. See the verifier README for the preserved-data update procedure.

@@ -35,7 +35,14 @@ class MonitorTests(unittest.TestCase):
             q=DecodeJobs(root/'verification-worker'/'queue.sqlite');q.initialize();q.configure(8,2)
             q.set('local_torrent_enabled',True);q.set('local_torrent_permitted',True)
             for i in range(1,9):q.seen('fixture-'+str(i),i);q.backend_health('fixture-'+str(i),True,'torrent-'+str(1+(i-1)//4))
+            with q.db(True) as c:
+                now=time.time()
+                c.execute("INSERT INTO decode_jobs(id,key,operation,state,created,claimed_at,finished,outcome,checkpoint_code,execution_seconds,lock_wait_seconds,active_seconds) VALUES ('diagnostic','movie:tt0000001','verify_title','cancelled',?,?,?,?,?,480,12,40)",(now-90,now-80,now,'checkpoint','cache_attribution'))
+                c.execute("INSERT INTO decode_jobs(id,key,operation,state,created,finished,outcome,cancel_code) VALUES ('cancel','movie:tt0000002','verify_title','cancelled',?,?,'cancelled','queue_timeout')",(now-480,now))
             rows=m.overview(data,root/'missing.json');by={r['name']:r for r in rows}
+            self.assertIn('cache_attribution: 1',by['Windows speed checkpoint reasons']['value'])
+            self.assertIn('queue_timeout: 1',by['Windows cancellation reasons']['value'])
+            self.assertIn('10.0s queued / 12.0s lock wait / 40.0s active',by['Windows time per reported attempt']['value'])
             self.assertEqual(by['Windows lanes']['value'],'8 / 8')
             self.assertIn('2 healthy TorrServers',by['Windows local torrent']['value'])
             self.assertIn('8 workers / 2 TorrServers',by['Windows requested topology']['value'])

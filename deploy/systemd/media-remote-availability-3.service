@@ -7,5 +7,5 @@ RequiresMountsFor=/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/docker exec catalogue-bridge python /app/app.py remote-availability --slot 3
-TimeoutStartSec=10min
+TimeoutStartSec=18min
 Nice=15

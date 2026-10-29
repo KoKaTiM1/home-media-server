@@ -1,4 +1,4 @@
-Windows verification worker 0.4.0
+Windows verification worker 0.4.1
 
 Extract this package over the existing HomeMediaVerificationWorker folder.
 Preserve ALL config/, data*/ and torrent-state*/ directories.

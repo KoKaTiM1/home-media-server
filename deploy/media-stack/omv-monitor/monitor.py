@@ -319,7 +319,7 @@ def overview(data=DATA,snapshot=None):
         with closing(sqlite3.connect('file:'+str(queue)+'?mode=ro',uri=True,timeout=1)) as conn:
             conn.row_factory=sqlite3.Row
             totals=dict(conn.execute('SELECT key,value FROM totals'))
-            control={key:json.loads(value) for key,value in conn.execute("SELECT key,value FROM control WHERE key IN ('enabled','reason','max_windows_jobs','requested_windows_jobs','requested_torrservers','prefetch_per_lane','local_torrent_enabled','local_torrent_permitted','local_torrent_continuous','local_torrent_reason','local_torrent_pilot_remaining') OR key LIKE 'producer:%' OR key LIKE 'backend:%' OR key LIKE 'capability:%'")}
+            control={key:json.loads(value) for key,value in conn.execute("SELECT key,value FROM control WHERE key IN ('enabled','reason','max_windows_jobs','requested_windows_jobs','requested_torrservers','prefetch_per_lane','local_torrent_enabled','local_torrent_permitted','local_torrent_continuous','local_torrent_reason','local_torrent_pilot_remaining') OR key LIKE 'producer:%' OR key LIKE 'backend:%' OR key LIKE 'capability:%' OR key LIKE 'client_version:%'")}
             queue_counts=dict(conn.execute("SELECT state,COUNT(*) FROM decode_jobs WHERE controller>? AND deadline>? GROUP BY state",(now,now)))
             seen=[]
             # Count every separately enrolled Windows lane. Older dashboard
@@ -335,10 +335,21 @@ def overview(data=DATA,snapshot=None):
             hour=conn.execute("SELECT COUNT(*),COUNT(DISTINCT key),COUNT(DISTINCT CASE WHEN state='consumed' AND outcome='ok' THEN key END) FROM decode_jobs WHERE operation='verify_title' AND created>?",(now-3600,)).fetchone()
             diagnostic_columns={r[1] for r in conn.execute('PRAGMA table_info(decode_jobs)')}
             categories=conn.execute("SELECT failure_category,COUNT(*) FROM decode_jobs WHERE finished>? AND failure_category!='' GROUP BY failure_category",(now-3600,)).fetchall() if 'failure_category' in diagnostic_columns else []
+            precise=[];cancellations=[];timings=None
+            if 'checkpoint_code' in diagnostic_columns:
+                precise=conn.execute("SELECT checkpoint_code,COUNT(*) FROM decode_jobs WHERE finished>? AND checkpoint_code!='' GROUP BY checkpoint_code",(now-3600,)).fetchall()
+                cancellations=conn.execute("SELECT cancel_code,COUNT(*) FROM decode_jobs WHERE finished>? AND outcome='cancelled' GROUP BY cancel_code",(now-3600,)).fetchall()
+                timings=conn.execute("SELECT AVG(claimed_at-created),AVG(lock_wait_seconds),AVG(active_seconds),COUNT(*) FROM decode_jobs WHERE finished>? AND operation='verify_title' AND execution_seconds>0 AND claimed_at>0 AND outcome IN ('ok','checkpoint')",(now-3600,)).fetchone()
+            passed=conn.execute("SELECT COUNT(DISTINCT key) FROM decode_jobs WHERE operation='verify_title' AND state='consumed' AND outcome='ok' AND finished>?",(now-3600,)).fetchone()[0]
             problem=conn.execute("SELECT operation,outcome,reason_code,finished FROM decode_jobs WHERE outcome IN ('checkpoint','decode_failure') AND finished>? ORDER BY finished DESC LIMIT 1",(now-3600,)).fetchone()
-        add('Windows titles attempted in last hour',f'{hour[1]:,} distinct / {hour[0]:,} attempts',f'{hour[2]:,} distinct completed Windows-local V6 passes; pending checkpoints are excluded')
+        add('Windows titles attempted in last hour',f'{hour[1]:,} distinct / {hour[0]:,} attempts',f'{passed:,} distinct completed Windows-local V6 passes; pending checkpoints are excluded')
+        if precise:add('Windows speed checkpoint reasons',', '.join(f'{code}: {count}' for code,count in precise),'Last hour; checkpoints retain pending status')
+        if cancellations:add('Windows cancellation reasons',', '.join(f'{code or "legacy unknown"}: {count}' for code,count in cancellations),'Last hour; canceled work is not a conclusive title result')
+        if timings and timings[3]:add('Windows time per reported attempt',f'{timings[0]:.1f}s queued / {timings[1]:.1f}s lock wait / {timings[2]:.1f}s active',f'Average of {timings[3]} new-budget reported attempts in the last hour; active includes transport and decoding')
         if categories:add('Windows recent failure categories',', '.join(f'{category}: {count}' for category,count in categories),'Categorized temporary failures; authoritative unavailable results remain separate')
         add('Windows final passes',f"{totals.get('windows_titles_verified',0):,}",'Completed full title checks on the PC; probes and samples excluded','success')
+        versions=__import__('collections').Counter(v for k,v in control.items() if k.startswith('client_version:'))
+        if versions:add('Windows installed client versions',', '.join(f'{version}: {count}' for version,count in sorted(versions.items())),'Last reported versions of enrolled workers; connection state is shown separately')
         online=sum(value>now-45 for value in seen)
         connected=online>0
         add('Windows worker','Connected' if connected else 'Offline',control.get('reason','Waiting for resource gate') if connected else 'Server verification continues without the PC','success' if connected and control.get('enabled') else 'muted')
@@ -395,7 +406,7 @@ def overview(data=DATA,snapshot=None):
             add('Windows working on',title,stage+' · '+span(now-active['created'])+' elapsed'+extra,'success')
             position=details.get('position',0) if details.get('key')==key else 0
             batch=details.get('batch',0) if details.get('key')==key else 0
-            if position:add('Windows batch',f"Run {batch or '?'} · item {position}/20",'A batch ends after at most 20 title attempts or eight minutes')
+            if position:add('Windows batch',f"Run {batch or '?'} · item {position}/20",'Windows-local producers process one title with separate queue and execution budgets')
         else:add('Windows working on','Waiting','The next guarded batch starts automatically when work is eligible')
         if problem:
             label='Decode rejected' if problem['outcome']=='decode_failure' else 'Checkpoint'

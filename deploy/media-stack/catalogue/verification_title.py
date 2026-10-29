@@ -131,12 +131,13 @@ def execute_title(g,key,cancel=None):
     q=jobs(g)
     if not q or not q.setting_read('local_torrent_enabled',False) or not q.setting_read('local_torrent_permitted',False) or not q.local_workers():return False
     if not q.setting_read('local_torrent_continuous',False) and q.setting_read('local_torrent_pilot_remaining',20)<=0:return False
-    started=time.time();deadline=min(time.monotonic()+480,getattr(g['BUDGET'],'worker_deadline',float('inf')))
-    fallback=False;job=None;consumed=False;failure_category="transport"
+    with g['request_budget'](time.monotonic()+60,cancel):p=payload(g,key)
+    started=time.time();deadline=time.monotonic()+960
+    fallback=False;job=None;consumed=False;failure_category="transport";cancel_code="controller_error"
     with g['validation_attempt'](True),g['request_budget'](deadline,cancel):
         try:
-            p=payload(g,key);sid=hashlib.sha256(json.dumps(p,sort_keys=True).encode()).hexdigest()
-            try:job=q.submit(key,sid,OPERATION,p,'',deadline-time.monotonic())
+            sid=hashlib.sha256(json.dumps(p,sort_keys=True).encode()).hexdigest()
+            try:job=q.submit(key,sid,OPERATION,p,'',480,execution_seconds=480)
             except WorkerWait:return False
             producer_phase(g,key,'windows local torrent')
             while True:
@@ -161,10 +162,16 @@ def execute_title(g,key,cancel=None):
                     return True
                 if state in ('cancelled','consumed') or time.monotonic()>=deadline:raise Checkpoint('Windows title lease ended')
                 time.sleep(.5)
+        except TimeoutError:
+            cancel_code='controller_budget';raise
+        except Checkpoint:
+            cancel_code='receipt_interrupted';raise
+        except g['ClientCancelled']:
+            cancel_code='foreground_interrupted';raise
         except (ValueError,KeyError,TypeError):
             q.count('windows_local_invalid_results');failure_category='validation';fallback=True
         finally:
-            if job:q.finish(job,consumed)
+            if job:q.finish(job,consumed,cancel_code)
     if fallback:
         q.count('windows_local_server_fallbacks');producer_phase(g,key,'server fallback')
         if not q.setting_read('enabled',False):

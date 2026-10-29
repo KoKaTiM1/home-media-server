@@ -387,7 +387,7 @@ For optional Windows verification, restore the restricted gateway, memory guard 
 ### Configurable Windows V6 capacity
 
 Restore the updated verification coordinator, resource guard, and monitor before
-installing worker package 0.4.0. Preserve existing worker identities and config.
+installing worker package 0.4.1. Preserve existing worker identities and config.
 The launcher creates config/workers.json with defaults 8 workers / 2 TorrServers.
 Changing these values and running Start updates the authenticated server capacity
 and reconciles containers; no per-worker start scripts are required. Docker VM

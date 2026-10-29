@@ -44,6 +44,9 @@ class TitleTests(unittest.TestCase):
         with patch('verification_remote.jobs',return_value=self.q),patch('verification_title.payload',return_value=self.payload),patch.object(self.q,'poll',side_effect=poll),patch.object(a,'prepared',side_effect=lambda *args,**kw:calls.append(a.BUDGET.remote_verification)):
             self.assertTrue(execute_title(a.__dict__,KEY))
         self.assertEqual(calls,[False]);self.assertTrue(a.BUDGET.remote_verification)
+        with self.q.db() as c:
+            row=c.execute('SELECT deadline-created,execution_seconds FROM decode_jobs').fetchone()
+            self.assertEqual(tuple(row),(480,480))
         with a.F.db() as c:self.assertIsNone(c.execute('SELECT state FROM validation WHERE key=?',(KEY,)).fetchone())
     def test_local_failure_defers_fallback_while_debian_gate_is_paused(self):
         self.q.set('enabled',False)
@@ -87,11 +90,12 @@ class TitleTests(unittest.TestCase):
         subprocess.run(['ffmpeg','-nostdin','-v','error','-f','lavfi','-i','testsrc2=s=64x64:r=10:d=60','-f','lavfi','-i','sine=duration=60','-c:v','libx264','-preset','ultrafast','-threads','1','-c:a','ac3','-movflags','+faststart','-y',str(fixture)],check=True,capture_output=True,timeout=30)
         with fixture.open('ab') as f:f.write(struct.pack('>I4s',32*1024**2,b'free'));f.truncate(f.tell()+32*1024**2-8)
         length=fixture.stat().st_size
+        busy_cache=[False]
         class Handler(BaseHTTPRequestHandler):
             def log_message(self,*args):pass
             def do_POST(self):
                 self.rfile.read(int(self.headers.get('Content-Length','0')))
-                body=({'hash':HASH,'file_stats':[{'id':1,'path':'Fixture.2026.mp4','length':length}]} if self.path=='/torrents' else {'Hash':HASH,'Filled':0,'Readers':[],'Pieces':{}})
+                body=({'hash':HASH,'file_stats':[{'id':1,'path':'Fixture.2026.mp4','length':length}]} if self.path=='/torrents' else {'Hash':HASH,'Filled':0,'Readers':[{'Reader':1}] if busy_cache[0] else [],'Pieces':{}})
                 data=json.dumps(body).encode();self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
             def do_GET(self):
                 match=re.fullmatch(r'bytes=(\d+)-(\d*)',self.headers.get('Range',''))
@@ -111,8 +115,26 @@ class TitleTests(unittest.TestCase):
         payload=self.root/'payload.json';payload.write_text(json.dumps(self.payload));result=self.root/'result.json';state=self.root/'local'
         child=Path(__file__).parents[1]/'verification-worker/local_verifier.py';started=time.time()
         env={**os.environ,'PYTHONPATH':str(Path(__file__).parent),'LOCAL_TORRSERVER_URL':f'http://127.0.0.1:{server.server_port}','LOCAL_TORRENT_STATE':str(self.root/'locks')}
-        subprocess.run([sys.executable,str(child),'--payload',str(payload),'--state',str(state),'--output',str(result)],env=env,check=True,capture_output=True,timeout=60)
+        import fcntl,hashlib
+        locks=self.root/'locks'/'locks';locks.mkdir(parents=True)
+        handle=(locks/hashlib.sha256(b'global-verification').hexdigest()).open('a')
+        fcntl.flock(handle,fcntl.LOCK_EX);wait_seen=threading.Event()
+        def release_lock():
+            until=time.monotonic()+10
+            while time.monotonic()<until:
+                try:
+                    if json.loads((state/'progress.json').read_text()).get('phase')=='waiting for backend lock':
+                        wait_seen.set();time.sleep(.3);break
+                except (OSError,ValueError):pass
+                time.sleep(.05)
+            fcntl.flock(handle,fcntl.LOCK_UN)
+        releaser=threading.Thread(target=release_lock);releaser.start()
+        try:subprocess.run([sys.executable,str(child),'--payload',str(payload),'--state',str(state),'--output',str(result)],env=env,check=True,capture_output=True,timeout=60)
+        finally:releaser.join();handle.close()
+        self.assertTrue(wait_seen.is_set())
         value=json.loads(result.read_text());self.assertEqual(value['status'],'ok',value)
+        self.assertGreater(value['metrics']['active_seconds'],0)
+        self.assertGreaterEqual(value['metrics']['lock_wait_seconds'],.25)
         data=value['data'];selected,info,proof,audio,conversion=validate_evidence(a.__dict__,KEY,self.payload,data,started)
         self.assertTrue(conversion);self.assertEqual(len(proof['speed']['windows']),2);self.assertEqual(len(proof['samples']),2)
         self.assertGreater(proof['samples'][0]['video_frames'],1)
@@ -125,6 +147,13 @@ class TitleTests(unittest.TestCase):
             else:bad['proof']['decode_reused']=True
             with self.assertRaises((ValueError,RuntimeError)):
                 validate_evidence(a.__dict__,KEY,self.payload,bad,started)
+        busy_cache[0]=True
+        failed=self.root/'checkpoint.json'
+        subprocess.run([sys.executable,str(child),'--payload',str(payload),'--state',str(self.root/'busy-state'),'--output',str(failed)],env=env,check=True,capture_output=True,timeout=60)
+        failure=json.loads(failed.read_text())
+        self.assertEqual(failure['status'],'checkpoint')
+        self.assertEqual(failure['diagnostic']['code'],'cache_attribution')
+        self.assertNotIn('127.0.0.1',json.dumps(failure))
         with a.validation_attempt(True):a.finish_preparation(KEY,True,time.monotonic()+10,selected,info,proof,audio,conversion)
         with a.F.db() as c:
             row=c.execute('SELECT state,proof FROM validation WHERE key=?',(KEY,)).fetchone()
