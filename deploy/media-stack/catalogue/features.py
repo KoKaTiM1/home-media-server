@@ -88,6 +88,19 @@ class Features:
         """Take one durable snapshot of keys eligible for their first full V6 attempt."""
         now=time.time()
         with self.db() as conn:
+            columns={r[1] for r in conn.execute('PRAGMA table_info(verification_sweep_attempts)')}
+            if 'priority' not in columns:
+                conn.execute('BEGIN IMMEDIATE')
+                columns={r[1] for r in conn.execute('PRAGMA table_info(verification_sweep_attempts)')}
+                for name,kind in (('priority','INTEGER'),('source_version','INTEGER'),('due','REAL')):
+                    if name in columns:continue
+                    conn.execute(f'ALTER TABLE verification_sweep_attempts ADD COLUMN {name} {kind} NOT NULL DEFAULT 0')
+                conn.execute("UPDATE verification_sweep_attempts SET (priority,source_version,due)=(SELECT priority,COALESCE(json_extract(proof,'$.version'),0),next_check FROM validation WHERE validation.key=verification_sweep_attempts.key)")
+                conn.commit()
+            if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='verification_sweep_order'").fetchone():
+                conn.execute('CREATE INDEX IF NOT EXISTS verification_sweep_order ON verification_sweep_attempts(sweep_id,outcome,priority DESC,source_version,due)')
+                conn.commit()
+            if conn.execute('SELECT 1 FROM verification_sweeps LIMIT 1').fetchone():return
             conn.execute('BEGIN IMMEDIATE')
             if conn.execute('SELECT 1 FROM verification_sweeps LIMIT 1').fetchone():return
             high=conn.execute('SELECT COALESCE(MAX(rowid),0) FROM validation').fetchone()[0]
@@ -98,7 +111,7 @@ class Features:
             # Materialize the starting snapshot once; producers then claim from
             # this indexed queue instead of repeatedly scanning the million-row
             # validation table. Retained checkpoints count as already attempted.
-            conn.execute(f"INSERT OR IGNORE INTO verification_sweep_attempts(sweep_id,key,started,outcome) SELECT ?,v.key,?,'queued' FROM validation v WHERE v.rowid<=? AND {eligible} AND NOT EXISTS(SELECT 1 FROM verification_audit a WHERE a.key=v.key AND a.reason='speed-v6' AND a.completed>0)",(sweep_id,now,high,now))
+            conn.execute(f"INSERT OR IGNORE INTO verification_sweep_attempts(sweep_id,key,started,outcome,priority,source_version,due) SELECT ?,v.key,?,'queued',v.priority,COALESCE(json_extract(v.proof,'$.version'),0),v.next_check FROM validation v WHERE v.rowid<=? AND {eligible} AND NOT EXISTS(SELECT 1 FROM verification_audit a WHERE a.key=v.key AND a.reason='speed-v6' AND a.completed>0)",(sweep_id,now,high,now))
 
     def first_sweep_candidate(self):
         """Return an unattempted baseline key, then fresh arrivals, before retries."""
@@ -109,22 +122,34 @@ class Features:
             if not sweep:return None,False
             sweep_id,started,high,completed=sweep
             if not completed:
-                # If a process started during the first snapshot build, its
-                # pre-existing checkpoint placeholder was not a V6 attempt.
-                # Return only those seed rows to the untouched queue once.
-                conn.execute("UPDATE verification_sweep_attempts SET outcome='queued',finished=0 WHERE sweep_id=? AND outcome='deferred' AND finished=started AND started<=?",(sweep_id,started))
-                conn.execute("UPDATE verification_sweep_attempts SET outcome='passed',finished=? WHERE sweep_id=? AND outcome='queued' AND key IN (SELECT key FROM verification_audit WHERE reason='speed-v6' AND completed>0)",(now,sweep_id))
-                conn.execute("UPDATE verification_sweep_attempts SET outcome='deferred',finished=? WHERE sweep_id=? AND outcome='queued' AND key IN (SELECT key FROM validation WHERE (state='unavailable' AND next_check>?) OR (state='verified' AND COALESCE(json_extract(proof,'$.version'),0)>=6))",(now,sweep_id,now))
-                conn.execute("UPDATE verification_sweep_attempts SET outcome='queued',started=? WHERE sweep_id=? AND outcome='started' AND started<? AND NOT EXISTS(SELECT 1 FROM verification_claims c WHERE c.key=verification_sweep_attempts.key AND c.expires>?)",(now,sweep_id,now-600,now))
-                row=conn.execute("""SELECT v.key FROM verification_sweep_attempts x JOIN validation v ON v.key=x.key
-                    WHERE x.sweep_id=? AND x.outcome='queued' AND v.rowid<=? AND """+eligible+"""
-                    AND NOT EXISTS(SELECT 1 FROM verification_claims c WHERE c.key=v.key AND c.expires>?)
-                    AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=v.key AND h.expires>?)
-                    AND NOT EXISTS(SELECT 1 FROM metadata_waits m WHERE m.expires>? AND (v.key=m.key OR v.key LIKE m.key||':%'))
-                    ORDER BY v.priority DESC,COALESCE(json_extract(v.proof,'$.version'),0),v.next_check,v.rowid LIMIT 1""",(sweep_id,high,now,now,now,now)).fetchone()
-                if row:return (sweep_id,row[0]),True
-                queued=conn.execute("SELECT COUNT(*) FROM verification_sweep_attempts WHERE sweep_id=? AND outcome='queued'",(sweep_id,)).fetchone()[0]
-                started_count=conn.execute("SELECT COUNT(*) FROM verification_sweep_attempts WHERE sweep_id=? AND outcome='started'",(sweep_id,)).fetchone()[0]
+                # Reconcile only a small indexed queue window. Global updates
+                # and sorting the complete snapshot serialize all producers.
+                stale=conn.execute("SELECT 1 FROM verification_sweep_attempts WHERE sweep_id=? AND outcome='started' AND started<? LIMIT 1",(sweep_id,now-600)).fetchone()
+                if stale:
+                    conn.execute("UPDATE verification_sweep_attempts SET outcome='queued',started=? WHERE sweep_id=? AND outcome='started' AND started<? AND NOT EXISTS(SELECT 1 FROM verification_claims c WHERE c.key=verification_sweep_attempts.key AND c.expires>?)",(now,sweep_id,now-600,now))
+                rows=conn.execute("""SELECT x.key,v.state,v.next_check,
+                    COALESCE(json_extract(v.proof,'$.version'),0),v.priority,
+                    EXISTS(SELECT 1 FROM verification_audit a WHERE a.key=x.key AND a.reason='speed-v6' AND a.completed>0)
+                    FROM verification_sweep_attempts x INDEXED BY verification_sweep_order
+                    JOIN validation v ON v.key=x.key
+                    WHERE x.sweep_id=? AND x.outcome='queued'
+                    AND NOT EXISTS(SELECT 1 FROM verification_claims c WHERE c.key=x.key AND c.expires>?)
+                    AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=x.key AND h.expires>?)
+                    AND NOT EXISTS(WITH RECURSIVE parents(k,pos) AS (SELECT x.key,0 UNION ALL SELECT k,pos+1 FROM parents WHERE pos<length(k)) SELECT 1 FROM parents JOIN metadata_waits m ON m.key=CASE WHEN pos=0 THEN k ELSE substr(k,1,pos-1) END WHERE (pos=0 OR substr(k,pos,1)=':') AND m.expires>?)
+                    ORDER BY x.priority DESC,x.source_version,x.due LIMIT 64""",(sweep_id,now,now,now)).fetchall()
+                candidates=[]
+                for key,state,due,version,priority,audited in rows:
+                    if audited or (state=='verified' and version>=6):
+                        outcome='passed' if audited else 'deferred'
+                    elif state=='unavailable' and due>now:outcome='deferred'
+                    else:
+                        candidates.append((key,priority,version,due));continue
+                    conn.execute("UPDATE verification_sweep_attempts SET outcome=?,finished=? WHERE sweep_id=? AND key=? AND outcome='queued'",(outcome,now,sweep_id,key))
+                if candidates:
+                    row=min(candidates,key=lambda r:(-r[1],r[2],r[3],r[0]))
+                    return (sweep_id,row[0]),True
+                queued=conn.execute("SELECT 1 FROM verification_sweep_attempts WHERE sweep_id=? AND outcome='queued' LIMIT 1",(sweep_id,)).fetchone()
+                started_count=conn.execute("SELECT 1 FROM verification_sweep_attempts WHERE sweep_id=? AND outcome='started' LIMIT 1",(sweep_id,)).fetchone()
                 if queued or started_count:return None,True
                 conn.execute('UPDATE verification_sweeps SET completed=? WHERE id=? AND completed=0',(now,sweep_id))
                 return None,False
@@ -1464,6 +1489,7 @@ class Features:
                             self.enqueue_many(aired,30)
                         except Exception:self.log('Episode verification queue expansion deferred')
                 except Exception as error:
+                    self.log('Verification attempt interrupted ('+type(error).__name__+')')
                     # A lease held by the metadata PC is a scheduling wait, not
                     # a source failure. Its short SQL exclusion lets this batch
                     # continue checking other titles rather than stalling.

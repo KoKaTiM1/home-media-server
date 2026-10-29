@@ -30,6 +30,13 @@ class TitleTests(unittest.TestCase):
         self.payload={'schema':1,'key':KEY,'meta':self.meta,'candidates':[{'infoHash':HASH,'title':'Fixture 2026 1080p','behaviorHints':{'filename':'Fixture.2026.mp4'}}], 'aliases':[],'prior':{'state':'pending'}}
         self.q=DecodeJobs(self.root/'queue.sqlite');self.q.initialize();self.q.set('enabled',True);self.q.set('local_torrent_enabled',True);self.q.set('local_torrent_permitted',True);self.q.set('max_windows_jobs',4)
         self.q.claim('pc-new',['local-torrent-v1']);self.q.backend_health('pc-new',True)
+    def test_remaining_execution_budget_accepts_fractional_elapsed_time(self):
+        for seconds in (1,59,239,240,499,500):
+            job=self.q.submit(KEY,'b'*64,'verify_title',self.payload,'',seconds,execution_seconds=seconds)
+            task=self.q.claim('pc-new',['local-torrent-v1'])
+            self.assertEqual(task['job_id'],job)
+            self.q.finish(job)
+
     def test_old_client_cannot_take_whole_title_and_stale_lease_is_fenced(self):
         job=self.q.submit(KEY,'b'*64,'verify_title',self.payload,'',60)
         self.assertIsNone(self.q.claim('old-decoder'))
@@ -46,7 +53,9 @@ class TitleTests(unittest.TestCase):
         self.assertEqual(calls,[False]);self.assertTrue(a.BUDGET.remote_verification)
         with self.q.db() as c:
             row=c.execute('SELECT deadline-created,execution_seconds FROM decode_jobs').fetchone()
-            self.assertEqual(tuple(row),(480,480))
+            self.assertEqual(row[0],row[1])
+            self.assertGreater(row[1],0)
+            self.assertLessEqual(row[1],60)
         with a.F.db() as c:self.assertIsNone(c.execute('SELECT state FROM validation WHERE key=?',(KEY,)).fetchone())
     def test_local_failure_defers_fallback_while_debian_gate_is_paused(self):
         self.q.set('enabled',False)

@@ -140,7 +140,7 @@ class DecodeJobs:
             validate_task(params)
             if params['key']!=key or url:raise InvalidJob('Invalid title binding')
         else:validate_recipe(operation,params)
-        if execution_seconds not in (0,240,500) or (execution_seconds and operation!='verify_title'):raise InvalidJob('Invalid execution budget')
+        if type(execution_seconds) is not int or not 0<=execution_seconds<=500 or (execution_seconds and operation!='verify_title'):raise InvalidJob('Invalid execution budget')
         u=urlsplit(url)
         if operation!='verify_title' and (u.scheme!='http' or u.hostname is None or not u.path.startswith('/raw/') or len(url)>4096):raise InvalidJob('Invalid trusted source')
         if not re.fullmatch('(movie:tt[0-9]{5,12}|series:tt[0-9]{5,12}:[0-9]+:[0-9]+)',key) or not re.fullmatch('[a-f0-9]{64}',sid):raise InvalidJob('Invalid source identity')
