@@ -110,6 +110,7 @@ quota and maintenance issues were repaired and checked.
 | `media-saved-downloads` | Every minute; track downloads, move owned files and apply managed retention |
 | `media-catalogue-badges` | Hourly; subtitle availability markers |
 | `media-embedded-subtitles` | Requested online titles; resumable Hebrew extraction while idle |
+| `media-torrent-metadata` | One verified source per idle invocation, 30 seconds between attempts; saves torrent metadata for future startup |
 | `media-catalogue-collections` | Every 30 minutes; native collection membership |
 | `media-cleanup` | Hourly; legacy Downloads retention |
 | `media-worker-status` | Two minutes after boot, then one minute after completion; cached OMV counters |

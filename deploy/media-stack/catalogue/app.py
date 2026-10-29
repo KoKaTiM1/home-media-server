@@ -256,6 +256,81 @@ def torr(data,timeout=12):
     return fetch(TORR+'/torrents',data,torr_headers(),timeout=timeout)
 
 
+def torrent_metadata_db():
+    conn=db()
+    conn.execute('CREATE TABLE IF NOT EXISTS torrent_metadata (hash TEXT PRIMARY KEY, requested REAL DEFAULT 0, next_try REAL DEFAULT 0, updated REAL DEFAULT 0)')
+    return conn
+
+
+def exact_torrent_file(status,selected):
+    return (status.get('hash','').lower()==selected.get('hash','').lower()
+            and any(f.get('id')==selected.get('index') and f.get('path')==selected.get('filename')
+                    and f.get('length')==selected.get('length') for f in status.get('file_stats',[])))
+
+
+def retain_torrent_metadata(selected,status=None):
+    """Request native InfoBytes persistence, separately from media proof state."""
+    if selected.get('local'):return False
+    infohash=selected.get('hash','').lower()
+    if not re.fullmatch('[a-f0-9]{40}',infohash):return False
+    try:
+        with torrent_metadata_db() as conn:
+            row=conn.execute('SELECT requested FROM torrent_metadata WHERE hash=?',(infohash,)).fetchone()
+        if row and row[0]>time.time()-86400:return True
+        status=status or torr({'action':'get','hash':infohash},timeout=2)
+        if not exact_torrent_file(status,selected):return False
+        result=torr({'action':'add','link':selected.get('link') or selected.get('torrent_url') or 'magnet:?xt=urn:btih:'+infohash,
+                     'save_to_db':True},timeout=2)
+        if not exact_torrent_file(result or {},selected):return False
+        with torrent_metadata_db() as conn:
+            conn.execute('INSERT OR REPLACE INTO torrent_metadata VALUES (?,?,?,?)',
+                         (infohash,time.time(),time.time()+86400,time.time()))
+        # TorrServer saves asynchronously. This is an acknowledged request,
+        # not independent proof of disk durability or playable media.
+        log('Torrent metadata persistence requested')
+        return True
+    except (OSError,ValueError,sqlite3.Error,urllib.error.URLError):
+        log('Torrent metadata persistence deferred');return False
+
+
+def backfill_torrent_metadata():
+    """One exact verified source per invocation; no video download or re-audit."""
+    with (DATA/'torrent-metadata.lock').open('a') as lock:
+        try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError:return 0
+        if F.foreground_busy() or detail_playback_busy():return 0
+        with torrent_metadata_db() as conn:
+            rows=conn.execute("SELECT p.key,p.value FROM playback p JOIN validation v ON v.key=p.key "
+                "LEFT JOIN torrent_metadata t ON t.hash=json_extract(p.value,'$.selected.hash') "
+                "WHERE v.state='verified' AND json_extract(p.value,'$.selected.local') IS NULL "
+                "AND COALESCE(t.next_try,0)<=? ORDER BY COALESCE(t.updated,0),p.updated DESC LIMIT 1",(time.time(),)).fetchall()
+        if not rows:return 0
+        key,raw=rows[0];selected=json.loads(raw)['selected'];infohash=selected['hash']
+        # Mark before doing work so interrupted attempts cannot monopolize it.
+        with torrent_metadata_db() as conn:
+            conn.execute('INSERT INTO torrent_metadata VALUES (?,0,?,?) ON CONFLICT(hash) DO UPDATE SET next_try=excluded.next_try,updated=excluded.updated',
+                         (infohash,time.time()+900,time.time()))
+        def cancel():return F.foreground_busy() or detail_playback_busy()
+        try:
+            with request_budget(time.monotonic()+55,cancel):
+                evidence=durable_playback_evidence(key)
+                if not evidence or REL.sid(evidence['selected'])!=REL.sid(selected):return 0
+                with REL.lock('torrent:'+infohash):
+                    record_background_torrent(key,infohash,force=True)
+                    status=None
+                    try:status=torr({'action':'get','hash':infohash},timeout=2)
+                    except urllib.error.HTTPError as error:
+                        if error.code!=404:raise
+                    if not status or not status.get('file_stats'):
+                        status=torr({'action':'add','link':selected.get('link') or selected.get('torrent_url') or 'magnet:?xt=urn:btih:'+infohash,'save_to_db':False},timeout=2)
+                    while not status.get('file_stats'):
+                        time.sleep(remaining(1))
+                        status=torr({'action':'get','hash':infohash},timeout=2)
+                    return int(retain_torrent_metadata(selected,status))
+        except (OSError,ValueError,sqlite3.Error,urllib.error.URLError,ClientCancelled,Checkpoint):
+            log('Torrent metadata backfill deferred');return 0
+
+
 def record_background_torrent(key,infohash,force=False):
     """Remember server TorrServer work that may be discarded for playback."""
     if not force and not getattr(BUDGET,'validation_background',False):return
@@ -912,6 +987,7 @@ def resolve(key,deadline=None):
         trackers += [s[len('tracker:'):] for s in candidate.get('sources',[]) if s.startswith('tracker:')]
         magnet='magnet:?xt=urn:btih:'+infohash+''.join('&tr='+U.quote(t,safe='') for t in trackers)
         try:
+            metadata_attempt=time.monotonic()
             status={}
             work=REL.checkpoint(key)
             metadata_started=work.get('metadata_started',time.time()) if background and work.get('metadata_hash')==infohash else time.time()
@@ -936,7 +1012,7 @@ def resolve(key,deadline=None):
                 try:status=torr({'action':'get','hash':infohash},timeout=min(2,remaining(2)))
                 except (ClientCancelled,PlaybackBusy,Checkpoint):raise
                 except Exception:pass
-                if not status.get('file_stats'):time.sleep(min(2,remaining(2)))
+                if not status.get('file_stats'):time.sleep(min(2 if background else .2,remaining(2)))
             if not status.get('file_stats'):
                 if deadline and time.monotonic()>=deadline:raise Checkpoint('Metadata checkpoint')
                 if background and time.time()-metadata_started<METADATA_SECONDS:
@@ -963,6 +1039,10 @@ def resolve(key,deadline=None):
                 selected={'hash':infohash,'index':f['id'],'filename':f['path'],'length':f['length'],
                     'source_name':candidate.get('title',''),'file_count':len(status['file_stats']),'torrent_url':candidate.get('torrentUrl'),'link':candidate.get('torrentUrl') or magnet}
             if REL.excluded(key,selected):continue
+            playback_event(key,'torrent_metadata_ready',metadata_attempt,'ok')
+            # Native persistence allows later get/add to recover InfoBytes
+            # locally, while exact hash/file validation still applies.
+            if exact and not background:retain_torrent_metadata(selected,status)
             remember('metadata-pending:'+key,False,0)
             REL.bind(key,selected)
             return remember('resolved:'+key,selected,900)
@@ -1479,6 +1559,9 @@ def finish_preparation(key,background,deadline,selected,info,proof,selected_audi
     accepted=True if verified and not background else F.validation_result(key,True,proof=proof)
     if accepted is not False:
         REL.success(key,selected)
+        # Windows-local results enqueue naturally through the verified playback
+        # row; only persist immediately when this server already has metadata.
+        retain_torrent_metadata(selected)
         remember('verified-'+prepared_key,{'selected':selected,'info':info,'proof':proof},max(1,300-(time.time()-proof.get('checked_at',time.time()))))
         if not background:
             try:EMBED.enqueue(key,selected,output['RunTimeTicks']/10000000)
@@ -1855,7 +1938,7 @@ def main():
     # its native metadata and downloaded sidecar subtitles beside STRM files.
     os.umask(0o002)
     parser=argparse.ArgumentParser()
-    parser.add_argument('command',choices=('serve','sync','collections','badges','trailers','discovery-sync','availability','downloads','imdb-sync','metadata-import','remote-availability','embedded-subtitles','hebrew-metadata'),default='serve',nargs='?')
+    parser.add_argument('command',choices=('serve','sync','collections','badges','trailers','discovery-sync','availability','downloads','imdb-sync','metadata-import','remote-availability','embedded-subtitles','hebrew-metadata','torrent-metadata'),default='serve',nargs='?')
     parser.add_argument('--movies',type=int,default=1000)
     parser.add_argument('--shows',type=int,default=200)
     parser.add_argument('--slot',type=int,choices=range(1,33),default=1)
@@ -1872,6 +1955,7 @@ def main():
     if args.command=='discovery-sync': return F.sync_discovery()
     if args.command=='availability': return F.warm_availability()
     if args.command=='embedded-subtitles': return log('Embedded subtitle work steps: '+str(EMBED.work()))
+    if args.command=='torrent-metadata':return log('Torrent metadata retained: '+str(backfill_torrent_metadata()))
     if args.command=='hebrew-metadata': return F.refresh_hebrew_metadata(limit=args.limit)
     if args.command=='remote-availability': return F.warm_availability(remote=True,slot=args.slot)
     if args.command=='downloads': return F.manage_downloads()

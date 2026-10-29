@@ -109,6 +109,17 @@ initial bytes before returning success. Changed sources or audio, exclusions,
 newer failures and requested rechecks prevent this reuse. Scheduled background
 audits always probe and decode fresh samples. Subtitle choices are refreshed
 separately; reuse never advances the stored verification timestamp.
+Accepted exact sources also request TorrServer native persistence of the complete
+torrent metadata (InfoBytes/piece map). Idle connection/cache drops preserve this
+metadata, allowing later source restoration without fetching the map from peers.
+`media-torrent-metadata` backfills one currently verified source per invocation,
+pausing for navigation or playback and retrying incomplete work after 15 minutes.
+Windows-verified sources enter this backfill through the same playback records.
+The separate `torrent_metadata.requested` timestamp records an acknowledged save
+request; TorrServer writes asynchronously, so it is not a media proof or an
+independent guarantee of disk durability. Persistence is requested again after
+24 hours; missing metadata falls back to normal resolution. Exact hash, file
+index, path and length checks and the first-video-byte requirement still apply.
 It may fetch torrent metadata and small video/audio probe samples; it does not
 request a managed full-film download. Failed speculative attempts do not revoke
 existing verification. Torrents opened by background verification or embedded

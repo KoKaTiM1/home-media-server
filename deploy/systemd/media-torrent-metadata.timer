@@ -1,0 +1,10 @@
+[Unit]
+Description=Gradually retain verified torrent metadata while idle
+
+[Timer]
+OnBootSec=7min
+OnUnitInactiveSec=30s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

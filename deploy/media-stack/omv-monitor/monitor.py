@@ -21,6 +21,7 @@ JOBS=[
  ('media-saved-downloads','Saved downloads and watched-file cleanup','Every minute'),
  ('media-catalogue-badges','Hebrew / English subtitle badges','Hourly'),
  ('media-embedded-subtitles','Embedded Hebrew subtitle cache','Requested titles only; resumes in chunks while playback is idle'),
+ ('media-torrent-metadata','Verified torrent metadata retention','One source while idle; 30 seconds between attempts; no video re-audit'),
  ('media-catalogue-collections','Jellyfin collections','Every 30 minutes'),
  ('media-cleanup','Download retention cleanup','Hourly'),
  ('media-worker-status','Worker status counters','1 minute after previous snapshot'),
