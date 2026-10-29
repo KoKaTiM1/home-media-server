@@ -43,6 +43,18 @@ class FirstSweepTests(unittest.TestCase):
         self.assertEqual(self.f.first_sweep_candidate(),((1,'movie:tt0000001'),True))
         with sqlite3.connect(self.path) as c:
             self.assertEqual(c.execute("SELECT outcome FROM verification_sweep_attempts WHERE key='movie:tt0000000'").fetchone()[0],'passed')
+    def test_priority_order_reaches_prepared_titles_beyond_first_window(self):
+        with sqlite3.connect(self.path) as c:
+            c.execute("UPDATE verification_sweep_attempts SET priority=200 WHERE key='movie:tt0099999'")
+            c.execute("UPDATE validation SET priority=200 WHERE key='movie:tt0099999'")
+        self.assertEqual(self.f.first_sweep_candidate(),((1,'movie:tt0099999'),True))
+    def test_series_parent_metadata_wait_is_respected(self):
+        with sqlite3.connect(self.path) as c:
+            for table in ('validation','verification_sweep_attempts'):
+                c.execute(f"UPDATE {table} SET key='series:tt0000000:1:1' WHERE key='movie:tt0000000'")
+            c.execute("INSERT INTO metadata_waits VALUES('series:tt0000000',?)",(time.time()+600,))
+        self.assertEqual(self.f.first_sweep_candidate(),((1,'movie:tt0000001'),True))
+
     def test_snapshot_already_exists_needs_no_write_lock(self):
         with sqlite3.connect(self.path) as c:
             c.execute('BEGIN IMMEDIATE')
