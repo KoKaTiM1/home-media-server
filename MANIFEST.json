@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-10-29T03:28:29.944100+00:00",
+  "created_utc": "2026-10-29T03:34:07.801226+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -184,7 +184,7 @@
     "plugin-source/dynamic-library/Jellyfin.Plugin.DynamicLibrary/Extensions/ActionContextExtensions.cs": "4544ab7b9a4ea4b596e8755c7afaa459332a2b3c2addbf22524747aadc806739",
     "plugin-source/dynamic-library/Jellyfin.Plugin.DynamicLibrary/Filters/DynamicItemEndpointsFilter.cs": "3235777d8a0ef7f93af6c8e155ecd1e8091b1b6f7668531016adf0f3784c1e34",
     "plugin-source/dynamic-library/Jellyfin.Plugin.DynamicLibrary/Filters/HomeBrowseFilter.cs": "a9558185c851ff6bc55fdda82d15233caa3555f878579747af8fea41fde86d1e",
-    "plugin-source/dynamic-library/Jellyfin.Plugin.DynamicLibrary/Filters/HomeCatalogueResultFilter.cs": "4fa51d7ba0365bd9854f04b94166eeceb9211d935b9f919dd8edb2b8aa8d7169",
+    "plugin-source/dynamic-library/Jellyfin.Plugin.DynamicLibrary/Filters/HomeCatalogueResultFilter.cs": "f2dc5638ad9399dba35d077263aedfef6caed095bc36bac4f9c7263cc774a8bc",
     "plugin-source/dynamic-library/Jellyfin.Plugin.DynamicLibrary/Filters/HomeRecheckDeleteFilter.cs": "f6e2639daaee85c303b5cbbdf7f0da77817c89b077084e59c31c3df874061fb7",
     "plugin-source/dynamic-library/Jellyfin.Plugin.DynamicLibrary/Filters/HomeYearSortFilter.cs": "ff6408d2c61eeb6106c42a5e621f0d55b0761da18f9f0f378c9925506bd707fa",
     "plugin-source/dynamic-library/Jellyfin.Plugin.DynamicLibrary/Filters/ImageFilter.cs": "b5227f4bafc24416435b7b38c6c1f40da24f09235ddb2081daa2ee66f89b033a",
@@ -195,7 +195,7 @@
     "plugin-source/dynamic-library/Jellyfin.Plugin.DynamicLibrary/Filters/SeasonEpisodeFilter.cs": "3b4771fee83f305157a7ab892bb360b35630b13c24dbccf4a8e0b566f1364ade",
     "plugin-source/dynamic-library/Jellyfin.Plugin.DynamicLibrary/Filters/SubtitleFilter.cs": "b4e831e07fb57e942d3287b7fe8955b7d17499ea1e481b0a773d925fd33605ad",
     "plugin-source/dynamic-library/Jellyfin.Plugin.DynamicLibrary/Filters/VideoStreamFilter.cs": "536bf0fda88a171c2d2048e1dc3a4f9160f076541e3fd07fd33ee54a3f63e93c",
-    "plugin-source/dynamic-library/Jellyfin.Plugin.DynamicLibrary/Jellyfin.Plugin.DynamicLibrary.csproj": "309db5a4f3966896565a47430198ccc42350e5240ddec583f8701e4c61dcef29",
+    "plugin-source/dynamic-library/Jellyfin.Plugin.DynamicLibrary/Jellyfin.Plugin.DynamicLibrary.csproj": "d34800e12942b1406e8f41c5643182ddb60ab277cd50dcea7614deb671e04fc5",
     "plugin-source/dynamic-library/Jellyfin.Plugin.DynamicLibrary/Models/AIOStreamsModels.cs": "b9d1ae7e7104e7409e27a19c0b454914998c2b79b3b7e7536b05b883e5b08c9d",
     "plugin-source/dynamic-library/Jellyfin.Plugin.DynamicLibrary/Models/AniListModels.cs": "5f591bd83a993dbbee9357a9301d2df7290486ca0be8a0fd91fca8aab8bccd69",
     "plugin-source/dynamic-library/Jellyfin.Plugin.DynamicLibrary/Models/DynamicUri.cs": "2f0c100f52497b8fe0d326bb9d36bac39eaf399e0ece55fd9ca640e71dbc45c6",

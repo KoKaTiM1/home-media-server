@@ -382,7 +382,11 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
                     if (context.HttpContext.Items["HomeAudioStreamIndex"] is int requestedProbeAudio)
                         infoUri += "&audio=" + requestedProbeAudio;
                     var client = clients.CreateClient();
-                    client.Timeout = TimeSpan.FromSeconds(30);
+                    // Preparation can now spend up to45s resolving a slow but
+                    // valid torrent. Keep the caller alive long enough to
+                    // receive its result, with a small response/serialization
+                    // margin rather than cancelling at the old30s boundary.
+                    client.Timeout = TimeSpan.FromSeconds(50);
                     var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
                     options.Converters.Add(new JsonStringEnumConverter());
                     var info = await client.GetFromJsonAsync<Prepared>(infoUri, options,
