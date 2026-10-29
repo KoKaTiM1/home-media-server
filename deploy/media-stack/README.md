@@ -121,6 +121,9 @@ checks yield throughout startup. Counter scans also yield, keeping their previou
 snapshot. Images/maintenance requests do not renew the lease. The normal server batch starts
 at most 20 probes or runs up to eight minutes before starting another probe.
 Failed titles are retained and retry with backoff, not rediscovered from scratch.
+Foreground title preparation also releases idle TorrServer entries explicitly
+owned by background verification. It checks for active readers twice and never
+targets managed downloads, unrelated torrents, the requested title or watch data.
 
 OMV Diagnostics > Media workers displays schedules, health, current work and
 queue/pass/failure counters. See [omv-monitor/README.md](omv-monitor/README.md).

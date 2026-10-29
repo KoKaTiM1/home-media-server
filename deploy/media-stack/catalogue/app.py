@@ -59,6 +59,9 @@ DETAIL_LIMIT = threading.Semaphore(1)
 DETAIL_SECONDS = 12
 DETAIL_LOCK = threading.Lock()
 DETAIL_RECENT = {}
+BACKGROUND_TORRENTS = DATA / 'background-torrents.tsv'
+FOREGROUND_CLEANUP_LOCK = threading.Lock()
+FOREGROUND_CLEANUP = {'event': None, 'protected': set()}
 
 
 
@@ -251,6 +254,99 @@ def torr_headers():
 
 def torr(data,timeout=12):
     return fetch(TORR+'/torrents',data,torr_headers(),timeout=timeout)
+
+
+def record_background_torrent(key,infohash,force=False):
+    """Remember server TorrServer work that may be discarded for playback."""
+    if not force and not getattr(BUDGET,'validation_background',False):return
+    if not re.fullmatch(r'(?:movie:tt\d{5,12}|series:tt\d{5,12}:\d+:\d+)',key):return
+    if not re.fullmatch(r'[a-f0-9]{40}',infohash):return
+    DATA.mkdir(parents=True,exist_ok=True)
+    with BACKGROUND_TORRENTS.open('a+',encoding='ascii') as ledger:
+        fcntl.flock(ledger,fcntl.LOCK_EX)
+        ledger.write(f'{time.time():.3f}\t{key}\t{infohash}\n')
+        ledger.flush()
+        fcntl.flock(ledger,fcntl.LOCK_UN)
+
+
+def background_torrent_records():
+    if not BACKGROUND_TORRENTS.is_file():return []
+    with BACKGROUND_TORRENTS.open('a+',encoding='ascii') as ledger:
+        fcntl.flock(ledger,fcntl.LOCK_SH)
+        ledger.seek(0);lines=ledger.readlines()
+        fcntl.flock(ledger,fcntl.LOCK_UN)
+    records=[]
+    for line in lines[-4096:]:
+        try:
+            created,key,infohash=line.rstrip('\n').split('\t')
+            created=float(created)
+        except ValueError:continue
+        if (re.fullmatch(r'(?:movie:tt\d{5,12}|series:tt\d{5,12}:\d+:\d+)',key)
+            and re.fullmatch(r'[a-f0-9]{40}',infohash)):
+            records.append((created,key,infohash))
+    return records
+
+
+def retain_background_torrent_records(removed):
+    if not removed or not BACKGROUND_TORRENTS.is_file():return
+    with BACKGROUND_TORRENTS.open('a+',encoding='ascii') as ledger:
+        fcntl.flock(ledger,fcntl.LOCK_EX)
+        ledger.seek(0);lines=ledger.readlines();ledger.seek(0);ledger.truncate()
+        for line in lines[-4096:]:
+            try:infohash=line.rstrip('\n').split('\t')[2]
+            except (ValueError,IndexError):continue
+            if infohash not in removed:ledger.write(line)
+        ledger.flush();fcntl.flock(ledger,fcntl.LOCK_UN)
+
+
+def cleanup_background_torrents():
+    records=background_torrent_records()
+    by_hash={}
+    for created,key,infohash in records:by_hash.setdefault(infohash,[]).append((created,key))
+    with FOREGROUND_CLEANUP_LOCK:protected=set(FOREGROUND_CLEANUP['protected'])
+    candidates=[infohash for infohash,owners in by_hash.items()
+                if not any(key in protected for _,key in owners)]
+    removed=set()
+    def discard(infohash):
+        with FOREGROUND_CLEANUP_LOCK:
+            current=set(FOREGROUND_CLEANUP['protected'])
+        if any(key in current for _,key in by_hash[infohash]):return False
+        try:
+            cache=fetch(TORR+'/cache',{'action':'get','hash':infohash},torr_headers(),timeout=.75) or {}
+            if cache.get('Readers'):return False
+            try:torr({'action':'get','hash':infohash},timeout=.75)
+            except urllib.error.HTTPError as error:
+                if error.code==404:return True
+                raise
+            cache=fetch(TORR+'/cache',{'action':'get','hash':infohash},torr_headers(),timeout=.75) or {}
+            if cache.get('Readers'):return False
+            torr({'action':'drop','hash':infohash},timeout=.75)
+            return True
+        except (OSError,TimeoutError,ValueError,urllib.error.URLError):return False
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for infohash,dropped in zip(candidates,pool.map(discard,candidates)):
+            if dropped:removed.add(infohash)
+    retain_background_torrent_records(removed)
+    if removed:log(f'Foreground cleanup released {len(removed)} idle background torrents')
+
+
+def start_foreground_cleanup(key):
+    with LIVE_LOCK:
+        active_key=LIVE['key'] if LIVE['active']>0 else None
+    with FOREGROUND_CLEANUP_LOCK:
+        FOREGROUND_CLEANUP['protected'].add(key)
+        if active_key:FOREGROUND_CLEANUP['protected'].add(active_key)
+        event=FOREGROUND_CLEANUP['event']
+        if event is not None and not event.is_set():return event
+        event=threading.Event()
+        FOREGROUND_CLEANUP['event']=event
+    def work():
+        try:cleanup_background_torrents()
+        finally:
+            with FOREGROUND_CLEANUP_LOCK:FOREGROUND_CLEANUP['protected'].clear()
+            event.set()
+    threading.Thread(target=work,daemon=True).start()
+    return event
 
 
 def identity(kind, imdb, season=None, episode=None):
@@ -804,7 +900,9 @@ def resolve(key,deadline=None):
             except (ClientCancelled,PlaybackBusy,Checkpoint):raise
             except Exception:pass
             if not status.get('file_stats'):
-                try:status=torr({'action':'add','link':(exact or {}).get('link') or candidate.get('torrentUrl') or magnet,'save_to_db':False},timeout=min(2,remaining(2)))
+                try:
+                    record_background_torrent(key,infohash)
+                    status=torr({'action':'add','link':(exact or {}).get('link') or candidate.get('torrentUrl') or magnet,'save_to_db':False},timeout=min(2,remaining(2)))
                 except (ClientCancelled,PlaybackBusy,Checkpoint):raise
                 except Exception:pass
             while not status.get('file_stats') and time.monotonic()<end:
@@ -1071,6 +1169,7 @@ def detail_playback_busy():
 
 def warm_details(key):
     # No queue: only the currently opened playable title may occupy the slot.
+    start_foreground_cleanup(key)
     if not DETAIL_LIMIT.acquire(blocking=False):return False
     with DETAIL_LOCK:
         now=time.monotonic()
@@ -1120,8 +1219,12 @@ def prepared(key,background=False,audio_index=None,cancel=None):
     speculative=getattr(BUDGET,'speculative',False)
     deadline=time.monotonic()+(DETAIL_SECONDS if speculative else WORK_SECONDS if background else PREPARATION_SECONDS)
     if background:deadline=min(deadline,getattr(BUDGET,'worker_deadline',deadline))
+    cleanup=None if background else start_foreground_cleanup(key)
     F.consume_rechecks()
     with validation_attempt(background),request_budget(deadline,cancel),playback_phase(key,'preparation'):
+        # Give idle background transport a short head start on releasing memory.
+        # Cleanup remains asynchronous if TorrServer is slow or unavailable.
+        if cleanup is not None and not cleanup.is_set():cleanup.wait(min(1.5,remaining(1.5)))
         with LOCKS_LOCK:lock=LOCKS.setdefault(key,threading.Lock())
         # Speculative navigation never waits behind actual Play or a worker.
         if speculative:

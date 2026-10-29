@@ -98,12 +98,13 @@ class EmbeddedSubtitles:
                     or reason.startswith(('TorrServer restart or OOM','Host memory pressure','TorrServer memory pressure','Resource status unavailable')))
         except (OSError,ValueError,sqlite3.Error):return True
     def busy(self):return self.resources_busy() or self.g['F'].foreground_busy() or self.g['detail_playback_busy']()
-    def transport(self,selected):
+    def transport(self,key,selected):
         try:status=self.g['torr']({'action':'get','hash':selected['hash']},timeout=2)
         except urllib.error.HTTPError as error:
             if error.code!=404:raise
             status={}
         if not status.get('file_stats'):
+            self.g['record_background_torrent'](key,selected['hash'],force=True)
             status=self.g['torr']({'action':'add','link':selected.get('link') or 'magnet:?xt=urn:btih:'+selected['hash'],'save_to_db':False},timeout=2)
         deadline=time.monotonic()+self.g['remaining'](30)
         while not status.get('file_stats') and time.monotonic()<deadline:
@@ -153,7 +154,7 @@ class EmbeddedSubtitles:
             return state['busy']
         try:
             with self.g['request_budget'](deadline,cancel),self.g['REL'].lock('torrent:'+selected['hash']):
-                self.g['remaining'](1);self.transport(selected)
+                self.g['remaining'](1);self.transport(key,selected)
                 if not info:
                     info=self.probe(key,selected)
                     tracks=[s for s in info.get('streams',[]) if s.get('codec_type')=='subtitle' and s.get('codec_name') in TEXT_CODECS and s.get('tags',{}).get('language') in ('heb','he','iw')]
