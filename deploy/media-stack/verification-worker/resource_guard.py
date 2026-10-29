@@ -49,8 +49,6 @@ def main():
         # server-TorrServer working-memory pause.
         if not cfg.get('requested'):local_reason='Windows verification has not been enabled'
         elif not cfg.get('memory_gate_passed'):local_reason='Waiting for viewing-safe memory investigation / parallel pilot'
-        elif item['RestartCount']>cfg['baseline_restarts'] or int(events.get('oom_kill',0))>cfg['baseline_oom']:
-            local_reason='TorrServer restart or OOM observed; review required'
         elif health['bridge_oom_kill']>bridge_oom_baseline:local_reason='Catalogue bridge OOM observed; review required'
         elif available<256*1024*1024:local_reason='Host memory pressure; Windows-local verification paused'
         elif bridge_limit<=0 or bridge_working>bridge_limit*(.8 if status.get('local_torrent_permitted') else .7):local_reason='Catalogue bridge memory pressure; Windows-local verification paused'

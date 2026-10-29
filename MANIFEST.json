@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-10-29T14:15:11.210626+00:00",
+  "created_utc": "2026-10-29T16:10:33.845067+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -115,10 +115,10 @@
     "deploy/media-stack/verification-worker/checks/run-launcher-checks.py": "6b7e4d94f880d96767771a86e2abb94fc29271e7b9e713aed935f0f5562e36b4",
     "deploy/media-stack/verification-worker/checks/test-launchers.ps1": "d685fb68f9285b2d026f5412213aec0855b4181c99c4d68f8bb933f9c02b3094",
     "deploy/media-stack/verification-worker/config.example.json": "03ff9c4952aa15c809c010485b74145daef9b8712c646f0988894c09e744c817",
-    "deploy/media-stack/verification-worker/coordinator.py": "6369222232c3584eea16d68892a646cb96b69ac30a6d0b50be199c459884ddd0",
+    "deploy/media-stack/verification-worker/coordinator.py": "d6aec4ffc8861f25bba504e606141f26f5dfd6629a57410e2711e75f9e2b896e",
     "deploy/media-stack/verification-worker/local_verifier.py": "3e259657abdcb6c3b758786a0936ab3ffb209c2d954eef8c6ed53c67bdba0e3a",
     "deploy/media-stack/verification-worker/package.py": "c87036c514711db1ca2f018cdb546d76e6f0194bd7dde4ad67b347034935e8f6",
-    "deploy/media-stack/verification-worker/resource_guard.py": "cc8a839a1b74f7b34c3c0acccf320de6eefb80ee4894afaa1ad437a3718c899e",
+    "deploy/media-stack/verification-worker/resource_guard.py": "3bfdc21970ab6f4d2c187e9eeaf1881a127666279d5c72c4b813f6ea69b6e4b7",
     "deploy/media-stack/verification-worker/verification_worker.py": "d2dfdf146743110061727ea9467cba7afbbfd11800ea05bde4a64c978593605b",
     "deploy/media-stack/verification-worker/worker.ps1": "71e6d9c48675d1289e3bb388d43a05e034e119c337ba2d857ddbe54c9b4fe521",
     "deploy/omv-sharedfolders.json": "9ad80848d00a1a14581a799eb7443dbdc1cfda6a6b3a3716a1beb21a018457f5",

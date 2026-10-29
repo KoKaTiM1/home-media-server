@@ -20,12 +20,27 @@ def claim_wait(jobs,worker,seconds,capabilities=None):
     task=jobs.claim(worker,capabilities);end=time.monotonic()+seconds
     while task is None and time.monotonic()<end:
         status=jobs.status()
-        if not status['enabled']:break
+        local_ready=('local-torrent-v1' in (capabilities or [])
+                     and status.get('local_torrent_enabled')
+                     and status.get('local_torrent_permitted')
+                     and status.get('local_torrent_backends',0)>0)
+        if not status['enabled'] and not local_ready:break
         if status['jobs'].get('pending',0) and status['jobs'].get('leased',0)<status['windows_capacity']:
             task=jobs.claim(worker,capabilities)
             if task:break
         time.sleep(min(.25,max(0,end-time.monotonic())))
     return task
+
+def client_status(jobs,capabilities=None):
+    status=jobs.status()
+    local_ready=('local-torrent-v1' in (capabilities or [])
+                 and status.get('local_torrent_enabled')
+                 and status.get('local_torrent_permitted')
+                 and status.get('local_torrent_backends',0)>0)
+    if not status['enabled'] and local_ready:
+        status['enabled']=True
+        status['reason']=status.get('local_torrent_reason','Windows-local verification permitted')
+    return status
 
 class Server(ThreadingHTTPServer):
     daemon_threads=True
@@ -72,7 +87,7 @@ class Handler(BaseHTTPRequestHandler):
                 wait=p.get('wait_seconds',10)
                 if not isinstance(wait,(int,float)) or not 0<=wait<=15:raise InvalidJob('Invalid claim wait')
                 task=claim_wait(q,worker,wait,p.get('capabilities'))
-                return self.reply(200,{'task':task,'status':q.status()})
+                return self.reply(200,{'task':task,'status':client_status(q,p.get('capabilities'))})
             if self.path==PREFIX+'/renew':return self.reply(200,{'active':q.renew(worker,p.get('task',{}),p.get('phase'))})
             if self.path==PREFIX+'/result':
                 result=p.get('result',{});ack=q.receive(worker,p.get('task',{}),result)

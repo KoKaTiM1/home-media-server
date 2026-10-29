@@ -24,7 +24,7 @@ def main():
     if git(repo,'status','--porcelain',capture=True).strip():raise RuntimeError('Backup checkout has local changes; review before updating')
     if git(repo,'branch','--show-current',capture=True).strip()!='main':raise RuntimeError('Backup checkout must use main')
     remote=git(repo,'remote','get-url','origin',capture=True).strip()
-    if remote!='git@github.com:KoKaTiM1/home-media-server.git':raise RuntimeError('Unexpected backup destination')
+    if remote!='git@github.com:<GITHUB_OWNER>/home-media-server.git':raise RuntimeError('Unexpected backup destination')
     git(repo,'fetch','origin','main')
     git(repo,'merge','--ff-only','origin/main')
     with tempfile.TemporaryDirectory(prefix='home-media-export-') as temporary:
