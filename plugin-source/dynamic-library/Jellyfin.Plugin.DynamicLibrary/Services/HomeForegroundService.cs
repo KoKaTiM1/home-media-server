@@ -10,7 +10,7 @@ public sealed class HomeForegroundService
     private readonly object gate = new();
     public void Touch(HttpRequest request, string controller, string action)
     {
-        var playbackInfo = (controller is "Items" or "Videos")
+        var playbackInfo = (controller is "Items" or "Videos" or "MediaInfo")
             && action.Contains("PlaybackInfo", StringComparison.OrdinalIgnoreCase);
         if ((!HttpMethods.IsGet(request.Method) && !(playbackInfo && HttpMethods.IsPost(request.Method)))
             || request.HttpContext.User.Identity?.IsAuthenticated != true) return;
