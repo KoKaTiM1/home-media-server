@@ -154,11 +154,26 @@ def counts(data=DATA,refresh=False):
         converted=conn.execute("SELECT COUNT(*) FROM validation WHERE state='verified' AND json_extract(proof,'$.audio_policy')=2 AND json_extract(proof,'$.audio_conversion')=1").fetchone()[0]
         add('Passed sources using verified AAC-LC conversion',converted,'Video stays unchanged; sources with direct AAC-LC do not need conversion')
         if conn.execute("SELECT 1 FROM sqlite_master WHERE name='verification_audit'").fetchone():
-            audit=dict(conn.execute("SELECT CASE WHEN completed=0 THEN 'pending' ELSE result END,COUNT(*) FROM verification_audit GROUP BY 1"))
+            audit_by_reason={}
+            for reason,state,count in conn.execute("SELECT reason,CASE WHEN completed=0 THEN 'pending' ELSE result END,COUNT(*) FROM verification_audit GROUP BY 1,2"):
+                audit_by_reason.setdefault(reason,{})[state]=count
+            audit={}
+            for counts_by_state in audit_by_reason.values():
+                for state,count in counts_by_state.items():audit[state]=audit.get(state,0)+count
             summary.update(audit_done=sum(n for state,n in audit.items() if state!='pending'),audit_total=sum(audit.values()))
-            if audit.get('pending',0):
-                for status,label in [('pending','awaiting check'),('passed','passed'),('failed','failed')]:
-                    add('Initial stronger-verification audit — '+label,audit.get(status,0),'Existing titles remain visible until a fresh failure; reports run first')
+            initial=audit_by_reason.get('initial',{});speed=audit_by_reason.get('speed-v6',{})
+            summary.update(initial_v5_done=sum(n for state,n in initial.items() if state!='pending'),
+                           initial_v5_total=sum(initial.values()),
+                           v6_audit_done=sum(n for state,n in speed.items() if state!='pending'),
+                           v6_audit_total=sum(speed.values()),
+                           v6_audit_pending=speed.get('pending',0),
+                           v6_audit_passed=speed.get('passed',0),
+                           v6_audit_failed=speed.get('failed',0))
+            for reason,label in [('initial','Initial v5 audit'),('speed-v6','V6 speed audit')]:
+                counts_by_state=audit_by_reason.get(reason,{})
+                if counts_by_state.get('pending',0):
+                    for status,status_label in [('pending','awaiting check'),('passed','passed'),('failed','failed')]:
+                        add(label+' — '+status_label,counts_by_state.get(status,0),'Earlier proofs remain recorded; a failed fresh check updates current availability')
             v5=conn.execute("SELECT COUNT(*),SUM(CASE WHEN json_extract(proof,'$.audio_conversion')=1 THEN 1 ELSE 0 END),SUM(CASE WHEN checked>? THEN 1 ELSE 0 END) FROM validation WHERE state='verified' AND json_extract(proof,'$.version')>=5",(now-3600,)).fetchone()
             v6=conn.execute("SELECT COUNT(*) FROM validation WHERE state='verified' AND json_extract(proof,'$.version')=6").fetchone()[0]
             add('Speed-verified v6 sources',v6,'Exact decoded file plus 1.5x bitrate delivery; v5 decode evidence reused when unchanged')
@@ -280,9 +295,18 @@ def overview(data=DATA,snapshot=None):
         if 'ready_shows' in values:add('Verified shows',f"{values['ready_shows']:,}",'Distinct indexed shows with at least one passed episode','success')
         add('Not yet decode verified',f'{max(0,total-verified):,}',f"Includes {values.get('pending',0):,} awaiting a check, retries and older proof versions")
         add('Unavailable / retry',f"{values.get('unavailable',0):,}",'Failed outcomes are retained and retried on schedule','error' if values.get('unavailable') else 'muted')
-        audit_total=values.get('audit_total',0);audit_done=values.get('audit_done',0)
-        if audit_total and audit_done<audit_total:
-            add('Initial v5 audit',f'{audit_done:,} / {audit_total:,}',f'{100*audit_done/audit_total:.1f}% complete')
+        v6_total=values.get('v6_audit_total',0);v6_done=values.get('v6_audit_done',0)
+        if v6_total and v6_done<v6_total:
+            detail=(f"{values.get('v6_audit_pending',0):,} awaiting; "
+                    f"{values.get('v6_audit_passed',0):,} passed; {values.get('v6_audit_failed',0):,} failed")
+            add('V6 speed audit',f'{v6_done:,} / {v6_total:,}',detail)
+        else:
+            initial_total=values.get('initial_v5_total',0);initial_done=values.get('initial_v5_done',0)
+            audit_total=values.get('audit_total',0);audit_done=values.get('audit_done',0)
+            if initial_total and initial_done<initial_total:
+                add('Initial v5 audit',f'{initial_done:,} / {initial_total:,}',f'{100*initial_done/initial_total:.1f}% complete')
+            elif not initial_total and audit_total and audit_done<audit_total:
+                add('Verification audit',f'{audit_done:,} / {audit_total:,}',f'{100*audit_done/audit_total:.1f}% complete')
         add('Final passes in last hour',f"{values.get('v5_hour',0):,}",'Latest verified state per title; not a count of decoder operations','success')
     updated=stamp(now)
     queue=data.parent/'verification-worker/queue.sqlite'

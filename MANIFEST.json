@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-10-28T23:26:46.836593+00:00",
+  "created_utc": "2026-10-29T00:11:00.533283+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -87,7 +87,7 @@
     "deploy/media-stack/omv-mobile/mobile.conf": "9c7980c48b1b0b069f9c0670b5cdc96d4c8cbee5275d8ea7ad913076b75b2f37",
     "deploy/media-stack/omv-mobile/mobile.css": "ec6ce6d243ad3c90f3288dc173cb4db127292711191e161c78954fac7c636809",
     "deploy/media-stack/omv-mobile/mobile.js": "8c30ddec320828d2d7163675a49f16d0e063f43891e6b129c1b8b6f1d46352d1",
-    "deploy/media-stack/omv-monitor/README.md": "9762e48d9d4f06334f10b931817a429cd9caa946e9a67d46951011e384caa9ed",
+    "deploy/media-stack/omv-monitor/README.md": "f93f298fc458190c955ce4c2d7833191934cb13979064e3e362ef34ee3691117",
     "deploy/media-stack/omv-monitor/check_live.py": "460de736a39d6904920cdbfc9eb9c60ce4651090adc436956c638e45d87ab467",
     "deploy/media-stack/omv-monitor/component.yaml": "5414cb4da68472b1ddb911a7ebc5cc3745b750deca6f1c87d45c7d1c6a2edc55",
     "deploy/media-stack/omv-monitor/dashboard.yaml": "a67c7fbcbe18679f0c49a9b8e3e164e33ebee1eff833fa38e16b30802b47093e",
@@ -95,7 +95,7 @@
     "deploy/media-stack/omv-monitor/install.py": "4213869b2a3044237bb4b0d38fe88bd4d85d5d903db960c536f8dacd0dd7ddc8",
     "deploy/media-stack/omv-monitor/media-worker-status.service": "1eb94831c9bc38de5fc25247c314345b293e5881c711d1c02cf07da4d8fea0f4",
     "deploy/media-stack/omv-monitor/media-worker-status.timer": "ff774eb1055241aaa89926e44f0016fa74999da29a14a661e3cf42b897e1c40b",
-    "deploy/media-stack/omv-monitor/monitor.py": "beae5a859ff691524f10377945d249770010036fb75d8ee6b08fbb693e246455",
+    "deploy/media-stack/omv-monitor/monitor.py": "7aa679f55f06ad84c831fae36062b75850560ef5de30e87abc5de2515d4c413a",
     "deploy/media-stack/omv-monitor/navigation.yaml": "c5b3c25f85ac7f5c8fb80f905d0d45789b62712a312e7f49c03f6531e0ec6576",
     "deploy/media-stack/omv-monitor/route.yaml": "59159d3a649c96e19e2af8b7a1e6b79d05228a9a195718cc2be9e63afe6b8544",
     "deploy/media-stack/omv-monitor/test_monitor.py": "6d862b4dca58024af1e3446535561f1ceb00014aa1f1abf8f75f2e21b475023f",

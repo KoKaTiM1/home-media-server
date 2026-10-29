@@ -6,7 +6,8 @@ It provides three read-only tabs:
 - **Progress overview**: final v5 passes, currently verified movies and shows,
   keys still lacking proof, retries, final passes in the last hour, PC contribution,
   connected Windows lanes, current operation and the latest categorized PC issue.
-  The initial-audit card disappears after that one-time audit completes.
+  The V6 speed-audit card shows its own passed, failed and pending counts; it is
+  separate from the completed initial V5 audit.
 - **Workers and schedules**: server and optional Windows jobs, health, running/waiting/disabled
   state, schedule, next run/countdown, last start/result and current check.
 - **Catalogue queue and progress**: pending movies/shows/episodes, failed and
