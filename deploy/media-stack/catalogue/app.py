@@ -125,6 +125,14 @@ def playback_error_details(error):
         details['error_category']='timeout'
     elif isinstance(error,sqlite3.OperationalError):
         details['error_category']='local_database'
+        # SQLite exposes stable numeric/type codes without requiring the raw
+        # message, which can include filenames or query details. Keep only
+        # lock/busy class diagnostics needed to distinguish contention.
+        code=getattr(error,'sqlite_errorcode',None)
+        name=getattr(error,'sqlite_errorname',None)
+        if isinstance(code,int):details['sqlite_errorcode']=code
+        if isinstance(name,str) and re.fullmatch(r'SQLITE_[A-Z0-9_]{1,64}',name):
+            details['sqlite_errorname']=name
     elif isinstance(error,urllib.error.URLError):
         details['error_category']='network'
     elif isinstance(error,OSError):
