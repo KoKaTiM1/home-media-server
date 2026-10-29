@@ -1012,7 +1012,7 @@ def resolve(key,deadline=None):
                 try:status=torr({'action':'get','hash':infohash},timeout=min(2,remaining(2)))
                 except (ClientCancelled,PlaybackBusy,Checkpoint):raise
                 except Exception:pass
-                if not status.get('file_stats'):time.sleep(min(2 if background else .2,remaining(2)))
+                if not status.get('file_stats'):time.sleep(min(2,remaining(2)))
             if not status.get('file_stats'):
                 if deadline and time.monotonic()>=deadline:raise Checkpoint('Metadata checkpoint')
                 if background and time.time()-metadata_started<METADATA_SECONDS:
