@@ -118,7 +118,7 @@ no active TorrServer readers; the requested/active title's persisted physical
 torrent hash is protected even when a season pack was recorded under a different
 episode key. Any active stream, managed downloads and watch state are excluded.
 Immediate Play waits at most 1.5 seconds
-for this cleanup and then continues even if cleanup is incomplete. Immediate Play has a 45-second
+for this cleanup and then continues even if cleanup is incomplete. Immediate Play has a 60-second
 preparation budget during the current playback trial and may need to finish
 work. Slow peers and client
 buffering can still delay startup. Sanitized `details_warm`, `prepared_cache`,
@@ -144,7 +144,7 @@ Temporary HLS files use the configured Jellyfin cache.
 
 | Server request stage | Bound / failure behavior |
 | --- | --- |
-| Foreground preparation | Shared 45-second trial budget for lock waits, provider calls, resolution, probing, conversion checks and subtitle wait |
+| Foreground preparation | Shared 60-second budget; Jellyfin caller allows 70 seconds and the navigation lease lasts 75 seconds. Foreground metadata attempts start a fresh clock instead of inheriting a background attempt's age. |
 | Plugin request for preparation | 30-second HTTP timeout; failure returns `NoCompatibleStream`, never a successful empty source list |
 | Initial stream data | Separate 15-second first-byte budget after preparation; successful video headers require actual data |
 | Background validation | Eight-minute resumable batch slice; a torrent may use up to 90 seconds total to expose its file list, while a background producer yields after 45 seconds, temporarily skips that candidate for five minutes, cools that title for 60 seconds, and tries other titles/candidates. The unresolved source remains pending rather than being marked unavailable. Selected-file delivery still uses a separate 45-second useful-progress clock. |

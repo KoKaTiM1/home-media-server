@@ -116,7 +116,7 @@ quota and maintenance issues were repaired and checked.
 
 Source verification pauses during playback and yields to real client navigation.
 A 30-second lease now covers home navigation and opening movie/show detail pages;
-the Jellyfin PlaybackInfo request renews it for 60 seconds so background torrent
+the Jellyfin PlaybackInfo request renews it for 75 seconds so background torrent
 checks yield throughout startup. Counter scans also yield, keeping their previous
 snapshot. Images/maintenance requests do not renew the lease. The normal server batch starts
 at most 20 probes or runs up to eight minutes before starting another probe.
@@ -199,6 +199,6 @@ and existing user permissions determine whether Delete is visible.
 
 Optional Windows source verification is implemented separately from metadata fetching. See [worker operation and recovery](verification-worker/README.md). The server remains authoritative. The first 20-title PC pilot completed with 19 verified and one unavailable result; continuous PC assistance is now enabled under the memory and playback guards. Issues #3 and #4 track the remaining memory investigation and physical offline/reconnect check.
 
-Windows decoding remains limited to four active operations. The queue can hold up to32 operations. Server preparation slots1–16 are active; slots17–32 are paused after saturating the bridge's two-CPU quota without filling the queue. They remain under the playback, TorrServer, host-RAM and catalogue-bridge memory guards until source metadata resolution improves.
+Windows decoding remains limited to four active operations. The queue can hold up to32 operations. Server preparation slots1–4 are active; slots5–32 are paused to reduce shared torrent metadata pressure during playback recovery. Windows-local verification resumes in bounded batches under the existing guards.
 
 Streaming verification v6 adds a 1.5× bitrate delivery check. Existing matching v5 sources reuse their decoded evidence and receive speed-only upgrades; changed sources require both checks. Slow sources are excluded for six hours while alternatives are tried. Background source-metadata waits now yield after 45 seconds so the producer can try another source or title without marking the pending title unavailable. See [delivery-speed evidence](catalogue/README.md#v6-delivery-speed-evidence) and the [background validation limits](catalogue/README.md#playback-and-audio).

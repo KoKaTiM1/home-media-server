@@ -27,7 +27,7 @@ public sealed class HomeForegroundService
         {
             var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             var path = "/catalogue/.foreground-read-until";
-            var lease = now + (playbackInfo ? 60 : 30);
+            var lease = now + (playbackInfo ? 75 : 30);
             long currentLease = 0;
             try
             {

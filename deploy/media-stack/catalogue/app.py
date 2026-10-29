@@ -68,7 +68,7 @@ FOREGROUND_CLEANUP = {'event': None, 'protected': set(), 'hashes': set()}
 # One request budget follows nested network/probe operations. It is thread-local
 # so a foreground waiter cannot change an in-flight background validation.
 BUDGET = threading.local()
-PREPARATION_SECONDS = 45
+PREPARATION_SECONDS = 60
 FIRST_DATA_SECONDS = 15
 
 class PlaybackBusy(RuntimeError): pass
@@ -914,7 +914,7 @@ def resolve(key,deadline=None):
         try:
             status={}
             work=REL.checkpoint(key)
-            metadata_started=work.get('metadata_started',time.time()) if work.get('metadata_hash')==infohash else time.time()
+            metadata_started=work.get('metadata_started',time.time()) if background and work.get('metadata_hash')==infohash else time.time()
             metadata_age=max(0,time.time()-metadata_started)
             # A background producer should not occupy a slot for the full
             # metadata timeout. Yield after 45s, retain the title and

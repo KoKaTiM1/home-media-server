@@ -386,7 +386,7 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
                     // valid torrent. Keep the caller alive long enough to
                     // receive its result, with a small response/serialization
                     // margin rather than cancelling at the old30s boundary.
-                    client.Timeout = TimeSpan.FromSeconds(50);
+                    client.Timeout = TimeSpan.FromSeconds(70);
                     var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
                     options.Converters.Add(new JsonStringEnumConverter());
                     var info = await client.GetFromJsonAsync<Prepared>(infoUri, options,
