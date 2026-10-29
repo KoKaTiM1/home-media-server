@@ -111,8 +111,9 @@ audits always probe and decode fresh samples. Subtitle choices are refreshed
 separately; reuse never advances the stored verification timestamp.
 It may fetch torrent metadata and small video/audio probe samples; it does not
 request a managed full-film download. Failed speculative attempts do not revoke
-existing verification or drop torrents. Immediate Play still has its ordinary
-27-second preparation budget and may need to finish work. Slow peers and client
+existing verification or drop torrents. Immediate Play has a 45-second
+preparation budget during the current playback trial and may need to finish
+work. Slow peers and client
 buffering can still delay startup. Sanitized `details_warm`, `prepared_cache`,
 `subtitle_lookup`, `upstream_open` and `stream_ready` events separate preparation,
 cache reuse and the initial video-data wait from long-running transfer logs.
@@ -136,7 +137,7 @@ Temporary HLS files use the configured Jellyfin cache.
 
 | Server request stage | Bound / failure behavior |
 | --- | --- |
-| Foreground preparation | Shared 27-second budget for lock waits, provider calls, resolution, probing, conversion checks and subtitle wait |
+| Foreground preparation | Shared 45-second trial budget for lock waits, provider calls, resolution, probing, conversion checks and subtitle wait |
 | Plugin request for preparation | 30-second HTTP timeout; failure returns `NoCompatibleStream`, never a successful empty source list |
 | Initial stream data | Separate 15-second first-byte budget after preparation; successful video headers require actual data |
 | Background validation | Eight-minute resumable batch slice; a torrent may use up to 90 seconds total to expose its file list, while a background producer yields after 45 seconds, temporarily skips that candidate for five minutes, cools that title for 60 seconds, and tries other titles/candidates. The unresolved source remains pending rather than being marked unavailable. Selected-file delivery still uses a separate 45-second useful-progress clock. |

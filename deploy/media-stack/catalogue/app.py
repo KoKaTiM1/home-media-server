@@ -65,7 +65,7 @@ DETAIL_RECENT = {}
 # One request budget follows nested network/probe operations. It is thread-local
 # so a foreground waiter cannot change an in-flight background validation.
 BUDGET = threading.local()
-PREPARATION_SECONDS = 27
+PREPARATION_SECONDS = 45
 FIRST_DATA_SECONDS = 15
 
 class PlaybackBusy(RuntimeError): pass
