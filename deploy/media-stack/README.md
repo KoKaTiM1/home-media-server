@@ -115,9 +115,10 @@ quota and maintenance issues were repaired and checked.
 | `media-worker-status` | Two minutes after boot, then one minute after completion; cached OMV counters |
 
 Source verification pauses during playback and yields to real client navigation.
-A 30-second metadata-navigation lease gives initial foreground reads priority;
-counter scans also yield, keeping their previous snapshot. Images/maintenance
-requests do not renew the lease. The normal server batch starts
+A 30-second lease now covers home navigation and opening movie/show detail pages;
+the Jellyfin PlaybackInfo request renews it for 60 seconds so background torrent
+checks yield throughout startup. Counter scans also yield, keeping their previous
+snapshot. Images/maintenance requests do not renew the lease. The normal server batch starts
 at most 20 probes or runs up to eight minutes before starting another probe.
 Failed titles are retained and retry with backoff, not rediscovered from scratch.
 

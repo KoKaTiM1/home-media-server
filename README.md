@@ -112,7 +112,7 @@ in this hardware overview.
   reboot and expire automatically without restarting playback services.
 - Unavailable favorites stay visible without losing hearts or watched state.
   Normal online browsing continues to hide unavailable sources.
-- Shared 27-second foreground preparation budget, a 30-second plugin HTTP
+- Shared 45-second foreground preparation budget, a 50-second plugin HTTP
   timeout and a separate 15-second initial stream-data budget. Failed playback
   returns an explicit error; unfinished preparation resumes in background and the viewer can retry Play.
 - Details-page source preparation: one job, up to 12 seconds, suppressed during
