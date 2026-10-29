@@ -63,6 +63,14 @@ fencing and idempotent result receipts. Queued work cannot exceed two jobs per
 configured worker, subject to a thirty-two-job total bound. One title cannot have
 two active authoritative owners. Debian continues independently when Windows is off.
 
+The initial V6 sweep takes a durable snapshot of the eligible source queue and
+gives each untouched key one full attempt before retry work resumes. A first
+attempt is limited to four minutes overall; the Windows decoder stops with a
+30-second receipt margin. Checkpoints are deferred, not counted as failures.
+After the sweep, existing retry/cooldown rules apply. Retry jobs keep the full
+470-second decoder budget, with a 500-second server receipt deadline. Candidate
+selection and alternate-source checks are unchanged.
+
 Temporary local source failures use durable title cooldowns: 5 minutes, 15 minutes,
 1 hour, then 6 hours on repeated failures. Audit and discovery selectors respect
 the same cooldowns. A pass or explicit new manual recheck clears the retry history.
@@ -82,7 +90,7 @@ separate measurements. No raw error text or source URLs appear in these metrics.
 
 Build the worker Dockerfile with an allowlisted context containing catalogue/*.py
 and the verifier sources; exclude secrets and runtime data. package.py produces
-verification-worker-v0.4.1.zip from the worker 0.4.1 image and torrent backend 0.3.0.
+verification-worker-v0.4.2.zip from the worker 0.4.2 image and torrent backend 0.3.0.
 The archive contains exactly four CMD launchers and no enrolled data or credentials.
 On restore, install the coordinator and resource gate, provision private TLS/token
 configuration, then copy the package to Windows and run Update. The topology is
@@ -93,12 +101,13 @@ Issue #4 tracks throughput; issue #3 tracks the host TorrServer OOM review. The
 100+ distinct completed title checks/hour target requires measurement. Preserve
 all V6 quality checks when evaluating more workers or torrent backends.
 
-## Queue timing and throughput trial (0.4.1)
+## Queue timing and throughput trial (0.4.2)
 
-New whole-title jobs may wait up to eight minutes in the ready queue, then have
-eight minutes from first claim to report their result. Renewing a lease does not
-extend execution time. Windows-local producers handle one title per invocation;
-old decode jobs keep their original deadlines. Each remote producer service needs
+The first sweep gives a title up to four minutes overall; later retry jobs have
+up to 500 seconds from the producer's start. The Windows decoder reserves 30
+seconds for result receipt. Renewing a lease does not extend execution time.
+Windows-local producers handle one title per invocation; existing sample/decode
+jobs keep their original deadlines. Each remote producer service needs
 `TimeoutStartSec=18min`, including the lookahead template.
 
 Results retain safe checkpoint codes and cumulative backend-lock wait / active

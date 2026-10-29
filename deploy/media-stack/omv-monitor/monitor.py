@@ -195,6 +195,19 @@ def counts(data=DATA,refresh=False):
             v6=conn.execute("SELECT COUNT(*) FROM validation WHERE state='verified' AND json_extract(proof,'$.version')=6").fetchone()[0]
             add('Speed-verified v6 sources',v6,'Exact decoded file plus 1.5x bitrate delivery; v5 decode evidence reused when unchanged')
             add('Decoded sources awaiting speed proof',max(0,v5[0]-v6),'Visible during gradual speed audit; failures try alternative torrents')
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='verification_sweeps'").fetchone():
+            sweep=conn.execute('SELECT id,started,baseline_total,completed FROM verification_sweeps ORDER BY id DESC LIMIT 1').fetchone()
+            if sweep:
+                outcomes=dict(conn.execute("SELECT x.outcome,COUNT(*) FROM verification_sweep_attempts x JOIN validation v ON v.key=x.key WHERE x.sweep_id=? AND v.rowid<=(SELECT rowid_highwater FROM verification_sweeps WHERE id=?) AND x.outcome IN ('passed','failed','deferred') GROUP BY x.outcome",(sweep[0],sweep[0])).fetchall())
+                attempted=sum(outcomes.values());remaining=max(0,sweep[2]-attempted)
+                summary.update(first_sweep_total=sweep[2],first_sweep_attempted=attempted,
+                    first_sweep_passed=outcomes.get('passed',0),first_sweep_failed=outcomes.get('failed',0),
+                    first_sweep_deferred=outcomes.get('deferred',0),first_sweep_remaining=remaining,
+                    first_sweep_complete=bool(sweep[3]))
+                detail=(f"{100*attempted/sweep[2]:.1f}% attempted; {outcomes.get('passed',0):,} passed, "
+                        f"{outcomes.get('failed',0):,} failed, {outcomes.get('deferred',0):,} deferred; "
+                        f"{remaining:,} untouched in the starting snapshot") if sweep[2] else 'No eligible titles in the starting snapshot'
+                add('Initial V6 first sweep',f'{attempted:,} / {sweep[2]:,}',detail+('; complete' if sweep[3] else ''))
             summary.update(v5=v5[0],v5_hour=v5[2] or 0)
             add('Passed stronger video/audio checks',v5[0],'Decoded beginning and later samples from the exact selected torrent/file')
             add('Stronger checks — direct audio',v5[0]-(v5[1] or 0))
@@ -312,6 +325,11 @@ def overview(data=DATA,snapshot=None):
                 add('Initial v5 audit',f'{initial_done:,} / {initial_total:,}',f'{100*initial_done/initial_total:.1f}% complete')
             elif not initial_total and audit_total and audit_done<audit_total:
                 add('Verification audit',f'{audit_done:,} / {audit_total:,}',f'{100*audit_done/audit_total:.1f}% complete')
+        if values.get('first_sweep_total') is not None:
+            detail=(f"{100*values.get('first_sweep_attempted',0)/values['first_sweep_total']:.1f}% attempted; " if values['first_sweep_total'] else '')
+            detail+=f"{values.get('first_sweep_passed',0):,} passed, {values.get('first_sweep_failed',0):,} failed, "
+            detail+=f"{values.get('first_sweep_deferred',0):,} deferred; {values.get('first_sweep_remaining',0):,} untouched"
+            add('Initial V6 first sweep',f"{values.get('first_sweep_attempted',0):,} / {values['first_sweep_total']:,}",detail+('; complete' if values.get('first_sweep_complete') else ''))
         add('Final passes in last hour',f"{values.get('v5_hour',0):,}",'Latest verified state per title; not a count of decoder operations','success')
     updated=stamp(now)
     queue=data.parent/'verification-worker/queue.sqlite'

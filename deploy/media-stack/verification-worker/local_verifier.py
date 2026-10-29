@@ -10,7 +10,7 @@ import subprocess
 import time
 
 
-def verify(payload,state,output):
+def verify(payload,state,output,budget_seconds=470):
     import app as a
     from verification_title import validate_task
     from verification_media import execute,validate_result
@@ -30,7 +30,7 @@ def verify(payload,state,output):
         current_phase=name
         tmp=progress.with_suffix('.tmp');tmp.write_text(json.dumps({'phase':name,'updated':time.time()}));tmp.replace(progress)
     a.log=lambda message:None
-    deadline=time.monotonic()+470
+    deadline=time.monotonic()+max(1,min(470,int(budget_seconds)))
     raw_path=state/'raw-samples.json'
     try:raw=json.loads(raw_path.read_text())
     except (OSError,ValueError):raw={}
@@ -119,5 +119,5 @@ def verify(payload,state,output):
     tmp=output.with_suffix('.tmp');tmp.write_text(json.dumps(result));tmp.replace(output)
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser();p.add_argument('--payload',required=True,type=Path);p.add_argument('--state',required=True,type=Path);p.add_argument('--output',required=True,type=Path);a=p.parse_args()
-    verify(json.loads(a.payload.read_text()),a.state,a.output)
+    p=argparse.ArgumentParser();p.add_argument('--payload',required=True,type=Path);p.add_argument('--state',required=True,type=Path);p.add_argument('--output',required=True,type=Path);p.add_argument('--budget-seconds',type=int,default=470);a=p.parse_args()
+    verify(json.loads(a.payload.read_text()),a.state,a.output,a.budget_seconds)

@@ -55,6 +55,13 @@ class Features:
         conn.execute('CREATE TABLE IF NOT EXISTS metadata_waits(key TEXT PRIMARY KEY,expires REAL NOT NULL)')
         conn.execute('CREATE TABLE IF NOT EXISTS verification_retry_waits(key TEXT PRIMARY KEY,attempts INTEGER NOT NULL,category TEXT NOT NULL,next_retry REAL NOT NULL)')
         conn.execute('CREATE INDEX IF NOT EXISTS metadata_waits_due ON metadata_waits(expires)')
+        conn.execute('''CREATE TABLE IF NOT EXISTS verification_sweeps(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,started REAL NOT NULL,rowid_highwater INTEGER NOT NULL,
+            baseline_total INTEGER NOT NULL,completed REAL NOT NULL DEFAULT 0)''')
+        conn.execute('''CREATE TABLE IF NOT EXISTS verification_sweep_attempts(
+            sweep_id INTEGER NOT NULL,key TEXT NOT NULL,started REAL NOT NULL,finished REAL NOT NULL DEFAULT 0,
+            outcome TEXT NOT NULL DEFAULT 'started',PRIMARY KEY(sweep_id,key))''')
+        conn.execute('CREATE INDEX IF NOT EXISTS verification_sweep_attempts_id ON verification_sweep_attempts(sweep_id,outcome)')
         conn.execute('CREATE TABLE IF NOT EXISTS manual_rechecks(key TEXT PRIMARY KEY,requested REAL,request_id TEXT,status TEXT)')
         conn.execute('CREATE TABLE IF NOT EXISTS recheck_requests(id TEXT PRIMARY KEY,requested REAL,count INTEGER)')
         self.ensure_read_model(conn)
@@ -72,6 +79,93 @@ class Features:
         with self.db() as conn:
             conn.execute('DELETE FROM metadata_waits WHERE key=? AND EXISTS(SELECT 1 FROM verification_retry_waits WHERE key=?)',(key,key))
             conn.execute('DELETE FROM verification_retry_waits WHERE key=?',(key,))
+
+    @staticmethod
+    def _sweep_eligible_sql(alias='v'):
+        return f"(({alias}.state='pending') OR ({alias}.state='unavailable' AND {alias}.next_check<=?) OR ({alias}.state='verified' AND COALESCE(json_extract({alias}.proof,'$.version'),0)<6))"
+
+    def start_verification_sweep(self):
+        """Take one durable snapshot of keys eligible for their first full V6 attempt."""
+        now=time.time()
+        with self.db() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            if conn.execute('SELECT 1 FROM verification_sweeps LIMIT 1').fetchone():return
+            high=conn.execute('SELECT COALESCE(MAX(rowid),0) FROM validation').fetchone()[0]
+            eligible=self._sweep_eligible_sql('v')
+            total=conn.execute(f"SELECT COUNT(*) FROM validation v WHERE v.rowid<=? AND {eligible} AND NOT EXISTS(SELECT 1 FROM verification_audit a WHERE a.key=v.key AND a.reason='speed-v6' AND a.completed>0)",(high,now)).fetchone()[0]
+            cur=conn.execute('INSERT INTO verification_sweeps(started,rowid_highwater,baseline_total) VALUES (?,?,?)',(now,high,total))
+            sweep_id=cur.lastrowid
+            # Materialize the starting snapshot once; producers then claim from
+            # this indexed queue instead of repeatedly scanning the million-row
+            # validation table. Retained checkpoints count as already attempted.
+            conn.execute(f"INSERT OR IGNORE INTO verification_sweep_attempts(sweep_id,key,started,outcome) SELECT ?,v.key,?,'queued' FROM validation v WHERE v.rowid<=? AND {eligible} AND NOT EXISTS(SELECT 1 FROM verification_audit a WHERE a.key=v.key AND a.reason='speed-v6' AND a.completed>0)",(sweep_id,now,high,now))
+            conn.execute("UPDATE verification_sweep_attempts SET outcome='deferred',finished=started WHERE sweep_id=? AND outcome='queued' AND key IN (SELECT key FROM preparation_work)",(sweep_id,))
+
+    def first_sweep_candidate(self):
+        """Return an unattempted baseline key, then fresh arrivals, before retries."""
+        now=time.time()
+        eligible=self._sweep_eligible_sql('v')
+        with self.db() as conn:
+            sweep=conn.execute('SELECT id,started,rowid_highwater,completed FROM verification_sweeps ORDER BY id DESC LIMIT 1').fetchone()
+            if not sweep:return None,False
+            sweep_id,started,high,completed=sweep
+            if not completed:
+                conn.execute("UPDATE verification_sweep_attempts SET outcome='passed',finished=? WHERE sweep_id=? AND outcome='queued' AND key IN (SELECT key FROM verification_audit WHERE reason='speed-v6' AND completed>0)",(now,sweep_id))
+                conn.execute("UPDATE verification_sweep_attempts SET outcome='deferred',finished=? WHERE sweep_id=? AND outcome='queued' AND key IN (SELECT key FROM validation WHERE (state='unavailable' AND next_check>?) OR (state='verified' AND COALESCE(json_extract(proof,'$.version'),0)>=6))",(now,sweep_id,now))
+                conn.execute("UPDATE verification_sweep_attempts SET outcome='queued',started=? WHERE sweep_id=? AND outcome='started' AND started<? AND NOT EXISTS(SELECT 1 FROM verification_claims c WHERE c.key=verification_sweep_attempts.key AND c.expires>?)",(now,sweep_id,now-600,now))
+                row=conn.execute("""SELECT v.key FROM verification_sweep_attempts x JOIN validation v ON v.key=x.key
+                    WHERE x.sweep_id=? AND x.outcome='queued' AND v.rowid<=? AND """+eligible+"""
+                    AND NOT EXISTS(SELECT 1 FROM verification_claims c WHERE c.key=v.key AND c.expires>?)
+                    AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=v.key AND h.expires>?)
+                    AND NOT EXISTS(SELECT 1 FROM metadata_waits m WHERE m.expires>? AND (v.key=m.key OR v.key LIKE m.key||':%'))
+                    ORDER BY v.priority DESC,COALESCE(json_extract(v.proof,'$.version'),0),v.next_check,v.rowid LIMIT 1""",(sweep_id,high,now,now,now,now)).fetchone()
+                if row:return (sweep_id,row[0]),True
+                queued=conn.execute("SELECT COUNT(*) FROM verification_sweep_attempts WHERE sweep_id=? AND outcome='queued'",(sweep_id,)).fetchone()[0]
+                started_count=conn.execute("SELECT COUNT(*) FROM verification_sweep_attempts WHERE sweep_id=? AND outcome='started'",(sweep_id,)).fetchone()[0]
+                if queued or started_count:return None,True
+                conn.execute('UPDATE verification_sweeps SET completed=? WHERE id=? AND completed=0',(now,sweep_id))
+                return None,False
+            row=conn.execute(f"""SELECT v.key FROM validation v WHERE v.rowid>? AND {eligible}
+                AND NOT EXISTS(SELECT 1 FROM verification_sweep_attempts x WHERE x.sweep_id=? AND x.key=v.key)
+                AND NOT EXISTS(SELECT 1 FROM verification_audit a WHERE a.key=v.key AND a.reason='speed-v6' AND a.completed>0)
+                AND NOT EXISTS(SELECT 1 FROM verification_claims c WHERE c.key=v.key AND c.expires>?)
+                AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=v.key AND h.expires>?)
+                AND NOT EXISTS(SELECT 1 FROM metadata_waits m WHERE m.expires>? AND (v.key=m.key OR v.key LIKE m.key||':%'))
+                ORDER BY v.priority DESC,COALESCE(json_extract(v.proof,'$.version'),0),v.next_check,v.rowid LIMIT 1""",(high,now,sweep_id,now,now,now)).fetchone()
+            if row:return (sweep_id,row[0]),True
+            return None,False
+
+    def mark_first_sweep_attempt(self,key):
+        now=time.time()
+        with self.db() as conn:
+            sweep=conn.execute('SELECT id,rowid_highwater FROM verification_sweeps ORDER BY id DESC LIMIT 1').fetchone()
+            if not sweep:return False
+            sweep_id,high=sweep
+            row=conn.execute('SELECT rowid FROM validation WHERE key=?',(key,)).fetchone()
+            latest=conn.execute('SELECT completed FROM verification_sweeps WHERE id=?',(sweep_id,)).fetchone()
+            if not row:return False
+            if (not latest or (row[0]<=high and latest[0]) or (row[0]>high and not latest[0])):return False
+            if row[0]>high:
+                eligible=self._sweep_eligible_sql('v')
+                if not conn.execute(f"SELECT 1 FROM validation v WHERE v.key=? AND {eligible} AND NOT EXISTS(SELECT 1 FROM verification_audit a WHERE a.key=v.key AND a.reason='speed-v6' AND a.completed>0)",(key,time.time())).fetchone():return False
+            if row[0]<=high:
+                cur=conn.execute("UPDATE verification_sweep_attempts SET started=?,outcome='started' WHERE sweep_id=? AND key=? AND outcome='queued'",(now,sweep_id,key))
+            else:
+                cur=conn.execute("INSERT OR IGNORE INTO verification_sweep_attempts(sweep_id,key,started,outcome) VALUES (?,?,?,'started')",(sweep_id,key,now))
+            return bool(cur.rowcount)
+
+    def finish_first_sweep_attempt(self,key,outcome):
+        if outcome not in ('passed','failed','deferred'):outcome='deferred'
+        with self.db() as conn:
+            conn.execute("UPDATE verification_sweep_attempts SET finished=?,outcome=? WHERE key=? AND outcome='started' AND sweep_id=(SELECT MAX(id) FROM verification_sweeps)",(time.time(),outcome,key))
+
+    def first_sweep_progress(self):
+        with self.db() as conn:
+            row=conn.execute('SELECT id,started,rowid_highwater,baseline_total,completed FROM verification_sweeps ORDER BY id DESC LIMIT 1').fetchone()
+            if not row:return None
+            counts=dict(conn.execute("SELECT x.outcome,COUNT(*) FROM verification_sweep_attempts x JOIN validation v ON v.key=x.key WHERE x.sweep_id=? AND v.rowid<=? AND x.outcome IN ('passed','failed','deferred') GROUP BY x.outcome",(row[0],row[2])).fetchall())
+            baseline=sum(counts.values())
+            return {'started':row[1],'total':row[3],'attempted':baseline,'passed':counts.get('passed',0),'failed':counts.get('failed',0),'deferred':counts.get('deferred',0),'remaining':max(0,row[3]-baseline),'complete':bool(row[4])}
 
     def ensure_read_model(self,conn):
         # Compact projections keep first-load reads away from the million-row
@@ -1263,6 +1357,7 @@ class Features:
                 return
             self.seed_validation()
             self.g['REL'].schedule()
+            self.start_verification_sweep()
             self.repair_cached_series(limit=2)
             batch_number=0;queue=None
             if remote:
@@ -1282,31 +1377,39 @@ class Features:
                 if blocked:
                     self.remember(worker_key,{'message':blocked+'; resumes automatically','started':time.time()},180)
                     break
+                sweep_candidate,sweep_waiting=self.first_sweep_candidate()
                 with self.db() as conn:
                     row=conn.execute("SELECT v.key FROM manual_rechecks m JOIN validation v ON v.key=m.key WHERE m.status='pending' AND v.next_check<=? AND NOT EXISTS(SELECT 1 FROM verification_claims vc WHERE vc.key=v.key AND vc.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=v.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (v.key=mw.key OR v.key LIKE mw.key||':%')) ORDER BY m.requested LIMIT 1",(time.time(),)).fetchone()
+                    if not row and sweep_candidate:row=(sweep_candidate[1],)
                     # Initial audits precede discovery; one in five ordinary
                     # slots subsequently rechecks a success older than 24 hours.
-                    if not row:row=self.worker_audit(recurring=slot%5==4)
-                    if not row:
+                    if not row and not sweep_waiting:row=self.worker_audit(recurring=slot%5==4)
+                    if not row and not sweep_waiting:
                         work=conn.execute("SELECT w.key,w.value FROM preparation_work w JOIN validation v ON v.key=w.key WHERE (v.state='verified' OR v.next_check<=?) AND NOT EXISTS(SELECT 1 FROM verification_claims vc WHERE vc.key=v.key AND vc.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=v.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (v.key=mw.key OR v.key LIKE mw.key||':%')) ORDER BY w.updated LIMIT 1",(time.time(),)).fetchone()
                         if work:row=(work[0],)
                     # Reserve one in five probes for due failures so a large
                     # discovery backlog cannot starve the saved retry list.
-                    if not row and checked%5==0:
+                    if not row and not sweep_waiting and checked%5==0:
                         row=conn.execute("SELECT key FROM validation WHERE state='unavailable' AND next_check<=? AND NOT EXISTS(SELECT 1 FROM verification_claims vc WHERE vc.key=validation.key AND vc.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=validation.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (validation.key=mw.key OR validation.key LIKE mw.key||':%')) ORDER BY next_check,priority DESC LIMIT 1",(time.time(),)).fetchone()
-                    if not row:
+                    if not row and not sweep_waiting:
                         # Most slots widen the catalogue; one in five grows
                         # episode coverage of shows already visible.
                         breadth="(key LIKE 'movie:%' OR key LIKE 'series:%:1:1')"
                         wanted="NOT "+breadth if checked%5==4 else breadth
                         row=conn.execute("SELECT key FROM validation WHERE state!='verified' AND next_check<=? AND NOT EXISTS(SELECT 1 FROM verification_claims vc WHERE vc.key=validation.key AND vc.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=validation.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (validation.key=mw.key OR validation.key LIKE mw.key||':%')) AND "+wanted+" ORDER BY priority DESC,next_check,rowid LIMIT 1",(time.time(),)).fetchone()
-                    if not row:
+                    if not row and not sweep_waiting:
                         row=conn.execute("SELECT key FROM validation WHERE state!='verified' AND next_check<=? AND NOT EXISTS(SELECT 1 FROM verification_claims vc WHERE vc.key=validation.key AND vc.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=validation.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (validation.key=mw.key OR validation.key LIKE mw.key||':%')) ORDER BY priority DESC,next_check,rowid LIMIT 1",(time.time(),)).fetchone()
                 if not row:break
                 key=row[0]
                 if self.verification_held(key):continue
                 claim=self.claim_verification(key,'windows' if remote else 'server')
                 if not claim:continue
+                sweep_attempt=bool(sweep_candidate and sweep_candidate[1]==key and self.mark_first_sweep_attempt(key))
+                budget=self.g['BUDGET'];previous_sweep_flag=getattr(budget,'first_sweep_attempt',False)
+                previous_attempt_deadline=getattr(budget,'worker_deadline',None)
+                budget.first_sweep_attempt=sweep_attempt
+                if sweep_attempt:budget.worker_deadline=min(previous_attempt_deadline or time.monotonic()+240,time.monotonic()+240)
+                sweep_outcome='deferred'
                 self.remember(worker_key,{'key':key,'started':time.time(),'position':checked+1,'batch':batch_number,'message':'Video sample validation running'},180)
                 attempt_started=time.time()
                 slot+=1;self.remember('verification-v5-slot',{'slot':slot},10*365*86400)
@@ -1342,6 +1445,7 @@ class Features:
                             handled=execute_title(self.g,key,interrupted)
                     if not handled:
                         self.g['prepared'](key,background=True,**({'audio_index':audio_index} if audio_index is not None else {}),cancel=interrupted)
+                    if sweep_attempt:sweep_outcome='passed'
                     self.clear_verification_retry(key)
                     if remote:
                         from verification_remote import jobs
@@ -1413,11 +1517,15 @@ class Features:
                             jobs(self.g).count('windows_title_checkpoints')
                         self.remember(worker_key,{'message':'Request fault checkpointed; source proof retained','started':time.time(),'batch':batch_number},180)
                         break
-                    if not current or current[0]<time.time()-30:self.validation_result(key,False,reason=type(error).__name__,attempt_started=attempt_started,background=True)
+                    if not current or current[0]<time.time()-30:
+                        if self.validation_result(key,False,reason=type(error).__name__,attempt_started=attempt_started,background=True) and sweep_attempt:sweep_outcome='failed'
                     if remote:
                         from verification_remote import jobs
                         jobs(self.g).count('windows_titles_unavailable')
                 finally:
+                    if sweep_attempt:self.finish_first_sweep_attempt(key,sweep_outcome)
+                    budget.first_sweep_attempt=previous_sweep_flag
+                    if sweep_attempt:budget.worker_deadline=previous_attempt_deadline
                     self.release_verification(key,claim)
                     if remote:
                         from verification_remote import producer_phase

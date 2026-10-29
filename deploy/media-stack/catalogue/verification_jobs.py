@@ -140,7 +140,7 @@ class DecodeJobs:
             validate_task(params)
             if params['key']!=key or url:raise InvalidJob('Invalid title binding')
         else:validate_recipe(operation,params)
-        if execution_seconds not in (0,480) or (execution_seconds and operation!='verify_title'):raise InvalidJob('Invalid execution budget')
+        if execution_seconds not in (0,240,500) or (execution_seconds and operation!='verify_title'):raise InvalidJob('Invalid execution budget')
         u=urlsplit(url)
         if operation!='verify_title' and (u.scheme!='http' or u.hostname is None or not u.path.startswith('/raw/') or len(url)>4096):raise InvalidJob('Invalid trusted source')
         if not re.fullmatch('(movie:tt[0-9]{5,12}|series:tt[0-9]{5,12}:[0-9]+:[0-9]+)',key) or not re.fullmatch('[a-f0-9]{64}',sid):raise InvalidJob('Invalid source identity')
@@ -159,7 +159,7 @@ class DecodeJobs:
                 if (not continuous and remaining<=0) or not self.setting(c,'local_torrent_enabled',False) or not self.setting(c,'local_torrent_permitted',False):raise WorkerWait('Local torrent verification paused')
                 if not continuous:c.execute('INSERT OR REPLACE INTO control VALUES (?,?)',('local_torrent_pilot_remaining',json.dumps(remaining-1)))
             c.execute('INSERT INTO decode_jobs(id,key,sid,operation,params,url,state,created,controller,deadline,phase,phase_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
-                      (job,key,sid,operation,json.dumps(params),url,'pending',now,now+30,now+min(480,max(1,seconds)),'queued',now))
+                      (job,key,sid,operation,json.dumps(params),url,'pending',now,now+30,now+min(600,max(1,seconds)),'queued',now))
             if execution_seconds:c.execute('UPDATE decode_jobs SET execution_seconds=? WHERE id=?',(execution_seconds,job))
         return job
     def claim(self,worker,capabilities=None):

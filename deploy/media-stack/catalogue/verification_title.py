@@ -126,18 +126,28 @@ def validate_evidence(g,key,p,result,started):
     return selected,info,proof,audio,conversion
 
 def execute_title(g,key,cancel=None):
+    first_sweep=bool(getattr(g['BUDGET'],'first_sweep_attempt',False))
+    execution_seconds=240 if first_sweep else 500
+    previous=getattr(g['BUDGET'],'worker_deadline',None)
+    deadline=time.monotonic()+execution_seconds
+    g['BUDGET'].worker_deadline=min(previous or deadline,deadline)
+    try:return _execute_title(g,key,cancel,execution_seconds)
+    finally:g['BUDGET'].worker_deadline=previous
+
+def _execute_title(g,key,cancel,execution_seconds):
     """Return False for old clients; otherwise commit Windows or run Debian fallback."""
     from verification_remote import jobs,producer_phase
     q=jobs(g)
     if not q or not q.setting_read('local_torrent_enabled',False) or not q.setting_read('local_torrent_permitted',False) or not q.local_workers():return False
     if not q.setting_read('local_torrent_continuous',False) and q.setting_read('local_torrent_pilot_remaining',20)<=0:return False
     with g['request_budget'](time.monotonic()+60,cancel):p=payload(g,key)
-    started=time.time();deadline=time.monotonic()+960
+    started=time.time();deadline=min(time.monotonic()+execution_seconds,getattr(g['BUDGET'],'worker_deadline',float('inf')))
     fallback=False;job=None;consumed=False;failure_category="transport";cancel_code="controller_error"
     with g['validation_attempt'](True),g['request_budget'](deadline,cancel):
         try:
             sid=hashlib.sha256(json.dumps(p,sort_keys=True).encode()).hexdigest()
-            try:job=q.submit(key,sid,OPERATION,p,'',480,execution_seconds=480)
+            job_seconds=max(1,min(execution_seconds,int(deadline-time.monotonic())))
+            try:job=q.submit(key,sid,OPERATION,p,'',job_seconds,execution_seconds=job_seconds)
             except WorkerWait:return False
             producer_phase(g,key,'windows local torrent')
             while True:
