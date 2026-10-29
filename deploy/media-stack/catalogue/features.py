@@ -99,7 +99,6 @@ class Features:
             # this indexed queue instead of repeatedly scanning the million-row
             # validation table. Retained checkpoints count as already attempted.
             conn.execute(f"INSERT OR IGNORE INTO verification_sweep_attempts(sweep_id,key,started,outcome) SELECT ?,v.key,?,'queued' FROM validation v WHERE v.rowid<=? AND {eligible} AND NOT EXISTS(SELECT 1 FROM verification_audit a WHERE a.key=v.key AND a.reason='speed-v6' AND a.completed>0)",(sweep_id,now,high,now))
-            conn.execute("UPDATE verification_sweep_attempts SET outcome='deferred',finished=started WHERE sweep_id=? AND outcome='queued' AND key IN (SELECT key FROM preparation_work)",(sweep_id,))
 
     def first_sweep_candidate(self):
         """Return an unattempted baseline key, then fresh arrivals, before retries."""
@@ -110,6 +109,10 @@ class Features:
             if not sweep:return None,False
             sweep_id,started,high,completed=sweep
             if not completed:
+                # If a process started during the first snapshot build, its
+                # pre-existing checkpoint placeholder was not a V6 attempt.
+                # Return only those seed rows to the untouched queue once.
+                conn.execute("UPDATE verification_sweep_attempts SET outcome='queued',finished=0 WHERE sweep_id=? AND outcome='deferred' AND finished=started AND started<=?",(sweep_id,started))
                 conn.execute("UPDATE verification_sweep_attempts SET outcome='passed',finished=? WHERE sweep_id=? AND outcome='queued' AND key IN (SELECT key FROM verification_audit WHERE reason='speed-v6' AND completed>0)",(now,sweep_id))
                 conn.execute("UPDATE verification_sweep_attempts SET outcome='deferred',finished=? WHERE sweep_id=? AND outcome='queued' AND key IN (SELECT key FROM validation WHERE (state='unavailable' AND next_check>?) OR (state='verified' AND COALESCE(json_extract(proof,'$.version'),0)>=6))",(now,sweep_id,now))
                 conn.execute("UPDATE verification_sweep_attempts SET outcome='queued',started=? WHERE sweep_id=? AND outcome='started' AND started<? AND NOT EXISTS(SELECT 1 FROM verification_claims c WHERE c.key=verification_sweep_attempts.key AND c.expires>?)",(now,sweep_id,now-600,now))
