@@ -61,7 +61,7 @@ DETAIL_LOCK = threading.Lock()
 DETAIL_RECENT = {}
 BACKGROUND_TORRENTS = DATA / 'background-torrents.tsv'
 FOREGROUND_CLEANUP_LOCK = threading.Lock()
-FOREGROUND_CLEANUP = {'event': None, 'protected': set()}
+FOREGROUND_CLEANUP = {'event': None, 'protected': set(), 'hashes': set()}
 
 
 
@@ -299,18 +299,39 @@ def retain_background_torrent_records(removed):
         ledger.flush();fcntl.flock(ledger,fcntl.LOCK_UN)
 
 
+def foreground_source_hashes(key):
+    """Return persisted physical sources belonging to a foreground title."""
+    values=[]
+    try:
+        with db() as conn:
+            row=conn.execute('SELECT value FROM playback WHERE key=?',(key,)).fetchone()
+            if row:values.append(json.loads(row[0]))
+            row=conn.execute('SELECT value FROM cache WHERE key=? AND expires>?',('resolved:'+key,time.time())).fetchone()
+            if row:values.append(json.loads(row[0]))
+    except (OSError,ValueError,sqlite3.Error):return set()
+    hashes=set()
+    for value in values:
+        selected=value.get('selected',value) if isinstance(value,dict) else {}
+        infohash=selected.get('hash','').lower() if isinstance(selected,dict) else ''
+        if re.fullmatch(r'[a-f0-9]{40}',infohash):hashes.add(infohash)
+    return hashes
+
+
 def cleanup_background_torrents():
     records=background_torrent_records()
     by_hash={}
     for created,key,infohash in records:by_hash.setdefault(infohash,[]).append((created,key))
-    with FOREGROUND_CLEANUP_LOCK:protected=set(FOREGROUND_CLEANUP['protected'])
+    with FOREGROUND_CLEANUP_LOCK:
+        protected=set(FOREGROUND_CLEANUP['protected'])
+        protected_hashes=set(FOREGROUND_CLEANUP['hashes'])
     candidates=[infohash for infohash,owners in by_hash.items()
-                if not any(key in protected for _,key in owners)]
+                if infohash not in protected_hashes and not any(key in protected for _,key in owners)]
     removed=set()
     def discard(infohash):
         with FOREGROUND_CLEANUP_LOCK:
             current=set(FOREGROUND_CLEANUP['protected'])
-        if any(key in current for _,key in by_hash[infohash]):return False
+            current_hashes=set(FOREGROUND_CLEANUP['hashes'])
+        if infohash in current_hashes or any(key in current for _,key in by_hash[infohash]):return False
         try:
             cache=fetch(TORR+'/cache',{'action':'get','hash':infohash},torr_headers(),timeout=.75) or {}
             if cache.get('Readers'):return False
@@ -331,11 +352,14 @@ def cleanup_background_torrents():
 
 
 def start_foreground_cleanup(key):
+    source_hashes=foreground_source_hashes(key)
     with LIVE_LOCK:
         active_key=LIVE['key'] if LIVE['active']>0 else None
+    if active_key:source_hashes.update(foreground_source_hashes(active_key))
     with FOREGROUND_CLEANUP_LOCK:
         FOREGROUND_CLEANUP['protected'].add(key)
         if active_key:FOREGROUND_CLEANUP['protected'].add(active_key)
+        FOREGROUND_CLEANUP['hashes'].update(source_hashes)
         event=FOREGROUND_CLEANUP['event']
         if event is not None and not event.is_set():return event
         event=threading.Event()
@@ -343,7 +367,9 @@ def start_foreground_cleanup(key):
     def work():
         try:cleanup_background_torrents()
         finally:
-            with FOREGROUND_CLEANUP_LOCK:FOREGROUND_CLEANUP['protected'].clear()
+            with FOREGROUND_CLEANUP_LOCK:
+                FOREGROUND_CLEANUP['protected'].clear()
+                FOREGROUND_CLEANUP['hashes'].clear()
             event.set()
     threading.Thread(target=work,daemon=True).start()
     return event

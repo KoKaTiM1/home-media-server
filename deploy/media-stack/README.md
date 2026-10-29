@@ -124,6 +124,8 @@ Failed titles are retained and retry with backoff, not rediscovered from scratch
 Foreground title preparation also releases idle TorrServer entries explicitly
 owned by background verification. It checks for active readers twice and never
 targets managed downloads, unrelated torrents, the requested title or watch data.
+Persisted physical hashes are protected too, covering season packs shared by
+multiple episode identities.
 
 OMV Diagnostics > Media workers displays schedules, health, current work and
 queue/pass/failure counters. See [omv-monitor/README.md](omv-monitor/README.md).

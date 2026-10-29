@@ -114,8 +114,10 @@ request a managed full-film download. Failed speculative attempts do not revoke
 existing verification. Torrents opened by background verification or embedded
 subtitle extraction are recorded in a private bounded ledger. Opening a playable
 title pauses producers and asynchronously drops only ledger-owned torrents with
-no active TorrServer readers; the requested title, any active stream, managed
-downloads and watch state are excluded. Immediate Play waits at most 1.5 seconds
+no active TorrServer readers; the requested/active title's persisted physical
+torrent hash is protected even when a season pack was recorded under a different
+episode key. Any active stream, managed downloads and watch state are excluded.
+Immediate Play waits at most 1.5 seconds
 for this cleanup and then continues even if cleanup is incomplete. Immediate Play has a 45-second
 preparation budget during the current playback trial and may need to finish
 work. Slow peers and client
