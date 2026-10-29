@@ -319,7 +319,7 @@ def overview(data=DATA,snapshot=None):
         with closing(sqlite3.connect('file:'+str(queue)+'?mode=ro',uri=True,timeout=1)) as conn:
             conn.row_factory=sqlite3.Row
             totals=dict(conn.execute('SELECT key,value FROM totals'))
-            control={key:json.loads(value) for key,value in conn.execute("SELECT key,value FROM control WHERE key IN ('enabled','reason','max_windows_jobs','prefetch_per_lane','local_torrent_enabled','local_torrent_permitted','local_torrent_reason','local_torrent_pilot_remaining') OR key LIKE 'producer:%' OR key LIKE 'backend:%' OR key LIKE 'capability:%'")}
+            control={key:json.loads(value) for key,value in conn.execute("SELECT key,value FROM control WHERE key IN ('enabled','reason','max_windows_jobs','prefetch_per_lane','local_torrent_enabled','local_torrent_permitted','local_torrent_continuous','local_torrent_reason','local_torrent_pilot_remaining') OR key LIKE 'producer:%' OR key LIKE 'backend:%' OR key LIKE 'capability:%'")}
             queue_counts=dict(conn.execute("SELECT state,COUNT(*) FROM decode_jobs WHERE controller>? AND deadline>? GROUP BY state",(now,now)))
             seen=[]
             # Count every separately enrolled Windows lane. Older dashboard
@@ -342,7 +342,8 @@ def overview(data=DATA,snapshot=None):
                     for key,value in control.items() if key.startswith('capability:'))
         if control.get('local_torrent_enabled'):
             remaining=max(0,int(control.get('local_torrent_pilot_remaining',0)))
-            detail=f"{remaining} of 20 bounded pilot dispatches remain; {control.get('local_torrent_reason','resource gate pending')}"
+            allowance='continuous; paused only by resource/health gate' if control.get('local_torrent_continuous') else f'{remaining} pilot dispatches remain'
+            detail=f"{allowance}; {control.get('local_torrent_reason','resource gate pending')}"
             tone='success' if local_backends and control.get('local_torrent_permitted') else ('muted' if not capable else 'error')
             add('Windows local torrent',f'{local_backends} healthy / {capable} capable',detail,tone)
             add('Windows local V6 passes',f"{totals.get('windows_local_titles_verified',0):,}",f"{totals.get('windows_local_server_fallbacks',0):,} requested Debian fallback; {totals.get('windows_local_fallback_deferred',0):,} deferred for its resource gate; {totals.get('windows_local_invalid_results',0):,} invalid Windows results rejected",'success')

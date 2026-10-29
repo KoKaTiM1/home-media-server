@@ -1,4 +1,4 @@
-"""Bounded full-title jobs. Server owns candidates, evidence acceptance and commits."""
+"""Windows-local full-title jobs. Server owns candidates, evidence acceptance and commits."""
 import hashlib
 import json
 import math
@@ -123,7 +123,8 @@ def execute_title(g,key,cancel=None):
     """Return False for old clients; otherwise commit Windows or run Debian fallback."""
     from verification_remote import jobs,producer_phase
     q=jobs(g)
-    if not q or not q.setting_read('local_torrent_enabled',False) or not q.setting_read('local_torrent_permitted',False) or not q.local_workers() or q.setting_read('local_torrent_pilot_remaining',20)<=0:return False
+    if not q or not q.setting_read('local_torrent_enabled',False) or not q.setting_read('local_torrent_permitted',False) or not q.local_workers():return False
+    if not q.setting_read('local_torrent_continuous',False) and q.setting_read('local_torrent_pilot_remaining',20)<=0:return False
     started=time.time();deadline=min(time.monotonic()+480,getattr(g['BUDGET'],'worker_deadline',float('inf')))
     fallback=False;job=None;consumed=False
     with g['validation_attempt'](True),g['request_budget'](deadline,cancel):

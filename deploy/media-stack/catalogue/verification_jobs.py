@@ -76,6 +76,7 @@ class DecodeJobs:
                     'jobs':dict(c.execute('SELECT state,COUNT(*) FROM decode_jobs GROUP BY state').fetchall()),
                     'local_torrent_enabled':self.setting(c,'local_torrent_enabled',False),
                     'local_torrent_permitted':self.setting(c,'local_torrent_permitted',False),
+                    'local_torrent_continuous':self.setting(c,'local_torrent_continuous',False),
                     'local_torrent_reason':self.setting(c,'local_torrent_reason','Awaiting Windows-local resource gate'),
                     'local_torrent_backends':local_backends,
                     'local_torrent_pilot_remaining':self.setting(c,'local_torrent_pilot_remaining',0),
@@ -124,9 +125,10 @@ class DecodeJobs:
             if active>=self.queue_capacity(c):raise WorkerWait('Windows ready queue full')
             if c.execute("SELECT COUNT(*) FROM decode_jobs WHERE state IN ('pending','leased','result')").fetchone()[0]>=32:raise WorkerWait('Decode work capacity reached')
             if operation=='verify_title':
+                continuous=self.setting(c,'local_torrent_continuous',False)
                 remaining=self.setting(c,'local_torrent_pilot_remaining',20)
-                if remaining<=0 or not self.setting(c,'local_torrent_enabled',False) or not self.setting(c,'local_torrent_permitted',False):raise WorkerWait('Local torrent pilot paused')
-                c.execute('INSERT OR REPLACE INTO control VALUES (?,?)',('local_torrent_pilot_remaining',json.dumps(remaining-1)))
+                if (not continuous and remaining<=0) or not self.setting(c,'local_torrent_enabled',False) or not self.setting(c,'local_torrent_permitted',False):raise WorkerWait('Local torrent verification paused')
+                if not continuous:c.execute('INSERT OR REPLACE INTO control VALUES (?,?)',('local_torrent_pilot_remaining',json.dumps(remaining-1)))
             c.execute('INSERT INTO decode_jobs(id,key,sid,operation,params,url,state,created,controller,deadline,phase,phase_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
                       (job,key,sid,operation,json.dumps(params),url,'pending',now,now+30,now+min(480,max(1,seconds)),'queued',now))
         return job

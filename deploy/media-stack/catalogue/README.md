@@ -629,3 +629,9 @@ evidence and commits the final proof. Exact accepted V5 samples can be reused;
 Windows supplies the new speed evidence. Windows-local failures use one normal
 Debian fallback when its resource gate is healthy, otherwise the title remains
 pending. Old Windows workers keep their fixed probe/sample workflow.
+
+Windows-local V6 can run continuously when explicitly enabled. It is not limited
+by a finite pilot quota; existing host-memory, bridge-memory, OOM/restart,
+worker/backend-health and four-active-job gates remain authoritative. Outcomes
+and invalid results remain visible in the worker diagnostics for sustained
+throughput and failure review.
