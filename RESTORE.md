@@ -382,3 +382,18 @@ checkpoint or a reported peer count with a failed or successful playable source.
 
 
 For optional Windows verification, restore the restricted gateway, memory guard and remote-availability units using [the helper recovery instructions](deploy/media-stack/verification-worker/README.md). Generate fresh private tokens/PC configuration and complete the bounded live pilot before allowing continuous parallel checks. Worker state and compiled images are private runtime data and are not stored here.
+
+
+### Configurable Windows V6 capacity
+
+Restore the updated verification coordinator, resource guard, and monitor before
+installing worker package 0.4.0. Preserve existing worker identities and config.
+The launcher creates config/workers.json with defaults 8 workers / 2 TorrServers.
+Changing these values and running Start updates the authenticated server capacity
+and reconciles containers; no per-worker start scripts are required. Docker VM
+memory must cover configured limits plus 2 GiB overhead (10 GiB for default 8/2).
+TorrServer state directories and worker data directories remain separate and persist
+when counts are reduced. Keep source/remote assignment timers and mounted shared
+verification modules in sync during restore; enable the verification guard and the normal producer timers. The guard
+automatically reconciles lookahead producer timers to twice the requested worker
+count, up to 32, while queue guards constrain actual work.

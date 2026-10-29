@@ -81,8 +81,10 @@ class Handler(BaseHTTPRequestHandler):
             if not size.isdigit() or not 0<int(size)<=2*1024*1024:raise InvalidJob('Invalid request size')
             p=json.loads(self.rfile.read(int(size)))
             if not isinstance(p,dict) or p.get('protocol')!=PROTOCOL:raise InvalidJob('Invalid protocol')
-            worker=p.get('worker_id');q=self.server.jobs;q.seen(worker)
-            q.backend_health(worker,p.get('local_torrent_available'))
+            if self.path==PREFIX+'/configure':
+                return self.reply(200,{'topology':self.server.jobs.configure(p.get('workers'),p.get('torrservers'))})
+            worker=p.get('worker_id');q=self.server.jobs;q.seen(worker,p.get("lane"))
+            q.backend_health(worker,p.get('local_torrent_available'),p.get('backend_id'))
             if self.path==PREFIX+'/claim':
                 wait=p.get('wait_seconds',10)
                 if not isinstance(wait,(int,float)) or not 0<=wait<=15:raise InvalidJob('Invalid claim wait')
@@ -148,7 +150,7 @@ def main():
     cfg=json.loads(Path(args.config).read_text());creds=Path(os.environ['CREDENTIALS_DIRECTORY'])
     q=DecodeJobs(cfg['queue_path']);q.initialize()
     server=Server((cfg['bind'],cfg['port']),Handler);server.jobs=q;server.allowed=set(cfg['allowed_clients']);server.bridge=cfg['bridge_url']
-    server.slots=threading.BoundedSemaphore(16)
+    server.slots=threading.BoundedSemaphore(48)
     server.auth=hashlib.sha256(('Bearer '+(creds/'verification-token').read_text().strip()).encode()).digest()
     ctx=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);ctx.minimum_version=ssl.TLSVersion.TLSv1_2
     ctx.load_cert_chain(creds/'tls-cert',creds/'tls-key');server.context=ctx

@@ -1,28 +1,14 @@
-Home media verification worker - local torrent package 0.3.0
+Windows verification worker 0.4.0
 
-Keep Docker Desktop running in Linux-container mode.
-Keep config/, torrent-state/ and EVERY existing data folder:
-data/, data-2/, data-3/, data-4/.
 Extract this package over the existing HomeMediaVerificationWorker folder.
+Preserve ALL config/, data*/ and torrent-state*/ directories.
+Run 01-UPDATE-AND-START.cmd once.
 
-01-UPDATE-AND-START.cmd
-  Checks and installs both included images, safely starts the private local
-  torrent service and all four workers, then removes old launchers after success.
-  Configuration, identities, progress and pending results stay in place.
+Default capacity: 8 workers, 2 TorrServers.
+Edit config/workers.json and run 02-START-ALL.cmd to change counts later.
+Default requires Docker Desktop Linux mode and at least 10 GiB VM memory.
+The updater checks configuration, credentials, resource budget and image checksum.
 
-02-START-ALL.cmd
-  Starts all four workers without loading the image again. Safe to run twice.
-
-03-LOGS.cmd
-  Shows combined live logs with a worker name on each line.
-  Ctrl+C closes the log view only; workers continue running.
-
-04-STOP-ALL.cmd
-  Stops all four workers. All saved data stays in place.
-
-Only four CMD launchers are needed. worker.ps1, SHA256SUMS.json and the image
-archive are supporting files; do not delete them before running an update.
-The server controls active-job capacity and may pause assignments independently.
-The local torrent service has no published LAN port. Windows is optional. The
-server keeps verifying independently if this PC is offline, and falls back to
-its own verifier if a Windows complete-title job fails.
+03-LOGS.cmd shows combined progress. Ctrl+C only closes logs.
+04-STOP-ALL.cmd drains workers and stops torrent backends without deleting data.
+Read README.md for capacity limits, fallback and recovery.

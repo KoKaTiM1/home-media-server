@@ -53,11 +53,25 @@ class Features:
         conn.execute('CREATE TABLE IF NOT EXISTS verification_holds(key TEXT PRIMARY KEY,expires REAL NOT NULL,reason TEXT)')
         conn.execute('CREATE TABLE IF NOT EXISTS verification_claims(key TEXT PRIMARY KEY,token TEXT,owner TEXT,expires REAL)')
         conn.execute('CREATE TABLE IF NOT EXISTS metadata_waits(key TEXT PRIMARY KEY,expires REAL NOT NULL)')
+        conn.execute('CREATE TABLE IF NOT EXISTS verification_retry_waits(key TEXT PRIMARY KEY,attempts INTEGER NOT NULL,category TEXT NOT NULL,next_retry REAL NOT NULL)')
         conn.execute('CREATE INDEX IF NOT EXISTS metadata_waits_due ON metadata_waits(expires)')
         conn.execute('CREATE TABLE IF NOT EXISTS manual_rechecks(key TEXT PRIMARY KEY,requested REAL,request_id TEXT,status TEXT)')
         conn.execute('CREATE TABLE IF NOT EXISTS recheck_requests(id TEXT PRIMARY KEY,requested REAL,count INTEGER)')
         self.ensure_read_model(conn)
         return conn
+
+    def defer_verification(self,key,category):
+        with self.db() as conn:
+            row=conn.execute('SELECT attempts FROM verification_retry_waits WHERE key=?',(key,)).fetchone()
+            attempts=(row[0] if row else 0)+1
+            due=time.time()+(300,900,3600,21600)[min(attempts-1,3)]
+            conn.execute('INSERT OR REPLACE INTO verification_retry_waits VALUES (?,?,?,?)',(key,attempts,category,due))
+            conn.execute('INSERT INTO metadata_waits VALUES (?,?) ON CONFLICT(key) DO UPDATE SET expires=MAX(expires,excluded.expires)',(key,due))
+        return due
+    def clear_verification_retry(self,key):
+        with self.db() as conn:
+            conn.execute('DELETE FROM metadata_waits WHERE key=? AND EXISTS(SELECT 1 FROM verification_retry_waits WHERE key=?)',(key,key))
+            conn.execute('DELETE FROM verification_retry_waits WHERE key=?',(key,))
 
     def ensure_read_model(self,conn):
         # Compact projections keep first-load reads away from the million-row
@@ -508,6 +522,8 @@ class Features:
                             previous=conn.execute('SELECT requested FROM manual_rechecks WHERE key=?',(key,)).fetchone()
                             if previous and previous[0]>=requested:continue
                             conn.execute("INSERT INTO validation(key,state,priority,next_check,reason) VALUES (?,'pending',1000,0,'User requested fresh verification') ON CONFLICT(key) DO UPDATE SET state='pending',priority=MAX(priority,1000),next_check=0,reason='User requested fresh verification'",(key,))
+                            conn.execute('DELETE FROM metadata_waits WHERE key=? AND EXISTS(SELECT 1 FROM verification_retry_waits WHERE key=?)',(key,key))
+                            conn.execute('DELETE FROM verification_retry_waits WHERE key=?',(key,))
                             conn.execute("INSERT INTO manual_rechecks VALUES (?,?,?,'pending') ON CONFLICT(key) DO UPDATE SET requested=excluded.requested,request_id=excluded.request_id,status='pending'",(key,requested,ident))
                             # Preserve current resolved transport for any existing
                             # viewer. The worker clears it immediately before its
@@ -544,6 +560,8 @@ class Features:
                 if started and started<report[0]:return False
                 if report[1]=='pending' and (not is_background or started<report[0]):return False
                 conn.execute('UPDATE manual_rechecks SET status=? WHERE key=?',('passed' if ok else 'failed',key))
+            conn.execute('DELETE FROM metadata_waits WHERE key=? AND EXISTS(SELECT 1 FROM verification_retry_waits WHERE key=?)',(key,key))
+            conn.execute('DELETE FROM verification_retry_waits WHERE key=?',(key,))
             attempts=conn.execute('SELECT attempts FROM validation WHERE key=?',(key,)).fetchone()[0]
             attempts=0 if ok else attempts+1
             # Preserve successful proof even after failure, but never let it
@@ -1322,6 +1340,7 @@ class Features:
                             handled=execute_title(self.g,key,interrupted)
                     if not handled:
                         self.g['prepared'](key,background=True,**({'audio_index':audio_index} if audio_index is not None else {}),cancel=interrupted)
+                    self.clear_verification_retry(key)
                     if remote:
                         from verification_remote import jobs
                         jobs(self.g).count('windows_titles_verified')
@@ -1355,6 +1374,13 @@ class Features:
                             from verification_remote import jobs
                             jobs(self.g).count('windows_title_checkpoints')
                         self.remember(worker_key,{'message':'Torrent metadata pending; moving to another title','started':time.time(),'batch':batch_number},180)
+                        checked+=1
+                        continue
+                    if getattr(error,'failure_category',None):
+                        self.defer_verification(key,error.failure_category)
+                        if remote:
+                            from verification_remote import jobs
+                            jobs(self.g).count('windows_title_checkpoints')
                         checked+=1
                         continue
                     if isinstance(error,sqlite3.OperationalError) or transient and isinstance(error,transient):

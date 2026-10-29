@@ -162,7 +162,7 @@ def run_local_task(api,worker,task,status):
                     if current in PHASES and current!=phase:phase=current;status(phase)
                 except (OSError,ValueError):pass
                 if time.monotonic()-last>=10:
-                    if not api.request('/renew',{'worker_id':worker,'task':task,'phase':phase,'local_torrent_available':local_torrent_available()})['active']:return {'status':'checkpoint','reason':'interrupted'}
+                    if not api.request('/renew',{'worker_id':worker,'task':task,'phase':phase,'local_torrent_available':local_torrent_available(),'backend_id':os.getenv('LOCAL_TORRENT_BACKEND_ID','torrent-1'),'lane':int(os.getenv('WORKER_LANE','0')) or None})['active']:return {'status':'checkpoint','reason':'interrupted'}
                     last=time.monotonic()
                 STOP.wait(.25)
             if proc.returncode or not output.is_file():return {'status':'checkpoint','reason':'transport'}
@@ -223,8 +223,23 @@ def run_task(api,worker,task,status):
     finally:cancel.set();proxy.shutdown();proxy.server_close()
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('command',choices=('run','status'));p.add_argument('--config',default='/config/verification.local.json');p.add_argument('--data',default='/data');a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('command',choices=('run','status','configure-capacity','request-drain','drain','resume'));p.add_argument('--config',default='/config/verification.local.json');p.add_argument('--data',default='/data');p.add_argument('--workers',type=int);p.add_argument('--torrservers',type=int);a=p.parse_args()
     folder=Path(a.data)
+    if a.command=='configure-capacity':
+        cfg=json.loads(Path(a.config).read_text(encoding='utf-8-sig'))
+        print(json.dumps(API(cfg).request('/configure',{'workers':a.workers,'torrservers':a.torrservers})));return
+    if a.command in ('request-drain','drain','resume'):
+        folder.mkdir(parents=True,exist_ok=True)
+        if a.command=='resume':
+            for name in ('drain','drained'):(folder/name).unlink(missing_ok=True)
+            return
+        (folder/'drain').touch()
+        if a.command=='request-drain':return
+        until=time.monotonic()+600
+        while not (folder/'drained').exists():
+            if time.monotonic()>=until:raise RuntimeError('Worker did not drain; running container retained')
+            time.sleep(1)
+        return
     if a.command=='status':
         path=folder/'status.json';print(path.read_text() if path.exists() else 'Verification worker has not started.');return
     folder.mkdir(parents=True,exist_ok=True)
@@ -257,7 +272,9 @@ def main():
             try:
                 row=db.execute('SELECT task,result FROM current WHERE id=1').fetchone()
                 if not row:
-                    reply=api.request('/claim',{'worker_id':worker,'wait_seconds':15,'capabilities':['local-torrent-v1'],'local_torrent_available':local_torrent_available()});task=reply.get('task')
+                    if (folder/'drain').exists():
+                        (folder/'drained').touch();status('Drained; awaiting launcher reconfiguration');STOP.wait(2);continue
+                    reply=api.request('/claim',{'worker_id':worker,'wait_seconds':15,'capabilities':['local-torrent-v1'],'local_torrent_available':local_torrent_available(),'backend_id':os.getenv('LOCAL_TORRENT_BACKEND_ID','torrent-1'),'lane':int(os.getenv('WORKER_LANE','0')) or None});task=reply.get('task')
                     server_status=reply.get('status',{});summary['server']=server_status
                     totals=server_status.get('totals',{})
                     summary['server_final_titles']={'verified':totals.get('windows_titles_verified',0),'unavailable':totals.get('windows_titles_unavailable',0)}
@@ -286,6 +303,8 @@ def main():
                     if task['operation']=='verify_title':
                         import shutil
                         shutil.rmtree(folder/'title-jobs'/task['job_id'],ignore_errors=True)
+                    diagnostic=result.get('diagnostic',{})
+                    if isinstance(diagnostic,dict) and diagnostic.get('category'):status('Local title checkpoint: '+str(diagnostic.get('category'))+'; '+str(diagnostic.get('failure_type','')))
                     status('Server acknowledged '+task['operation']+' ('+result['status']+'); '+str(completed)+' operations acknowledged on this worker (not final titles)')
                 elif reply.get('ack')=='stale':
                     try:

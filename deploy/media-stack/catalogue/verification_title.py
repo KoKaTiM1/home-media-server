@@ -13,6 +13,12 @@ from verification_jobs import WorkerWait
 CAPABILITY='local-torrent-v1'
 OPERATION='verify_title'
 
+class LocalTitleCheckpoint(Checkpoint):
+    def __init__(self,category):
+        super().__init__('Windows local title deferred')
+        self.failure_category=category if category in ('torrent_timeout','stream_stall','speed_rejected','decoder','resource','coordinator','transport','interrupted','validation') else 'transport'
+
+
 def magnet(infohash):
     return 'magnet:?'+urlencode({'xt':'urn:btih:'+infohash,'tr':'udp://tracker.opentrackr.org:1337/announce'})
 
@@ -126,7 +132,7 @@ def execute_title(g,key,cancel=None):
     if not q or not q.setting_read('local_torrent_enabled',False) or not q.setting_read('local_torrent_permitted',False) or not q.local_workers():return False
     if not q.setting_read('local_torrent_continuous',False) and q.setting_read('local_torrent_pilot_remaining',20)<=0:return False
     started=time.time();deadline=min(time.monotonic()+480,getattr(g['BUDGET'],'worker_deadline',float('inf')))
-    fallback=False;job=None;consumed=False
+    fallback=False;job=None;consumed=False;failure_category="transport"
     with g['validation_attempt'](True),g['request_budget'](deadline,cancel):
         try:
             p=payload(g,key);sid=hashlib.sha256(json.dumps(p,sort_keys=True).encode()).hexdigest()
@@ -137,10 +143,14 @@ def execute_title(g,key,cancel=None):
                 g['remaining'](1)
                 state,result=q.poll(job)
                 if state=='result':
-                    if result['status']!='ok':fallback=True;break
+                    if result['status']!='ok':
+                        diagnostic=result.get('diagnostic',{})
+                        failure_category=diagnostic.get('category','transport') if isinstance(diagnostic,dict) else 'transport'
+                        if result.get('reason')=='interrupted':raise Checkpoint('Verification interrupted')
+                        fallback=True;break
                     try:selected,info,proof,audio,conversion=validate_evidence(g,key,p,result['data'],started)
                     except (ValueError,KeyError,TypeError,RuntimeError):
-                        q.count('windows_local_invalid_results');fallback=True;break
+                        q.count('windows_local_invalid_results');failure_category='validation';fallback=True;break
                     if cancel and cancel():raise Checkpoint('Verification interrupted')
                     g['REL'].bind(key,selected)
                     g['finish_preparation'](key,True,deadline,selected,info,proof,audio,conversion)
@@ -152,14 +162,14 @@ def execute_title(g,key,cancel=None):
                 if state in ('cancelled','consumed') or time.monotonic()>=deadline:raise Checkpoint('Windows title lease ended')
                 time.sleep(.5)
         except (ValueError,KeyError,TypeError):
-            q.count('windows_local_invalid_results');fallback=True
+            q.count('windows_local_invalid_results');failure_category='validation';fallback=True
         finally:
             if job:q.finish(job,consumed)
     if fallback:
         q.count('windows_local_server_fallbacks');producer_phase(g,key,'server fallback')
         if not q.setting_read('enabled',False):
             q.count('windows_local_fallback_deferred')
-            raise Checkpoint('Debian fallback is waiting for its resource gate')
+            raise LocalTitleCheckpoint(failure_category)
         old=g['BUDGET'].remote_verification;g['BUDGET'].remote_verification=False
         try:
             with g['REL'].lock('windows-local-server-fallback'):

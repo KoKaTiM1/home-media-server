@@ -26,12 +26,27 @@ class MonitorTests(unittest.TestCase):
             self.assertEqual(len(rows),1);self.assertEqual(rows[0]['title'],'Fixture title')
             self.assertEqual(rows[0]['recheck'],'pending');self.assertEqual(rows[0]['category'],'decode failure')
             self.assertNotIn('url',rows[0])
+    def test_dynamic_registry_counts_distinct_torrent_backends(self):
+        import sys
+        sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'catalogue'))
+        from verification_jobs import DecodeJobs
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);data=root/'catalogue';data.mkdir()
+            q=DecodeJobs(root/'verification-worker'/'queue.sqlite');q.initialize();q.configure(8,2)
+            q.set('local_torrent_enabled',True);q.set('local_torrent_permitted',True)
+            for i in range(1,9):q.seen('fixture-'+str(i),i);q.backend_health('fixture-'+str(i),True,'torrent-'+str(1+(i-1)//4))
+            rows=m.overview(data,root/'missing.json');by={r['name']:r for r in rows}
+            self.assertEqual(by['Windows lanes']['value'],'8 / 8')
+            self.assertIn('2 healthy TorrServers',by['Windows local torrent']['value'])
+            self.assertIn('8 workers / 2 TorrServers',by['Windows requested topology']['value'])
+
     def test_lan_page_prioritizes_current_verifier_and_gateway(self):
         units={'media-verification-coordinator.service':{'ActiveState':'active','Result':'success','UnitFileState':'enabled'}}
         with patch.object(m,'systemd',return_value=units),patch.object(m,'context',return_value={}):rows=m.workers()
         row=next(r for r in rows if r['id']=='media-verification-coordinator')
         self.assertIn('Running',row['health']);self.assertEqual(row['next_run'],'Continuous service')
-        self.assertLessEqual(len(rows),11)
+        self.assertEqual(len(rows),len(m.JOBS))
+        self.assertEqual(len({r['id'] for r in rows}),len(rows))
         self.assertEqual(rows[1]['name'],'Windows LAN source verification')
         self.assertFalse(any('LAN metadata' in r['name'] for r in rows))
 

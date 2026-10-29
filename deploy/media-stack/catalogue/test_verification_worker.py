@@ -42,13 +42,55 @@ class QueueTests(unittest.TestCase):
         for worker in workers[1:]:self.q.seen(worker)
         self.q.set('max_windows_jobs',4)
         self.assertEqual(self.q.status()['windows_slots_online'],4)
-        with self.assertRaises(InvalidJob):self.q.seen('unapproved-fifth-worker')
+        for n in range(5,17):self.q.seen('extra-worker-'+str(n))
+        with self.assertRaises(InvalidJob):self.q.seen('unapproved-seventeenth-worker')
         jobs=[self.submit()]
         for n in range(2,5):jobs.append(self.q.submit(f'movie:tt000000{n}',SID,'probe',{},f'http://127.0.0.1:8092/raw/movie:tt000000{n}',120))
         tasks=[self.q.claim(worker) for worker in workers]
         self.assertEqual([task['job_id'] for task in tasks],jobs)
         self.assertEqual(len({task['lease_id'] for task in tasks}),4)
         for worker,task in zip(workers,tasks):self.assertEqual(self.q.receive(worker,task,self.result()),'accepted')
+    def test_eight_workers_two_backends_and_configuration_fences(self):
+        generation=self.q.generation()
+        self.q.configure(8,2)
+        workers=[WORKER]+['scale-'+str(i) for i in range(2,9)]
+        for i,w in enumerate(workers,1):
+            self.q.seen(w,i);self.q.backend_health(w,True,'torrent-'+str(1+(i-1)//4))
+        self.assertEqual(self.q.status()['healthy_torrservers'],2)
+        for n in range(16):self.q.submit(f'movie:tt00000{n:02}',SID,'probe',{},f'http://127.0.0.1:8092/raw/movie:tt00000{n:02}',120)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:tasks=list(pool.map(self.q.claim,workers))
+        self.assertEqual(len({t['job_id'] for t in tasks}),8)
+        self.q.configure(4,1)
+        self.assertEqual(self.q.generation(),generation)
+        self.assertTrue(self.q.renew(workers[-1],tasks[-1],'video probe'))
+        self.q.finish(tasks[-1]['job_id'])
+        self.assertIsNone(self.q.claim(workers[-1]))
+        for w,t in ((0,1),(17,2),(8,0),(8,9),(2,3),(True,1)):
+            with self.assertRaises(InvalidJob):self.q.configure(w,t)
+    def test_legacy_registry_migration_is_idempotent(self):
+        with self.q.db(True) as c:
+            c.execute("DELETE FROM control WHERE key='registry_migrated'")
+            c.execute("UPDATE second_client SET worker='legacy-two',seen=?",(time.time(),))
+        self.q.initialize();self.q.initialize()
+        with self.q.db() as c:
+            self.assertEqual(c.execute("SELECT slot FROM workers WHERE worker='legacy-two'").fetchone()[0],2)
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM workers WHERE worker='legacy-two'").fetchone()[0],1)
+    def test_old_enrollment_order_does_not_change_windows_identity(self):
+        self.q.seen('legacy-other')
+        self.q.seen(WORKER,2)
+        self.q.seen('legacy-other',1)
+        with self.q.db() as c:
+            self.assertEqual(c.execute('SELECT lane FROM workers WHERE worker=?',(WORKER,)).fetchone()[0],2)
+        with self.assertRaises(InvalidJob):self.q.seen('new-imposter',2)
+
+    def test_failure_diagnostics_survive_consumption_without_raw_details(self):
+        job=self.submit();task=self.q.claim(WORKER);result=self.result()
+        result.update(reason='transport',diagnostic={'category':'stream_stall','failure_type':'SourceStalled','url':'https://private.invalid/token'})
+        self.q.receive(WORKER,task,result);self.q.finish(job)
+        with self.q.db() as c:
+            row=c.execute('SELECT failure_category,failure_type,result FROM decode_jobs WHERE id=?',(job,)).fetchone()
+            self.assertEqual(tuple(row),('stream_stall','SourceStalled',None))
+
     def test_lanes_above_guard_limit_are_not_queued(self):
         second='isolated-windows-2';self.q.seen(second);self.q.set('max_windows_jobs',2)
         self.submit()
@@ -168,7 +210,7 @@ class QueueTests(unittest.TestCase):
         self.assertIsNotNone(self.q.source(job,task['lease_id']));self.q.finish(job)
         self.assertIsNone(self.q.source(job,task['lease_id']))
     def test_offline_worker_cannot_block_server(self):
-        with self.q.db(True) as c:c.execute('UPDATE client SET seen=0')
+        with self.q.db(True) as c:c.execute('UPDATE workers SET seen=0')
         with self.assertRaises(RuntimeError):self.submit()
     def test_cannot_submit_commands_or_arbitrary_recipes(self):
         with self.assertRaises(ValueError):self.q.submit(KEY,SID,'command',{'shell':'whoami'},'http://127.0.0.1/raw/x',30)
@@ -275,6 +317,9 @@ class RealDecoderTests(unittest.TestCase):
             threading.Thread(target=server.serve_forever,daemon=True).start();self.addCleanup(server.server_close);self.addCleanup(server.shutdown)
             pin=hashlib.sha256(ssl.PEM_cert_to_DER_cert((self.root/'cert.pem').read_text())).hexdigest()
             api=client.API({'server_url':'https://127.0.0.1:'+str(server.server_port),'token':TOKEN,'tls_sha256':pin})
+            generation=q.generation()
+            self.assertEqual(api.request('/configure',{'workers':8,'torrservers':2})['topology'],{'workers':8,'torrservers':2})
+            self.assertEqual(q.generation(),generation)
             for op,params in [('probe',{}),('sample',self.params(True))]:
                 job=q.submit(KEY,SID,op,params,server.bridge+'/raw/'+KEY,120)
                 task=api.request('/claim',{'worker_id':WORKER})['task']

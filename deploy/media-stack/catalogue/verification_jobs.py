@@ -14,6 +14,7 @@ PROTOCOL = 'home-media-verification/1'
 PREFIX = '/v1/verification-worker'
 PHASES = frozenset(('video probe','audio conversion','conversion probe','sample decode','torrent resolution','speed verification','title validation','server fallback'))
 REASONS = frozenset(('interrupted','resource','transport','decoder','validation'))
+MAX_WORKERS = 16
 CLIENT_TABLES = ('client','second_client','third_client','fourth_client')
 
 class InvalidJob(ValueError): pass
@@ -46,10 +47,18 @@ class DecodeJobs:
               state TEXT,created REAL,controller REAL,deadline REAL,worker TEXT,lease TEXT,expires REAL DEFAULT 0,result TEXT,result_id TEXT,result_hash TEXT);
             CREATE INDEX IF NOT EXISTS decode_due ON decode_jobs(state,created);
             CREATE TABLE IF NOT EXISTS totals(key TEXT PRIMARY KEY,value INTEGER NOT NULL DEFAULT 0);''')
+            c.execute('CREATE TABLE IF NOT EXISTS workers(slot INTEGER PRIMARY KEY,worker TEXT UNIQUE NOT NULL,seen REAL NOT NULL DEFAULT 0)')
+            if 'lane' not in {r[1] for r in c.execute('PRAGMA table_info(workers)')}:c.execute('ALTER TABLE workers ADD COLUMN lane INTEGER')
+            c.execute('CREATE UNIQUE INDEX IF NOT EXISTS workers_lane ON workers(lane)')
+            if not self.setting(c,'registry_migrated',False):
+                for slot,table in enumerate(CLIENT_TABLES,1):
+                    old=c.execute('SELECT worker,seen FROM '+table).fetchone()
+                    if old and old[0]:c.execute('INSERT OR IGNORE INTO workers(slot,worker,seen) VALUES (?,?,?)',(slot,*old))
+                c.execute("INSERT OR REPLACE INTO control VALUES ('registry_migrated','true')")
             if 'stream_started' not in {r[1] for r in c.execute('PRAGMA table_info(decode_jobs)')}:c.execute('ALTER TABLE decode_jobs ADD COLUMN stream_started REAL DEFAULT 0')
             columns={r[1] for r in c.execute('PRAGMA table_info(decode_jobs)')}
             for name,definition in (('phase',"TEXT DEFAULT ''"),('phase_at','REAL DEFAULT 0'),
-                                    ('outcome',"TEXT DEFAULT ''"),('reason_code',"TEXT DEFAULT ''"),('finished','REAL DEFAULT 0')):
+                                    ('outcome',"TEXT DEFAULT ''"),('reason_code',"TEXT DEFAULT ''"),('finished','REAL DEFAULT 0'),('failure_category',"TEXT DEFAULT ''"),('failure_type',"TEXT DEFAULT ''")):
                 if name not in columns:c.execute('ALTER TABLE decode_jobs ADD COLUMN '+name+' '+definition)
             c.execute("INSERT OR IGNORE INTO control VALUES('enabled','false')")
             c.execute("INSERT OR IGNORE INTO control VALUES('generation',?)",(json.dumps(uuid.uuid4().hex),))
@@ -61,14 +70,15 @@ class DecodeJobs:
     def status(self):
         now=time.time()
         with self.db() as c:
-            seen=[row[0] for table in CLIENT_TABLES for row in c.execute('SELECT seen FROM '+table)]
+            seen=[r[0] for r in c.execute('SELECT seen FROM workers')]
             online=sum(value>now-45 for value in seen)
-            capacity=max(1,min(4,int(self.setting(c,'max_windows_jobs',1))))
+            capacity=max(1,min(MAX_WORKERS,int(self.setting(c,'max_windows_jobs',1))))
             producers={k.removeprefix('producer:'):json.loads(v) for k,v in c.execute("SELECT key,value FROM control WHERE key LIKE 'producer:%'")}
             producers={k:v for k,v in producers.items() if v.get('updated',0)>now-45}
             local_backends=sum(self.setting(c,'backend:'+r[0],{}).get('available',False) and self.setting(c,'backend:'+r[0],{}).get('reported',0)>now-45 and r[1]>now-45
-                               for table in CLIENT_TABLES for r in c.execute('SELECT worker,seen FROM '+table) if r[0])
-            return {'protocol':PROTOCOL,'enabled':self.setting(c,'enabled',False),'reason':self.setting(c,'reason','Awaiting memory gate / Windows pilot'),
+                               for r in c.execute('SELECT worker,seen FROM workers') if r[0])
+            backend_ids={self.setting(c,'backend:'+r[0],{}).get('id','legacy-1') for r in c.execute('SELECT worker,seen FROM workers') if r[1]>now-45 and self.setting(c,'backend:'+r[0],{}).get('available') and self.setting(c,'backend:'+r[0],{}).get('reported',0)>now-45}
+            return {'desired_workers':self.setting(c,'requested_windows_jobs',capacity),'desired_torrservers':self.setting(c,'requested_torrservers',1),'healthy_torrservers':len(backend_ids),'protocol':PROTOCOL,'enabled':self.setting(c,'enabled',False),'reason':self.setting(c,'reason','Awaiting memory gate / Windows pilot'),
                     'windows_seen':max(seen,default=0), 'windows_online':online>0,'windows_slots_online':online,
                     'windows_capacity':capacity,'windows_queue_capacity':self.queue_capacity(c),
                     'producer_activity':producers,
@@ -82,8 +92,8 @@ class DecodeJobs:
                     'local_torrent_pilot_remaining':self.setting(c,'local_torrent_pilot_remaining',0),
                     'totals':dict(c.execute('SELECT key,value FROM totals').fetchall())}
     def queue_capacity(self,c):
-        capacity=max(1,min(4,int(self.setting(c,'max_windows_jobs',1))))
-        return capacity*max(1,min(8,int(self.setting(c,'prefetch_per_lane',1))))
+        capacity=max(1,min(MAX_WORKERS,int(self.setting(c,'max_windows_jobs',1))))
+        return min(32,capacity*max(1,min(8,int(self.setting(c,'prefetch_per_lane',1)))))
     def producer(self,slot,key,phase):
         if slot not in range(1,33) or not re.fullmatch('(movie:tt[0-9]{5,12}|series:tt[0-9]{5,12}:[0-9]+:[0-9]+)',key):raise InvalidJob('Invalid producer')
         if phase not in ('source preparation','torrent_resolution','waiting for source metadata','video_probe','preparation',
@@ -92,20 +102,34 @@ class DecodeJobs:
         self.set('producer:'+str(slot),{'key':key,'phase':phase,'updated':time.time()})
     def setting_read(self,key,default=None):
         with self.db() as c:return self.setting(c,key,default)
-    def backend_health(self,worker,available):
-        if type(available) is bool:self.set('backend:'+worker,{'available':available,'reported':time.time()})
+    def backend_health(self,worker,available,backend_id=None):
+        ident=backend_id if isinstance(backend_id,str) and re.fullmatch(r'torrent-[1-8]',backend_id) else 'legacy-1'
+        if type(available) is bool:self.set('backend:'+worker,{'available':available,'reported':time.time(),'id':ident})
     def local_workers(self):
         with self.db() as c:
             return sum(bool(self.setting(c,'capability:'+r[0],{}).get('local-torrent-v1')) and self.setting(c,'backend:'+r[0],{}).get('available',False) and self.setting(c,'backend:'+r[0],{}).get('reported',0)>time.time()-45 and r[1]>time.time()-45
-                       for table in CLIENT_TABLES for r in c.execute('SELECT worker,seen FROM '+table) if r[0])
-    def seen(self,worker):
+                       for r in c.execute('SELECT worker,seen FROM workers') if r[0])
+    def seen(self,worker,lane=None):
         if not isinstance(worker,str) or not re.fullmatch('[a-zA-Z0-9_.:-]{1,128}',worker):raise InvalidJob('Invalid worker')
+        if lane is not None and (type(lane) is not int or not 1<=lane<=MAX_WORKERS):raise InvalidJob('Invalid worker lane')
         with self.db(True) as c:
-            workers={table:c.execute('SELECT worker FROM '+table).fetchone()[0] for table in CLIENT_TABLES}
-            table=next((name for name,value in workers.items() if value==worker),None)
-            if table is None:table=next((name for name,value in workers.items() if value is None),None)
-            if table is None:raise InvalidJob('Four enrolled workers already exist')
-            c.execute('UPDATE '+table+' SET worker=?,seen=?',(worker,time.time()))
+            row=c.execute('SELECT slot,lane FROM workers WHERE worker=?',(worker,)).fetchone()
+            if lane is not None:
+                other=c.execute('SELECT worker FROM workers WHERE lane=?',(lane,)).fetchone()
+                if other and other[0]!=worker:raise InvalidJob('Worker lane occupied')
+            if row:
+                if lane is not None and row[1] is not None and lane!=row[1]:raise InvalidJob('Worker identity lane mismatch')
+                c.execute('UPDATE workers SET seen=?,lane=COALESCE(lane,?) WHERE worker=?',(time.time(),lane,worker));return
+            used={r[0] for r in c.execute('SELECT slot FROM workers')}
+            slot=next((n for n in range(1,MAX_WORKERS+1) if n not in used),None)
+            if slot is None:raise InvalidJob('Worker enrollment ceiling reached')
+            c.execute('INSERT INTO workers(slot,worker,seen,lane) VALUES (?,?,?,?)',(slot,worker,time.time(),lane))
+    def configure(self,workers,torrservers):
+        if type(workers) is not int or type(torrservers) is not int or not 1<=workers<=MAX_WORKERS or not 1<=torrservers<=min(8,workers):raise InvalidJob('Invalid worker topology')
+        with self.db(True) as c:
+            for k,v in (('requested_windows_jobs',workers),('requested_torrservers',torrservers),('max_windows_jobs',workers),('prefetch_per_lane',2)):
+                c.execute('INSERT OR REPLACE INTO control VALUES (?,?)',(k,json.dumps(v)))
+        return {'workers':workers,'torrservers':torrservers}
     def submit(self,key,sid,operation,params,url,seconds):
         if operation=='verify_title':
             from verification_title import validate_task
@@ -117,7 +141,7 @@ class DecodeJobs:
         if not re.fullmatch('(movie:tt[0-9]{5,12}|series:tt[0-9]{5,12}:[0-9]+:[0-9]+)',key) or not re.fullmatch('[a-f0-9]{64}',sid):raise InvalidJob('Invalid source identity')
         now=time.time();job=uuid.uuid4().hex
         with self.db(True) as c:
-            seen=max(c.execute('SELECT seen FROM '+table).fetchone()[0] for table in CLIENT_TABLES)
+            seen=c.execute('SELECT COALESCE(MAX(seen),0) FROM workers').fetchone()[0]
             permitted=(self.setting(c,'local_torrent_enabled',False) and self.setting(c,'local_torrent_permitted',False)) if operation=='verify_title' else self.setting(c,'enabled',False)
             if not permitted or seen<now-45:raise WorkerWait('Windows verification worker offline or gated')
             c.execute("DELETE FROM decode_jobs WHERE created<? AND state IN ('consumed','cancelled')",(now-7*86400,))
@@ -143,12 +167,14 @@ class DecodeJobs:
             if not server_permitted and not (local_permitted and capable):return None
             old=c.execute("SELECT * FROM decode_jobs WHERE state='leased' AND worker=? AND expires>?",(worker,now)).fetchone()
             if old:return self.public(old)
+            slot=c.execute('SELECT COALESCE(lane,slot) FROM workers WHERE worker=?',(worker,)).fetchone()[0]
+            if slot>self.setting(c,'requested_windows_jobs',MAX_WORKERS):return None
             # An expired lease is fenced; its controller must restart this operation.
             c.execute("UPDATE decode_jobs SET state='cancelled' WHERE state='leased' AND expires<=?",(now,))
             # Queue capacity and active decode capacity are independent. Extra
             # ready work never lets a fourth client bypass a three-slot gate.
             active=c.execute("SELECT COUNT(*) FROM decode_jobs WHERE state='leased'").fetchone()[0]
-            if active>=max(1,min(4,int(self.setting(c,'max_windows_jobs',1)))):return None
+            if active>=max(1,min(MAX_WORKERS,int(self.setting(c,'max_windows_jobs',1)))):return None
             r=c.execute("SELECT * FROM decode_jobs WHERE state='pending' AND ((operation='verify_title' AND ?) OR (operation!='verify_title' AND ?)) ORDER BY created LIMIT 1",
                         (int(capable and local_permitted),int(server_permitted))).fetchone()
             if not r:return None
@@ -202,6 +228,14 @@ class DecodeJobs:
                 return 'duplicate'
             r=self.owned(c,worker,task)
             if not r:return 'stale'
+            diagnostic=result.get('diagnostic',{})
+            category=diagnostic.get('category','') if isinstance(diagnostic,dict) else ''
+            failure_type=diagnostic.get('failure_type','') if isinstance(diagnostic,dict) else ''
+            if category not in ('torrent_timeout','stream_stall','speed_rejected','decoder','resource','coordinator','transport','interrupted','validation'):category=''
+            if failure_type not in ('TimeoutError','URLError','HTTPError','Checkpoint','SourceStalled','SourceFailure','SourceTooSlow','ResourceCheckpoint','DecodeFailure','ValueError','RuntimeError','OSError','ConnectionError'):failure_type=''
+            stage=diagnostic.get('phase') if isinstance(diagnostic,dict) else None
+            if stage in PHASES:c.execute('UPDATE decode_jobs SET phase=? WHERE id=?',(stage,r['id']))
+            c.execute('UPDATE decode_jobs SET failure_category=?,failure_type=? WHERE id=?',(category,failure_type,r['id']))
             c.execute("UPDATE decode_jobs SET state='result',result=?,result_id=?,result_hash=?,outcome=?,reason_code=?,finished=? WHERE id=?",
                       (raw,result['result_id'],digest,result['status'],reason,time.time(),r['id']))
             c.execute("INSERT INTO totals VALUES('windows_operations',1) ON CONFLICT(key) DO UPDATE SET value=value+1")

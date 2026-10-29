@@ -6,6 +6,15 @@ import subprocess
 import time
 from verification_jobs import DecodeJobs
 
+def sync_producers(queue,workers):
+    slots=min(32,workers*2)
+    if queue.setting_read('producer_slots',0)==slots:return
+    wanted=['media-remote-lookahead@'+str(n)+'.timer' for n in range(4,slots+1)]
+    retired=['media-remote-lookahead@'+str(n)+'.timer' for n in range(max(4,slots+1),33)]
+    for action,units in (('enable',wanted),('disable',retired)):
+        if units:subprocess.run(['systemctl',action,'--now',*units],check=True,timeout=45,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+    queue.set('producer_slots',slots)
+
 def main():
     p=argparse.ArgumentParser();p.add_argument('--config',required=True);a=p.parse_args()
     cfg=json.loads(Path(a.config).read_text());q=DecodeJobs(cfg['queue_path']);q.initialize()
@@ -42,7 +51,7 @@ def main():
         elif bridge_limit<=0 or bridge_working>bridge_limit*(.8 if status['enabled'] else .7):reason='Catalogue bridge memory pressure; Windows verification paused'
         else:
             permitted=True
-            lanes=max(1,min(4,int(cfg.get('max_windows_jobs',1))))
+            lanes=max(1,min(16,int(q.setting_read('requested_windows_jobs',cfg.get('max_windows_jobs',1)))))
             reason=f'Parallel verification permitted: one server and up to {lanes} Windows '+('job' if lanes==1 else 'jobs')
         # Complete-title Windows jobs do not read through Debian TorrServer.
         # Keep the host, OOM and bridge protections, but do not inherit the old
@@ -55,13 +64,14 @@ def main():
         else:
             local_permitted=True
             local_reason='Windows-local torrent verification permitted; Debian fallback remains resource gated'
+        sync_producers(q,max(1,min(16,int(q.setting_read('requested_windows_jobs',cfg.get('max_windows_jobs',1))))))
     except Exception:
         reason='Resource status unavailable; Windows verification paused'
         local_reason='Resource status unavailable; Windows-local verification paused'
     q.set('enabled',permitted);q.set('reason',reason);q.set('health',health)
     q.set('local_torrent_permitted',local_permitted);q.set('local_torrent_reason',local_reason)
-    q.set('max_windows_jobs',max(1,min(4,int(cfg.get('max_windows_jobs',1)))))
-    q.set('prefetch_per_lane',max(1,min(8,int(cfg.get('prefetch_per_lane',1)))))
+    q.set('max_windows_jobs',max(1,min(16,int(q.setting_read('requested_windows_jobs',cfg.get('max_windows_jobs',1))))))
+    q.set('prefetch_per_lane',2)
     print(reason+'; '+local_reason)
 
 if __name__=='__main__':main()

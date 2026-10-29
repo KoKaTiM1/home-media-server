@@ -18,8 +18,16 @@ def verify(payload,state,output):
     validate_task(payload);key=payload['key'];state.mkdir(parents=True,exist_ok=True)
     a.DATA=state;a.TORR=os.environ.get('LOCAL_TORRSERVER_URL','http://home-media-verification-torrserver:8090')
     a.torr_headers=lambda:{}
+    diagnostic={}
+    def record_failure(error,stage):
+        typ=type(error).__name__
+        category={'SourceTooSlow':'speed_rejected','SourceStalled':'stream_stall','DecodeFailure':'decoder','ResourceCheckpoint':'resource','TimeoutError':'torrent_timeout' if stage=='torrent resolution' else 'stream_stall'}.get(typ,'transport')
+        diagnostic.update(category=category,failure_type=typ,phase=stage)
+    current_phase='torrent resolution'
     progress=state/'progress.json'
     def phase(name):
+        nonlocal current_phase
+        current_phase=name
         tmp=progress.with_suffix('.tmp');tmp.write_text(json.dumps({'phase':name,'updated':time.time()}));tmp.replace(progress)
     a.log=lambda message:None
     deadline=time.monotonic()+470
@@ -27,6 +35,10 @@ def verify(payload,state,output):
     try:raw=json.loads(raw_path.read_text())
     except (OSError,ValueError):raw={}
     class LocalReliability(Reliability):
+        def verify(self,*args,**kwargs):
+            try:return super().verify(*args,**kwargs)
+            except Exception as error:
+                record_failure(error,current_phase);raise
         def source_url(self,route,key,selected,progress=None):return a.upstream(selected)
         @contextmanager
         def lock(self,name):
@@ -57,6 +69,8 @@ def verify(payload,state,output):
                             if proc.returncode or err:raise DecodeFailure('Local decoder rejected source')
                             return subprocess.CompletedProcess(command,0,out,b'')
                         except subprocess.TimeoutExpired:continue
+                except Exception as error:
+                    record_failure(error,name);raise
                 finally:
                     if proc.poll() is None:proc.kill()
                     proc.communicate()
@@ -91,9 +105,9 @@ def verify(payload,state,output):
         files=a.torr({'action':'get','hash':playback['selected']['hash']},timeout=2).get('file_stats',[])
         result={'status':'ok','data':{'selected':playback['selected'],'info':info,'proof':proof,'raw_samples':samples,'files':files}}
     except Exception as error:
-        # A local negative is sent through Debian's established fallback before
-        # becoming an authoritative unavailable result. Never send raw errors.
-        result={'status':'checkpoint','reason':'transport','data':{'backend':'windows-torrent','failure_type':type(error).__name__}}
+        # Only bounded categories/type names cross the PC boundary.
+        if not diagnostic:record_failure(error,current_phase)
+        result={'status':'checkpoint','reason':'transport','diagnostic':diagnostic,'data':{'backend':'windows-torrent'}}
     tmp=output.with_suffix('.tmp');tmp.write_text(json.dumps(result));tmp.replace(output)
 
 if __name__=='__main__':

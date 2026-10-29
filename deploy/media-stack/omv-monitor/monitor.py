@@ -15,7 +15,7 @@ DATA=Path('/srv/dev-disk-by-uuid-bd267f22-f18a-4966-94ae-409a27252905/appdata/ca
 JOBS=[
  ('media-source-availability','Stream verification','Repeated batches; 1 minute between batches'),
  ('media-remote-availability','Windows LAN source verification','Optional parallel worker; 3 seconds between batches'),
- ('media-verification-coordinator','LAN media verification gateway','Continuous; sends exact-source media samples to the Windows worker'),
+ ('media-verification-coordinator','LAN media verification gateway','Continuous; coordinates configured Windows V6 title workers'),
  ('media-verification-guard','Windows verification memory gate','Every 15 seconds; protects server memory'),
  ('media-catalogue-sync','New-title discovery','00:00, 06:00, 12:00, 18:00; up to 2 minutes jitter'),
  ('media-saved-downloads','Saved downloads and watched-file cleanup','Every minute'),
@@ -319,25 +319,33 @@ def overview(data=DATA,snapshot=None):
         with closing(sqlite3.connect('file:'+str(queue)+'?mode=ro',uri=True,timeout=1)) as conn:
             conn.row_factory=sqlite3.Row
             totals=dict(conn.execute('SELECT key,value FROM totals'))
-            control={key:json.loads(value) for key,value in conn.execute("SELECT key,value FROM control WHERE key IN ('enabled','reason','max_windows_jobs','prefetch_per_lane','local_torrent_enabled','local_torrent_permitted','local_torrent_continuous','local_torrent_reason','local_torrent_pilot_remaining') OR key LIKE 'producer:%' OR key LIKE 'backend:%' OR key LIKE 'capability:%'")}
+            control={key:json.loads(value) for key,value in conn.execute("SELECT key,value FROM control WHERE key IN ('enabled','reason','max_windows_jobs','requested_windows_jobs','requested_torrservers','prefetch_per_lane','local_torrent_enabled','local_torrent_permitted','local_torrent_continuous','local_torrent_reason','local_torrent_pilot_remaining') OR key LIKE 'producer:%' OR key LIKE 'backend:%' OR key LIKE 'capability:%'")}
             queue_counts=dict(conn.execute("SELECT state,COUNT(*) FROM decode_jobs WHERE controller>? AND deadline>? GROUP BY state",(now,now)))
             seen=[]
             # Count every separately enrolled Windows lane. Older dashboard
             # code only read the original two tables and reported 2/2 even
             # after lanes three and four had connected.
-            for table in ('client','second_client','third_client','fourth_client'):
-                if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():
-                    seen += [row[0] for row in conn.execute('SELECT seen FROM '+table)]
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='workers'").fetchone():
+                seen=[r[0] for r in conn.execute('SELECT seen FROM workers')]
+            else:
+                for table in ('client','second_client','third_client','fourth_client'):
+                    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():
+                        seen += [row[0] for row in conn.execute('SELECT seen FROM '+table)]
             active=conn.execute("SELECT key,operation,params,state,created,stream_started,phase,phase_at FROM decode_jobs WHERE state IN ('pending','leased','result') AND controller>? ORDER BY created LIMIT 1",(now,)).fetchone()
+            hour=conn.execute("SELECT COUNT(*),COUNT(DISTINCT key),COUNT(DISTINCT CASE WHEN state='consumed' AND outcome='ok' THEN key END) FROM decode_jobs WHERE operation='verify_title' AND created>?",(now-3600,)).fetchone()
+            diagnostic_columns={r[1] for r in conn.execute('PRAGMA table_info(decode_jobs)')}
+            categories=conn.execute("SELECT failure_category,COUNT(*) FROM decode_jobs WHERE finished>? AND failure_category!='' GROUP BY failure_category",(now-3600,)).fetchall() if 'failure_category' in diagnostic_columns else []
             problem=conn.execute("SELECT operation,outcome,reason_code,finished FROM decode_jobs WHERE outcome IN ('checkpoint','decode_failure') AND finished>? ORDER BY finished DESC LIMIT 1",(now-3600,)).fetchone()
+        add('Windows titles attempted in last hour',f'{hour[1]:,} distinct / {hour[0]:,} attempts',f'{hour[2]:,} distinct completed Windows-local V6 passes; pending checkpoints are excluded')
+        if categories:add('Windows recent failure categories',', '.join(f'{category}: {count}' for category,count in categories),'Categorized temporary failures; authoritative unavailable results remain separate')
         add('Windows final passes',f"{totals.get('windows_titles_verified',0):,}",'Completed full title checks on the PC; probes and samples excluded','success')
         online=sum(value>now-45 for value in seen)
         connected=online>0
         add('Windows worker','Connected' if connected else 'Offline',control.get('reason','Waiting for resource gate') if connected else 'Server verification continues without the PC','success' if connected and control.get('enabled') else 'muted')
-        capacity=max(1,min(4,int(control.get('max_windows_jobs',1))))
+        capacity=max(1,min(16,int(control.get('max_windows_jobs',1))))
         add('Windows lanes',f'{online} / {capacity}','Connected verifier containers / allowed simultaneous Windows operations','success' if online and control.get('enabled') else 'muted')
-        local_backends=sum(isinstance(value,dict) and value.get('available') is True and value.get('reported',0)>now-45
-                           for key,value in control.items() if key.startswith('backend:'))
+        local_backends=len({value.get('id','legacy-1') for key,value in control.items() if key.startswith('backend:') and isinstance(value,dict) and value.get('available') is True and value.get('reported',0)>now-45})
+        add('Windows requested topology',str(control.get('requested_windows_jobs',capacity))+' workers / '+str(control.get('requested_torrservers',1))+' TorrServers','Edit Windows config/workers.json, then run Start')
         capable=sum(isinstance(value,dict) and value.get('local-torrent-v1') is True
                     for key,value in control.items() if key.startswith('capability:'))
         if control.get('local_torrent_enabled'):
@@ -345,7 +353,7 @@ def overview(data=DATA,snapshot=None):
             allowance='continuous; paused only by resource/health gate' if control.get('local_torrent_continuous') else f'{remaining} pilot dispatches remain'
             detail=f"{allowance}; {control.get('local_torrent_reason','resource gate pending')}"
             tone='success' if local_backends and control.get('local_torrent_permitted') else ('muted' if not capable else 'error')
-            add('Windows local torrent',f'{local_backends} healthy / {capable} capable',detail,tone)
+            add('Windows local torrent',f'{local_backends} healthy TorrServers / {capable} capable workers',detail,tone)
             add('Windows local V6 passes',f"{totals.get('windows_local_titles_verified',0):,}",f"{totals.get('windows_local_server_fallbacks',0):,} requested Debian fallback; {totals.get('windows_local_fallback_deferred',0):,} deferred for its resource gate; {totals.get('windows_local_invalid_results',0):,} invalid Windows results rejected",'success')
         else:
             add('Windows local torrent','Awaiting updated PC package','Existing Windows sample workers remain compatible; Debian verification continues')
