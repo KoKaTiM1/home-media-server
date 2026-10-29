@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-10-29T19:27:33.215747+00:00",
+  "created_utc": "2026-10-29T19:29:57.685854+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -34,7 +34,7 @@
     "deploy/media-stack/catalogue/features.py": "045701bc54d6f30c6a30a84cee529a86fe3c81c2ee056c1081d1ff088e28ffdf",
     "deploy/media-stack/catalogue/metadata_jobs.py": "1754fe90b7c20426a2afc35ed49afe16084770288bb630922d5f81471ed021dc",
     "deploy/media-stack/catalogue/playback_diagnostics.py": "4287867fefcc3061855efb6344f9d918eebd1174d0673c9e80ca759e78985f11",
-    "deploy/media-stack/catalogue/reliability.py": "bee88477a239abded8e81c39494769063db897f3233a8e2554e5467fe4cddbcf",
+    "deploy/media-stack/catalogue/reliability.py": "778832d393151bf9123b01236442f1b362d81e2855d78b822d71facdb6e2bbc7",
     "deploy/media-stack/catalogue/test_app.py": "b7d37311311e4cd82d15bdf4c1d8f426c773287feadd383d792404c87a647bc8",
     "deploy/media-stack/catalogue/test_details.py": "abdcf510dd3f0ee28bf74569f2eaecb9e3e75a73068ba2ae33ed91849da20f95",
     "deploy/media-stack/catalogue/test_durable_playback.py": "243dcad2181d23ac6cd73b7c3a7493fa520c208dcdded92c3c63883c2b152f4f",

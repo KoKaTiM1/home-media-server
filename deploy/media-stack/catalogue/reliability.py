@@ -31,7 +31,7 @@ AUDIO_CODECS = {'aac','ac3','eac3','dts','truehd','flac','mp3','mp2','opus','vor
 
 class Checkpoint(RuntimeError):
     """Work remains useful or was interrupted; do not record a negative proof."""
-    def __init__(self,message,code='unclassified'):
+    def __init__(self,message='',code='unclassified'):
         super().__init__(message);self.code=code
 
 
