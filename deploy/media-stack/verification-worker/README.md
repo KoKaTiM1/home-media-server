@@ -2,7 +2,7 @@
 
 Windows can run complete V6 source checks with its own private TorrServer; the
 Debian server still owns candidate ranking, evidence acceptance and final proof
-commits. Package 0.3.0 contains worker image `home-media-verification-worker:0.3.0`
+commits. Package 0.3.1 contains worker image `home-media-verification-worker:0.3.1`
 and a private, container-network-only `home-media-verification-torrserver:0.3.0`.
 
 ## Four launchers
@@ -18,7 +18,11 @@ Extract over the existing worker folder. Preserve `config/`, `data/`, `data-2/`,
 `data-3/`, `data-4/` and `torrent-state/`; each container has a separate durable identity. Run
 `01-UPDATE-AND-START.cmd` once after extracting. No per-worker start/stop actions
 are needed. Fresh installations need their private connection JSON under
-`config/verification.local.json` before Update or Start.
+`config/verification.local.json` before Update or Start. The optional
+`fallback_server_urls` array enables a secondary HTTPS path; each address must
+present the same pinned certificate. The worker tries the LAN URL first and
+uses the Tailscale URL when it cannot establish a pinned TLS connection. The
+durable worker identity remains tied to the primary URL and is preserved.
 
 The updater checks the image checksum and occupied container names before
 stopping workers. Cleanup targets only the exact historical launcher names,
@@ -68,10 +72,9 @@ when Windows is off. A Windows speed pass describes delivery on the Windows PC;
 it is intentionally not repeated on Debian and therefore does not guarantee the
 same speed from the server's network path.
 
-The first rollout is capped at exactly 20 dispatched complete-title jobs. Old
-0.2.x workers remain compatible and receive their earlier fixed probe/sample
-operations. Only a 0.3.0 worker that reports a healthy local torrent backend can
-claim complete-title work.
+The initial capped rollout is complete. Old 0.2.x workers remain compatible and
+receive their earlier fixed probe/sample operations. Only a 0.3.x worker that
+reports a healthy local torrent backend can claim complete-title work.
 
 ## Restricted transport and evidence
 
@@ -99,7 +102,7 @@ checkpoint, not a failed source. Lost replies replay the same result identity.
 
 1. Build the normal catalogue image first. From the stack directory build the
    helper with `docker build -f verification-worker/Dockerfile -t
-   home-media-verification-worker:0.3.0 .`. Tag the pinned TorrServer image as
+   home-media-verification-worker:0.3.1 .`. Tag the pinned TorrServer image as
    `home-media-verification-torrserver:0.3.0` and export both images privately; compiled
    image archives are not part of the public repository.
 2. Install `coordinator.py`, `resource_guard.py` and the shared

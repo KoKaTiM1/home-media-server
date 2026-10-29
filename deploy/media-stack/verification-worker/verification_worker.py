@@ -58,13 +58,28 @@ def archive_stale_result(folder,task,result):
 class API:
     def __init__(self,config):
         self.origin=urlsplit(config['server_url']);self.token=config['token'];self.pin=config['tls_sha256'].replace(':','').lower()
+        self.origins=[self.origin]
+        fallback=config.get('fallback_server_urls',[])
+        if not isinstance(fallback,list) or any(not isinstance(value,str) for value in fallback):raise ValueError('Invalid fallback origins')
+        for value in fallback:
+            candidate=urlsplit(value)
+            if candidate.scheme!='https' or not candidate.hostname or candidate.path not in ('','/') or candidate.query or candidate.fragment or candidate.username or candidate.password:raise ValueError('Invalid HTTPS fallback origin')
+            if candidate not in self.origins:self.origins.append(candidate)
         if self.origin.scheme!='https' or not self.origin.hostname or self.origin.path not in ('','/') or self.origin.query or self.origin.fragment or self.origin.username or self.origin.password:raise ValueError('Invalid HTTPS origin')
         if not re.fullmatch('[a-f0-9]{64}',self.pin) or not re.fullmatch('[A-Za-z0-9_-]{32,256}',self.token):raise ValueError('Invalid worker connection')
     def connection(self):
         ctx=ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT);ctx.check_hostname=False;ctx.verify_mode=ssl.CERT_NONE;ctx.minimum_version=ssl.TLSVersion.TLSv1_2
-        c=http.client.HTTPSConnection(self.origin.hostname,self.origin.port or 443,timeout=60,context=ctx);c.connect()
-        if not hmac.compare_digest(hashlib.sha256(c.sock.getpeercert(binary_form=True)).hexdigest(),self.pin):c.close();raise TransportWait('TLS fingerprint changed')
-        return c
+        for origin in self.origins:
+            c=http.client.HTTPSConnection(origin.hostname,origin.port or 443,timeout=5,context=ctx)
+            try:
+                c.connect()
+                if not hmac.compare_digest(hashlib.sha256(c.sock.getpeercert(binary_form=True)).hexdigest(),self.pin):
+                    c.close();continue
+                c.sock.settimeout(60)
+                return c
+            except (OSError,ssl.SSLError):
+                c.close()
+        raise TransportWait('Coordinator unavailable or access denied')
     def request(self,path,body=None):
         c=self.connection()
         try:

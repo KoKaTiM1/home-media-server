@@ -13,7 +13,7 @@ foreach($Leaf in @('config','data','data-2','data-3','data-4')){$Before[$Leaf]=G
 $null=Run Update
 $S=State
 Assert ($S.containers.Count -eq 5) 'Update must start four workers and TorrServer'
-foreach($C in $S.containers.Values){Assert $C.State.Running 'Every worker should run';Assert ($C.Config.Image -in @('home-media-verification-worker:0.3.0','home-media-verification-torrserver:0.3.0')) 'Image not updated'}
+foreach($C in $S.containers.Values){Assert $C.State.Running 'Every worker should run';Assert ($C.Config.Image -in @('home-media-verification-worker:0.3.1','home-media-verification-torrserver:0.3.0')) 'Image not updated'}
 Assert (-not (Test-Path /test/08-START-SECOND.cmd)) 'Old launcher was not removed'
 Assert (Test-Path /test/unrelated.cmd) 'Unrelated script was removed'
 foreach($Leaf in $Before.Keys){Assert ((Get-Content -Raw ('/test/'+$Leaf+'/preserve.txt')) -eq $Before[$Leaf]) 'Saved data changed'}

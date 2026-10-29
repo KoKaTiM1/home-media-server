@@ -1,0 +1,15 @@
+[Unit]
+Description=Tailscale-only backup listener for the Windows verification coordinator
+Requires=tailscaled.service
+After=tailscaled.service
+
+[Socket]
+ListenStream=<SERVER_TAILSCALE_IP>:8095
+BindToDevice=tailscale0
+FreeBind=yes
+NoDelay=true
+Accept=no
+Service=media-verification-coordinator-tailscale.service
+
+[Install]
+WantedBy=sockets.target

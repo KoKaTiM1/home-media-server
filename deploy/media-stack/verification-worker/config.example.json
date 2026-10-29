@@ -1,5 +1,6 @@
 {
   "server_url": "https://SERVER_LAN_HOST:8095",
+  "fallback_server_urls": ["https://SERVER_TAILSCALE_IP:8095"],
   "tls_sha256": "SERVER_CERT_SHA256",
   "token": "DEDICATED_VERIFICATION_TOKEN"
 }

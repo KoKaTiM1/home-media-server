@@ -1,7 +1,7 @@
 param([ValidateSet('Update','Start','Logs','Stop','Status')][string]$Action='Status')
 $ErrorActionPreference='Stop'
 $Root=$PSScriptRoot
-$Image='home-media-verification-worker:0.3.0'
+$Image='home-media-verification-worker:0.3.1'
 $TorrentImage='home-media-verification-torrserver:0.3.0'
 $TorrentName='home-media-verification-torrserver'
 $Network='home-media-verification'

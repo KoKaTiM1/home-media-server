@@ -188,7 +188,7 @@ def export(destination):
         for name in VERIFICATION_WORKER_FILES:
             copy(verifier / name, Path('deploy/media-stack/verification-worker') / name)
     for source in Path('/etc/systemd/system').glob('media-*'):
-        if source.is_file() and source.suffix in {'.service', '.timer'}:
+        if source.is_file() and source.suffix in {'.service', '.timer', '.socket'}:
             copy(source, Path('deploy/systemd') / source.name)
     copy(Path('/etc/systemd/system/docker.service.d/media-storage.conf'), 'deploy/systemd/docker.service.d/media-storage.conf')
     plugins = STORAGE / 'appdata/jellyfin/config/plugins/DynamicLibrary'
