@@ -1,5 +1,6 @@
 """Whole-title capability/fallback fences and real local HTTP/FFmpeg evidence."""
 import copy
+import sqlite3
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 import json
 import os
@@ -15,7 +16,7 @@ import unittest
 from unittest.mock import patch
 from test_app import a
 from verification_jobs import DecodeJobs,WorkerWait
-from verification_title import validate_evidence,validate_task,execute_title
+from verification_title import validate_evidence,validate_task,execute_title,controller_fault
 from reliability import Checkpoint
 
 KEY='movie:tt0000001';HASH='a'*40
@@ -37,6 +38,62 @@ class TitleTests(unittest.TestCase):
             self.assertEqual(task['job_id'],job)
             self.q.finish(job)
 
+    def test_queue_wait_does_not_spend_worker_execution_budget(self):
+        class Clock:
+            now=0
+            def monotonic(self):return self.now
+            def time(self):return 10000+self.now
+            def sleep(self,_):pass
+        clock=Clock();steps=iter(((140,'pending'),(200,'leased'),(260,'leased'),(350,'result')))
+        def poll(job):
+            clock.now,state=next(steps)
+            return state,({'status':'checkpoint','reason':'transport'} if state=='result' else None)
+        def remaining(_):
+            if a.BUDGET.deadline is not None and clock.now>=a.BUDGET.deadline:raise TimeoutError('fixture budget')
+            return 1
+        a.BUDGET.first_sweep_attempt=True;self.addCleanup(delattr,a.BUDGET,'first_sweep_attempt')
+        a.BUDGET.worker_deadline=240;a.BUDGET.remote_verification=True
+        with patch('verification_title.time',clock),patch('verification_remote.jobs',return_value=self.q),patch('verification_title.payload',return_value=self.payload),patch.object(self.q,'poll',side_effect=poll),patch.object(self.q,'job_clock',return_value={'created':10000,'claimed_at':10200,'deadline':10440,'execution_seconds':240}),patch.object(a,'remaining',side_effect=remaining),patch.object(a,'prepared') as prepared:
+            self.assertTrue(execute_title(a.__dict__,KEY))
+        prepared.assert_called_once();self.assertEqual(clock.now,350)
+        with self.q.db() as c:
+            row=c.execute('SELECT execution_seconds,deadline-created FROM decode_jobs').fetchone()
+            self.assertEqual(tuple(row),(240,240))
+    def test_queue_wait_has_its_own_bounded_timeout(self):
+        class Clock:
+            now=0
+            def monotonic(self):return self.now
+            def time(self):return 10000+self.now
+            def sleep(self,_):pass
+        clock=Clock()
+        def poll(job):clock.now=241;return 'pending',None
+        def remaining(_):
+            if a.BUDGET.deadline is not None and clock.now>=a.BUDGET.deadline:raise TimeoutError('fixture queue budget')
+            return 1
+        a.BUDGET.first_sweep_attempt=True;self.addCleanup(delattr,a.BUDGET,'first_sweep_attempt')
+        a.BUDGET.worker_deadline=240
+        with patch('verification_title.time',clock),patch('verification_remote.jobs',return_value=self.q),patch('verification_title.payload',return_value=self.payload),patch.object(self.q,'poll',side_effect=poll),patch.object(a,'remaining',side_effect=remaining):
+            with self.assertRaises(TimeoutError):execute_title(a.__dict__,KEY)
+        with self.q.db() as c:self.assertEqual(c.execute('SELECT cancel_code FROM decode_jobs').fetchone()[0],'queue_timeout')
+    def test_controller_cancellation_preserves_actual_reason(self):
+        for reason in ('title_claim_lost','worker_unavailable','navigation_interrupted','playback_interrupted','session_unavailable'):
+            a.BUDGET.remote_cancel_code=reason
+            a.BUDGET.worker_deadline=time.monotonic()+240
+            with patch('verification_remote.jobs',return_value=self.q),patch('verification_title.payload',return_value=self.payload),patch.object(a,'remaining',side_effect=a.ClientCancelled('fixture cancellation')):
+                with self.assertRaises(a.ClientCancelled):execute_title(a.__dict__,KEY)
+            with self.q.db() as c:self.assertEqual(c.execute('SELECT cancel_code FROM decode_jobs ORDER BY created DESC LIMIT 1').fetchone()[0],reason)
+        a.BUDGET.remote_cancel_code=''
+
+    def test_controller_database_diagnostic_is_sanitized(self):
+        messages=[];error=sqlite3.OperationalError('https://private.invalid/?token=fixture-secret')
+        error.sqlite_errorcode=517
+        a.BUDGET.worker_deadline=time.monotonic()+240
+        with patch('verification_remote.jobs',return_value=self.q),patch('verification_title.payload',return_value=self.payload),patch.object(self.q,'poll',side_effect=error),patch.object(a,'log',side_effect=messages.append):
+            with self.assertRaises(Checkpoint):execute_title(a.__dict__,KEY)
+        self.assertTrue(any('517' in m for m in messages))
+        self.assertNotIn('private.invalid',''.join(messages));self.assertNotIn('fixture-secret',''.join(messages))
+        with self.q.db() as c:self.assertEqual(c.execute('SELECT cancel_code FROM decode_jobs ORDER BY created DESC LIMIT 1').fetchone()[0],'controller_database')
+
     def test_old_client_cannot_take_whole_title_and_stale_lease_is_fenced(self):
         job=self.q.submit(KEY,'b'*64,'verify_title',self.payload,'',60)
         self.assertIsNone(self.q.claim('old-decoder'))
@@ -53,7 +110,7 @@ class TitleTests(unittest.TestCase):
         self.assertEqual(calls,[False]);self.assertTrue(a.BUDGET.remote_verification)
         with self.q.db() as c:
             row=c.execute('SELECT deadline-created,execution_seconds FROM decode_jobs').fetchone()
-            self.assertEqual(row[0],row[1])
+            self.assertEqual(row[0],240)
             self.assertGreater(row[1],0)
             self.assertLessEqual(row[1],60)
         with a.F.db() as c:self.assertIsNone(c.execute('SELECT state FROM validation WHERE key=?',(KEY,)).fetchone())

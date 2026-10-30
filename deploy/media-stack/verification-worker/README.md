@@ -65,7 +65,8 @@ two active authoritative owners. Debian continues independently when Windows is 
 
 The initial V6 sweep takes a durable snapshot of the eligible source queue and
 gives each untouched key one full attempt before retry work resumes. A first
-attempt is limited to four minutes overall; the Windows decoder stops with a
+attempt has up to four minutes of preparation/execution; ready-queue waiting
+has its own bounded 240-second window. The Windows decoder stops with a
 30-second receipt margin. Checkpoints are deferred, not counted as failures.
 After the sweep, existing retry/cooldown rules apply. Retry jobs keep the full
 470-second decoder budget, with a 500-second server receipt deadline. Candidate
@@ -97,14 +98,17 @@ configuration, then copy the package to Windows and run Update. The topology is
 applied by Start; no per-lane server editing is required. Initial server rollout
 retains existing capacity until the updated launcher requests a new topology.
 
-Issue #4 tracks throughput; issue #3 tracks the host TorrServer OOM review. The
+Issue #4 tracks throughput; issue #6 tracks playback and backend stability. The
 100+ distinct completed title checks/hour target requires measurement. Preserve
 all V6 quality checks when evaluating more workers or torrent backends.
 
 ## Queue timing and throughput trial (0.4.2)
 
-The first sweep gives a title up to four minutes overall; later retry jobs have
-up to 500 seconds from the producer's start. The Windows decoder reserves 30
+The first sweep gives a title up to four minutes of preparation/execution;
+later retries allow up to 500 seconds. Metadata preparation consumes that
+allowance, while queue waiting is separately capped at 240 seconds. After a
+claim, the controller follows the worker lease's granted deadline instead of
+subtracting queue wait a second time. The Windows decoder reserves 30
 seconds for result receipt. Renewing a lease does not extend execution time.
 Windows-local producers handle one title per invocation; existing sample/decode
 jobs keep their original deadlines. Each remote producer service needs

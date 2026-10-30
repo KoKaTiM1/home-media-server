@@ -3,6 +3,8 @@ import hashlib
 import json
 import math
 import re
+import sqlite3
+import traceback
 import time
 from urllib.parse import urlencode
 from pathlib import Path
@@ -125,6 +127,16 @@ def validate_evidence(g,key,p,result,started):
     proof={**proof,'verification_worker':'windows','source_backend':'windows-torrent','speed':{**speed,'measurement_worker':'windows'}}
     return selected,info,proof,audio,conversion
 
+def controller_fault(g,error):
+    # Trace locations and numeric codes are useful; messages/locals may contain
+    # private URLs or credentials and must never enter the diagnostics stream.
+    frames=traceback.extract_tb(error.__traceback__)[-6:]
+    value={'type':type(error).__name__,'frames':[{'file':Path(f.filename).name,'function':f.name,'line':f.lineno} for f in frames]}
+    if isinstance(error,sqlite3.Error):value['sqlite_code']=getattr(error,'sqlite_errorcode',None)
+    elif isinstance(error,OSError):value['errno']=error.errno
+    try:g['log']('Windows controller fault '+json.dumps(value,sort_keys=True))
+    except Exception:pass
+
 def execute_title(g,key,cancel=None):
     first_sweep=bool(getattr(g['BUDGET'],'first_sweep_attempt',False))
     execution_seconds=240 if first_sweep else 500
@@ -143,16 +155,30 @@ def _execute_title(g,key,cancel,execution_seconds):
     with g['request_budget'](time.monotonic()+60,cancel):p=payload(g,key)
     started=time.time();deadline=min(time.monotonic()+execution_seconds,getattr(g['BUDGET'],'worker_deadline',float('inf')))
     fallback=False;job=None;consumed=False;failure_category="transport";cancel_code="controller_error"
-    with g['validation_attempt'](True),g['request_budget'](deadline,cancel):
+    # Queue waiting has its own bounded window. Active execution remains capped
+    # by the original remaining per-attempt budget after source preparation.
+    queue_deadline=time.monotonic()+240
+    execution_started=False
+    with g['validation_attempt'](True),g['request_budget'](queue_deadline,cancel):
         try:
             sid=hashlib.sha256(json.dumps(p,sort_keys=True).encode()).hexdigest()
             job_seconds=max(1,min(execution_seconds,int(deadline-time.monotonic())))
-            try:job=q.submit(key,sid,OPERATION,p,'',job_seconds,execution_seconds=job_seconds)
+            try:job=q.submit(key,sid,OPERATION,p,'',240,execution_seconds=job_seconds)
             except WorkerWait:return False
             producer_phase(g,key,'windows local torrent')
             while True:
-                g['remaining'](1)
                 state,result=q.poll(job)
+                if not execution_started and state in ('leased','result'):
+                    clock=q.job_clock(job)
+                    if clock and clock['claimed_at']>0:
+                        # Follow the deadline already granted by the queue to
+                        # this exact lease; never extend the worker's budget.
+                        deadline=time.monotonic()+max(0,clock['deadline']-time.time())
+                        g['BUDGET'].deadline=deadline
+                        g['BUDGET'].worker_deadline=deadline
+                        execution_started=True
+                        g['log']('Windows verification clock '+json.dumps({'queue_wait_seconds':round(max(0,clock['claimed_at']-clock['created']),3),'execution_seconds':clock['execution_seconds']},sort_keys=True))
+                g['remaining'](1)
                 if state=='result':
                     if result['status']!='ok':
                         diagnostic=result.get('diagnostic',{})
@@ -170,14 +196,27 @@ def _execute_title(g,key,cancel,execution_seconds):
                     if not accepted or accepted[0]!='verified' or json.loads(accepted[1])!=proof:raise Checkpoint('Title report superseded Windows result')
                     q.count('windows_local_titles_verified');consumed=True
                     return True
-                if state in ('cancelled','consumed') or time.monotonic()>=deadline:raise Checkpoint('Windows title lease ended')
+                if state in ('cancelled','consumed'):raise Checkpoint('Windows title lease ended')
+                if time.monotonic()>=(deadline if execution_started else queue_deadline):raise TimeoutError('Windows execution budget' if execution_started else 'Windows queue budget')
                 time.sleep(.5)
         except TimeoutError:
-            cancel_code='controller_budget';raise
+            cancel_code='controller_budget' if execution_started else 'queue_timeout';raise
         except Checkpoint:
-            cancel_code='receipt_interrupted';raise
+            cancel_code=getattr(g['BUDGET'],'remote_cancel_code','') or 'receipt_interrupted';raise
         except g['ClientCancelled']:
-            cancel_code='foreground_interrupted';raise
+            cancel_code=getattr(g['BUDGET'],'remote_cancel_code','') or 'controller_cancelled'
+            raise
+        except sqlite3.Error as error:
+            controller_fault(g,error)
+            cancel_code='controller_database'
+            raise Checkpoint('Controller database checkpoint') from None
+        except OSError as error:
+            controller_fault(g,error)
+            cancel_code='controller_transport'
+            raise Checkpoint('Controller transport checkpoint') from None
+        except g['PlaybackBusy']:
+            cancel_code='navigation_interrupted' if g['F'].foreground_busy() else 'controller_busy'
+            raise
         except (ValueError,KeyError,TypeError):
             q.count('windows_local_invalid_results');failure_category='validation';fallback=True
         finally:

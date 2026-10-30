@@ -15,7 +15,7 @@ PREFIX = '/v1/verification-worker'
 PHASES = frozenset(('video probe','audio conversion','conversion probe','sample decode','torrent resolution','speed verification','title validation','server fallback','waiting for backend lock'))
 REASONS = frozenset(('interrupted','resource','transport','decoder','validation'))
 DIAGNOSTIC_CODES = frozenset(('range_mismatch','missing_media_size','cache_attribution','uncached_range_budget','speed_work_budget','local_work_budget','local_output_bound','local_transport','unclassified'))
-CANCEL_CODES = frozenset(('queue_timeout','execution_timeout','controller_lost','lease_expired','controller_budget','foreground_interrupted','controller_error','receipt_interrupted','unclassified'))
+CANCEL_CODES = frozenset(('queue_timeout','execution_timeout','controller_lost','lease_expired','controller_budget','foreground_interrupted','controller_error','receipt_interrupted','navigation_interrupted','playback_interrupted','session_unavailable','title_claim_lost','worker_unavailable','controller_cancelled','controller_database','controller_transport','controller_busy','unclassified'))
 MAX_WORKERS = 16
 CLIENT_TABLES = ('client','second_client','third_client','fourth_client')
 
@@ -253,6 +253,10 @@ class DecodeJobs:
                       (raw,result['result_id'],digest,result['status'],reason,time.time(),r['id']))
             c.execute("INSERT INTO totals VALUES('windows_operations',1) ON CONFLICT(key) DO UPDATE SET value=value+1")
             return 'accepted'
+    def job_clock(self,job):
+        with self.db() as c:
+            r=c.execute('SELECT created,claimed_at,deadline,execution_seconds FROM decode_jobs WHERE id=?',(job,)).fetchone()
+            return dict(r) if r else None
     def poll(self,job):
         with self.db(True) as c:
             r=c.execute('SELECT * FROM decode_jobs WHERE id=?',(job,)).fetchone()

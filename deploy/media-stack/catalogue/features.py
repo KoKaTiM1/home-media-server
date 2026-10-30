@@ -1449,20 +1449,26 @@ class Features:
                     with self.g['REL'].db() as conn:work=conn.execute('SELECT value FROM preparation_work WHERE key=?',(key,)).fetchone()
                     audio_index=json.loads(work[0]).get('audio_index') if work else None
                     last_session_check=[0,False]
+                    budget.remote_cancel_code=''
                     last_claim_renew=[time.monotonic()]
                     def interrupted():
                         if time.monotonic()-last_claim_renew[0]>=10:
-                            if not self.renew_verification(key,claim):return True
+                            if not self.renew_verification(key,claim):
+                                budget.remote_cancel_code='title_claim_lost';return True
                             last_claim_renew[0]=time.monotonic()
                             if remote:
                                 from verification_remote import producer_phase
                                 producer_phase(self.g,key)
                         if remote:
                             from verification_remote import ready
-                            if not ready(self.g):return True
-                        if self.foreground_busy():return True
+                            if not ready(self.g):
+                                budget.remote_cancel_code='worker_unavailable';return True
+                        if self.foreground_busy():
+                            budget.remote_cancel_code='navigation_interrupted';return True
                         if time.monotonic()-last_session_check[0]>=2:
-                            last_session_check[:]=[time.monotonic(),bool(busy())]
+                            reason=busy()
+                            last_session_check[:]=[time.monotonic(),bool(reason)]
+                            if reason:budget.remote_cancel_code='playback_interrupted' if reason.startswith('Paused while Jellyfin is playing') else 'navigation_interrupted' if reason.startswith('Yielding') else 'session_unavailable'
                         return last_session_check[1]
                     handled=False
                     if remote and audio_index is None:

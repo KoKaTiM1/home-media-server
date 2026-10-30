@@ -632,6 +632,21 @@ pending. Old Windows workers keep their fixed probe/sample workflow.
 
 Windows-local V6 can run continuously when explicitly enabled. It is not limited
 by a finite pilot quota; existing host-memory, bridge-memory, OOM/restart,
-worker/backend-health and four-active-job gates remain authoritative. Outcomes
+worker/backend-health and configured active-job gates remain authoritative. Outcomes
 and invalid results remain visible in the worker diagnostics for sustained
 throughput and failure review.
+
+### Independent queue and execution clocks
+
+Windows whole-title controllers use a bounded 240-second ready-queue wait.
+After the exact job is claimed they follow its existing execution deadline;
+queue waiting no longer consumes the first-sweep 240-second active allowance.
+Source preparation still consumes the active allowance; later retries retain
+up to 500 seconds and the decoder's 30-second result margin. No worker package
+update is needed for this server-side correction.
+
+Cancellation diagnostics distinguish navigation, active playback, session-status
+uncertainty, lost title claims, unavailable workers, controller database/transport
+faults, and execution/queue expiry. Viewing safeguards and V6 media/speed checks
+remain in force. Controller fault logs contain bounded code locations and numeric
+error codes, without exception text, URLs, credentials or local variables.
