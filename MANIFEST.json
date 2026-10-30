@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-10-30T21:40:33.846026+00:00",
+  "created_utc": "2026-10-30T22:52:58.673135+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -31,13 +31,13 @@
     "deploy/media-stack/catalogue/check_subtitle_delivery.py": "cc143d9c5ad787bcfc3e66a8b26cb48e465afb487d5d2e4e35872486bbc439f9",
     "deploy/media-stack/catalogue/check_tv_recovery.py": "52bf401d509aa7e45cbb0e5c83db15935e39fbd4842a9146ac44be7b3ab4afbc",
     "deploy/media-stack/catalogue/embedded_subtitles.py": "88cbb7199b92a5c1f5cde75d3483be1ec50d6cf470e69d0975113b1deca96d39",
-    "deploy/media-stack/catalogue/features.py": "2172a6b7a57b0b3e5020eef38a573410c6a46962350e70f05ae6eee503804661",
+    "deploy/media-stack/catalogue/features.py": "9ffbc285989f481dc676ad1c4a1acd501cd72e7a560ee2bc2cf4c4fa7d89ff63",
     "deploy/media-stack/catalogue/metadata_jobs.py": "1754fe90b7c20426a2afc35ed49afe16084770288bb630922d5f81471ed021dc",
     "deploy/media-stack/catalogue/playback_diagnostics.py": "4287867fefcc3061855efb6344f9d918eebd1174d0673c9e80ca759e78985f11",
     "deploy/media-stack/catalogue/reliability.py": "778832d393151bf9123b01236442f1b362d81e2855d78b822d71facdb6e2bbc7",
     "deploy/media-stack/catalogue/russian_audio.py": "4522adba56a4ae057e4e4e9e5a736844312dd0fbcbefc4490b65eeadc3fb32a7",
     "deploy/media-stack/catalogue/test_app.py": "41cf83696454c8e2cae885c7e8109dec0b08abc2505368a39741f123457d4f83",
-    "deploy/media-stack/catalogue/test_claim_renewal.py": "ec37bbd5af213781e4d9d0a74872436e18b5fd83de57a49a4ee370cabff405cf",
+    "deploy/media-stack/catalogue/test_claim_renewal.py": "ef734d2eb6317acc8ea0bd077387b1f5ff5b60a5605dba28ea8a5c8d4b15c719",
     "deploy/media-stack/catalogue/test_details.py": "abdcf510dd3f0ee28bf74569f2eaecb9e3e75a73068ba2ae33ed91849da20f95",
     "deploy/media-stack/catalogue/test_durable_playback.py": "d8223b1980229b3a50652432acb1c039d3be2e0c469e28ac6862e43779a9e565",
     "deploy/media-stack/catalogue/test_embedded_subtitles.py": "1f7f92b7489e59412c5ec6da28889f4d3f41aacaf0662665d90e81add7cd9feb",

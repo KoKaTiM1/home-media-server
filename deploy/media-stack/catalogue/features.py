@@ -1346,10 +1346,13 @@ class Features:
         # A busy writer must not immediately discard an otherwise valid remote
         # operation. Retry briefly, bounded by both claim expiry and job budget.
         started=time.monotonic();deadline=started+5;retries=0
+        operation_deadline=float('inf')
         budget=self.g.get('BUDGET')
         for name in ('deadline','worker_deadline'):
             bound=getattr(budget,name,None)
-            if bound is not None:deadline=min(deadline,bound)
+            if bound is not None:operation_deadline=min(operation_deadline,bound)
+        deadline=min(deadline,operation_deadline)
+        if time.monotonic()>=operation_deadline:raise TimeoutError('Verification job budget exhausted')
         with self.g['db']() as conn:
             row=conn.execute('SELECT expires FROM verification_claims WHERE key=? AND token=?',(key,token)).fetchone()
             if not row or row[0]<=time.time():return False
@@ -1357,6 +1360,8 @@ class Features:
             while True:
                 left=deadline-time.monotonic()
                 if left<=0:
+                    if time.monotonic()>=operation_deadline:raise TimeoutError('Verification job budget exhausted')
+                    if row[0]<=time.time():return False
                     raise sqlite3.OperationalError('Verification renewal wait budget exhausted')
                 conn.execute('PRAGMA busy_timeout='+str(max(1,min(250,int(left*1000)))))
                 try:
@@ -1365,7 +1370,9 @@ class Features:
                     # resurrect an expired claim or replace another owner.
                     now=time.time()
                     if time.monotonic()>=deadline:
-                        conn.rollback();return False
+                        conn.rollback()
+                        if time.monotonic()>=operation_deadline:raise TimeoutError('Verification job budget exhausted')
+                        return False
                     cursor=conn.execute('UPDATE verification_claims SET expires=? WHERE key=? AND token=? AND expires>?',(now+30,key,token,now))
                     renewed=bool(cursor.rowcount)
                     conn.commit()
@@ -1378,6 +1385,8 @@ class Features:
                     retries+=1
                     if time.monotonic()>=deadline:
                         self.log('Verification claim renewal '+json.dumps({'retries':retries,'wait_seconds':round(time.monotonic()-started,3),'renewed':False}))
+                        if time.monotonic()>=operation_deadline:raise TimeoutError('Verification job budget exhausted') from None
+                        if row[0]<=time.time():return False
                         raise
                     time.sleep(min(.05,max(0,deadline-time.monotonic())))
 

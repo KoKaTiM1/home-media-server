@@ -55,9 +55,15 @@ class ClaimRenewalTests(unittest.TestCase):
         self.budget.deadline=time.monotonic()+.15
         t=self.hold_writer(.6);started=time.monotonic()
         try:
-            with self.assertRaises(sqlite3.OperationalError):self.f.renew_verification('title','mine')
+            with self.assertRaises(TimeoutError):self.f.renew_verification('title','mine')
             self.assertLess(time.monotonic()-started,.35)
         finally:t.join()
+    def test_already_expired_job_is_timeout_without_mutating_claim(self):
+        self.budget.deadline=time.monotonic()-1
+        with self.db() as c:before=tuple(c.execute('SELECT * FROM verification_claims').fetchone())
+        with self.assertRaises(TimeoutError):self.f.renew_verification('title','mine')
+        with self.db() as c:self.assertEqual(tuple(c.execute('SELECT * FROM verification_claims').fetchone()),before)
+
     def test_non_lock_database_errors_are_not_retried(self):
         with self.db() as c:c.execute('DROP TABLE verification_claims')
         started=time.monotonic()
