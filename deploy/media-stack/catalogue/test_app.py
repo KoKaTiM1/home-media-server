@@ -105,6 +105,22 @@ class CatalogueTests(unittest.TestCase):
             self.assertFalse(list(folder.glob('poster-tmp-*')))
             self.assertTrue((folder/'poster.jpg').stat().st_mode & 0o004)
 
+    @unittest.skipUnless(importlib.util.find_spec('PIL'), 'Pillow is installed in the bridge image')
+    def test_russian_poster_badge_bottom_right_preserves_subtitle_badge(self):
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as directory:
+            folder=Path(directory)
+            Image.new('RGB',(360,540),'#233445').save(folder/'poster-original.jpg')
+            with patch.object(a,'poster_status',return_value='HE+RU'):
+                a.make_poster(folder,{},'movie','tt1234567')
+            with Image.open(folder/'poster.jpg') as image:
+                green=image.getpixel((12,20));purple=image.getpixel((282,505))
+                self.assertGreater(green[1],green[0])
+                self.assertGreater(purple[2],purple[1]+50)
+            self.assertEqual((folder/'badge.txt').read_text(),'HE+RU')
+            self.assertIsNotNone(a.cached_poster(folder,{'style':[a.POSTER_STYLE],'badge':['HE+RU']}))
+            self.assertIsNone(a.cached_poster(folder,{'style':[a.POSTER_STYLE],'badge':['HE']}))
+
     def test_torrent_add_timeout_keeps_waiting_for_metadata(self):
         candidate={'infoHash':'a'*40,'fileIdx':0,'title':'720p'}
         ready={'file_stats':[{'id':1,'path':'Show.S01E01.mkv','length':1234}]}

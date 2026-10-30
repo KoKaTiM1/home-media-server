@@ -393,6 +393,23 @@ class RussianAudio:
             except (OSError,ValueError,TypeError,KeyError,sqlite3.Error):continue
         return output
 
+    def badge_titles(self, identities):
+        """Poster indicators use the same current proof/subtitle gate as Play.
+
+        A series badge means at least one episode has a ready Russian option.
+        Only saved verified alternatives are examined; no torrent/provider work.
+        """
+        wanted=set(identities);ready=set()
+        with self.db() as c:
+            keys=[row[0] for row in c.execute(
+                "SELECT DISTINCT key FROM russian_audio_alternates WHERE status='verified'")]
+        for key in keys:
+            identity=tuple(key.split(':')[:2])
+            if identity not in wanted or identity in ready:continue
+            base=self.base(key)
+            if base and self.options(key,base['proof'],base['selected']):ready.add(identity)
+        return ready
+
     def prepare_option(self,key,sid):
         base=self.base(key)
         if not base:return None

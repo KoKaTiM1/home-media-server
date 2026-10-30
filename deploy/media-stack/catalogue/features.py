@@ -1432,8 +1432,9 @@ class Features:
                 try:
                     from verification_remote import jobs
                     from russian_audio import RussianAudio
-                    queue=jobs(self.g);status=queue.status()
+                    queue=jobs(self.g);status=queue.status() if queue else {}
                     if (status.get('windows_slots_online',0)>0
+                        and queue is not None
                         and not queue.setting_read('russian_extra_permitted',False)
                         and queue.setting_read('russian_serial_permitted',False)):
                         RussianAudio(self.g).work('serial')

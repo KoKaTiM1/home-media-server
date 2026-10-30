@@ -61,6 +61,7 @@ class RussianAudioTests(unittest.TestCase):
             {'lang':'heb','path':str(subtitle_path),'variant':'a'*16},2026)
         with patch.object(a.EMBED,'ready',return_value=[]):
             options=self.worker.options(KEY,self.proof,self.selected)
+        self.assertEqual(self.worker.badge_titles({('movie','tt1234567')}),{('movie','tt1234567')})
         self.assertEqual(len(options),1)
         self.assertEqual(options[0]['DefaultAudioStreamIndex'],1)
         self.assertEqual(options[0]['DefaultSubtitleStreamIndex'],2)
@@ -70,6 +71,7 @@ class RussianAudioTests(unittest.TestCase):
                 (json.dumps({'lang':'heb','path':str(subtitle_path),'variant':'a'*16,'source_id':'c'*64}),KEY))
         with patch.object(a.EMBED,'ready',return_value=[]):
             self.assertEqual(self.worker.options(KEY,self.proof,self.selected),[])
+            self.assertEqual(self.worker.badge_titles({('movie','tt1234567')}),set())
 
     def test_options_never_mutate_or_replace_primary_v6_proof(self):
         before=json.dumps(self.proof,sort_keys=True)

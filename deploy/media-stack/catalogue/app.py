@@ -50,7 +50,7 @@ PROVIDER = 'https://torrentio.strem.fun'
 VIDEO = {'.mkv', '.mp4', '.webm', '.m4v', '.avi', '.ts'}
 LOCKS = {}
 LOCKS_LOCK = threading.Lock()
-POSTER_STYLE = '4'
+POSTER_STYLE = '5'
 STREAM_LIMIT = threading.Semaphore(1)
 POSTER_LIMIT = threading.Semaphore(3)
 POSTER_LOCKS = [threading.Lock() for _ in range(64)]
@@ -568,7 +568,8 @@ def poster_status(kind,imdb):
         # Embedded languages describe one selected release, not every release.
         if time.time()-value.get('checked_at',0)<86400:
             langs.update(value.get('languages',[]))
-    return 'HE' if 'heb' in langs else 'EN' if 'eng' in langs else '?'
+    label='HE' if 'heb' in langs else 'EN' if 'eng' in langs else '?'
+    return label+('+RU' if (kind,imdb) in RUSSIAN.badge_titles({(kind,imdb)}) else '')
 
 
 def poster_badges(metas):
@@ -599,7 +600,9 @@ def poster_badges(metas):
         if identity not in languages:continue
         value=json.loads(raw)
         if time.time()-value.get('checked_at',0)<86400:languages[identity].update(value.get('languages',[]))
-    return {key:'HE' if 'heb' in langs else 'EN' if 'eng' in langs else '?' for key,langs in languages.items()}
+    russian=RUSSIAN.badge_titles(languages)
+    return {key:('HE' if 'heb' in langs else 'EN' if 'eng' in langs else '?')
+            +('+RU' if key in russian else '') for key,langs in languages.items()}
 
 
 def refresh_subtitle_badges(limit=25):
@@ -710,8 +713,13 @@ def make_poster(folder,meta,kind,imdb):
     font=ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',23)
     # TV clients overlay episode counts in a top corner of series posters.
     top=max(8,image.height-48) if kind=='series' else 8
-    draw.rounded_rectangle((8,top,83,top+40),radius=6,fill={'HE':'#126b47','EN':'#b3261e','?':'#555555'}[badge])
-    draw.text((22,top+4),badge,font=font,fill='white')
+    subtitle_badge=badge.split('+',1)[0]
+    draw.rounded_rectangle((8,top,83,top+40),radius=6,fill={'HE':'#126b47','EN':'#b3261e','?':'#555555'}[subtitle_badge])
+    draw.text((22,top+4),subtitle_badge,font=font,fill='white')
+    if '+RU' in badge:
+        left=max(8,image.width-83);bottom=max(8,image.height-48)
+        draw.rounded_rectangle((left,bottom,left+75,bottom+40),radius=6,fill='#753bbd')
+        draw.text((left+14,bottom+4),'RU',font=font,fill='white')
     save_jpeg_atomic(image,folder/'poster.jpg',85)
     (folder/'badge.txt').write_text(badge)
     (folder/'badge-style.txt').write_text(POSTER_STYLE)

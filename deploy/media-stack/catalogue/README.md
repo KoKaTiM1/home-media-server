@@ -696,3 +696,11 @@ Foreground playback retains the audio track covered by accepted exact-source
 proof when no audio override is requested. It does not silently switch a saved
 Russian (or other language) track to English and trigger a fresh audit. Explicit
 audio switches and background audits retain their normal verification rules.
+
+Posters show a purple **RU** label at the bottom right when the Russian
+alternative is currently available through the same V6 proof and Hebrew
+subtitle checks used by playback. Existing HE/EN subtitle labels remain.
+For shows, RU means at least one episode has a ready Russian alternative;
+availability can differ between episodes. Poster URLs include the badge state,
+so artwork caches refresh when a ready alternative appears or becomes invalid.
+Badge lookup uses saved evidence only and never starts a torrent or subtitle search.
