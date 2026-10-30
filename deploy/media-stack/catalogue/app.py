@@ -1452,6 +1452,11 @@ def prepare_locked(key,background,audio_index,deadline):
             audio=[t for t in info.get('streams',[]) if t.get('codec_type')=='audio']
             ordered=sorted(audio,key=lambda t:0 if t.get('codec_name')=='aac' and t.get('profile')=='LC' else 1)
             selected_audio=next((t for t in ordered if t['index']==audio_index),None) if audio_index is not None else next((t for lang in ('eng','en','heb','he') for t in ordered if t.get('tags',{}).get('language')==lang),ordered[0] if ordered else None)
+            # Foreground playback retains the exact audio track covered by
+            # accepted source evidence unless the viewer explicitly switches.
+            if verified and not background and audio_index is None:
+                accepted_audio=verified['proof'].get('selected_audio_index')
+                selected_audio=next((t for t in audio if t['index']==accepted_audio),selected_audio)
             if audio_index is not None and selected_audio is None:raise ValueError('Audio track not found')
             needs_conversion=selected_audio is not None and (selected_audio.get('codec_name')!='aac' or selected_audio.get('profile')!='LC')
             if needs_conversion and float(info.get('format',{}).get('duration') or 0)<=0:raise SourceFailure('Converted VOD requires known duration')

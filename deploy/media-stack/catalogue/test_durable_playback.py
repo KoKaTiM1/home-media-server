@@ -44,6 +44,20 @@ class DurablePlaybackTests(unittest.TestCase):
         with a.F.db() as c:current=json.loads(c.execute('SELECT proof FROM validation WHERE key=?',(KEY,)).fetchone()[0])
         self.assertEqual(current,proof,'Playback cannot manufacture a new audit pass')
 
+    def test_saved_russian_audio_survives_english_default_preference(self):
+        proof=self.seed()
+        with a.F.db() as c:
+            saved=json.loads(c.execute('SELECT value FROM playback WHERE key=?',(KEY,)).fetchone()[0])
+            info=saved['verification_info']
+            info['streams'][1]['tags']['language']='rus'
+            info['streams'].append({'index':3,'codec_type':'audio','codec_name':'eac3','profile':'Dolby Digital Plus','tags':{'language':'eng'}})
+            c.execute('UPDATE playback SET value=? WHERE key=?',(json.dumps(saved),KEY))
+        with patch.object(a,'resolve',return_value=SELECTED),patch.object(a.REL,'verify',side_effect=AssertionError('Unexpected audio switch/reverification')),patch.object(a,'external_subtitles',return_value=[]):
+            result=a.prepared(KEY)
+        self.assertEqual(result['DefaultAudioStreamIndex'],1)
+        self.assertFalse(result['AudioConversionRequired'])
+        self.assertEqual(result['checked_at'],proof['checked_at'])
+
     def test_converted_audio_stays_original_for_native_lc_transcoding(self):
         self.seed(conversion=True)
         with patch.object(a,'resolve',return_value=SELECTED),patch.object(a,'probe',side_effect=AssertionError('duplicate probe')),patch.object(a.REL,'verify',side_effect=AssertionError('duplicate conversion')),patch.object(a,'external_subtitles',return_value=[]):

@@ -665,3 +665,8 @@ that selection bounded even with a million pending keys. Existing title
 priorities apply within the V5 group; the prior discovery ordering resumes
 when no eligible V5 entry is available. Active claims, holds and metadata
 cooldowns still apply. Passed, failed and deferred attempts are not reset.
+
+Foreground playback retains the audio track covered by accepted exact-source
+proof when no audio override is requested. It does not silently switch a saved
+Russian (or other language) track to English and trigger a fresh audit. Explicit
+audio switches and background audits retain their normal verification rules.
