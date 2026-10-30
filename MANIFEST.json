@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-10-30T19:55:05.011112+00:00",
+  "created_utc": "2026-10-30T20:54:00.062722+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -35,7 +35,7 @@
     "deploy/media-stack/catalogue/metadata_jobs.py": "1754fe90b7c20426a2afc35ed49afe16084770288bb630922d5f81471ed021dc",
     "deploy/media-stack/catalogue/playback_diagnostics.py": "4287867fefcc3061855efb6344f9d918eebd1174d0673c9e80ca759e78985f11",
     "deploy/media-stack/catalogue/reliability.py": "778832d393151bf9123b01236442f1b362d81e2855d78b822d71facdb6e2bbc7",
-    "deploy/media-stack/catalogue/russian_audio.py": "262fdab6a7f762b1e68c66bcff8954197421a3f34d8c558a0dc18044c60f4663",
+    "deploy/media-stack/catalogue/russian_audio.py": "4522adba56a4ae057e4e4e9e5a736844312dd0fbcbefc4490b65eeadc3fb32a7",
     "deploy/media-stack/catalogue/test_app.py": "41cf83696454c8e2cae885c7e8109dec0b08abc2505368a39741f123457d4f83",
     "deploy/media-stack/catalogue/test_claim_renewal.py": "ec37bbd5af213781e4d9d0a74872436e18b5fd83de57a49a4ee370cabff405cf",
     "deploy/media-stack/catalogue/test_details.py": "abdcf510dd3f0ee28bf74569f2eaecb9e3e75a73068ba2ae33ed91849da20f95",
@@ -51,7 +51,7 @@
     "deploy/media-stack/catalogue/test_playback_deadlines.py": "82dfa592a697d2eabde631908bb7acdbb4701b3afc04cbf46b2b2bc63f169613",
     "deploy/media-stack/catalogue/test_recheck.py": "dbf72ed5627f444ac83152df11ddf3b389531a6a882058e9fcf834251dac64f1",
     "deploy/media-stack/catalogue/test_reliability.py": "61327d2462991ac4accfb2520c43924e1c2dabbe517a614bb6466204821f051b",
-    "deploy/media-stack/catalogue/test_russian_audio.py": "4700d8705aba99bb09c786287a94bcc061150c1e5d89b30975c1a95aa3ee807e",
+    "deploy/media-stack/catalogue/test_russian_audio.py": "708f3a496191b77d615df79ace9650bb7372fc62267f983bc538bd9e3cad0774",
     "deploy/media-stack/catalogue/test_scaling_retry.py": "276c47a595c77f0422ade1a859e337b1bf57b1ae736ea1545bfc9ce0694262b8",
     "deploy/media-stack/catalogue/test_search_diagnostics.py": "c7d4de89ba88a53506f4875e1f8d30e57b46ba4531198a804f54e00e27c47e0f",
     "deploy/media-stack/catalogue/test_speed_verification.py": "0c174d5180e5e40c87e9332d2d16c5d4fa6e355cb8b2670d00e1fbc7a39b91db",

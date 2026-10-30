@@ -71,7 +71,7 @@ class RussianAudio:
         if (row[6] in ('pending','failed') or proof.get('version')!=6 or proof.get('checked_at',0)<row[4]
             or not self.exact_proof(proof,selected)
             or self.g['REL'].sid(selected)!=proof.get('source_id')
-            or not self.g['REL'].speed_proof_valid(proof.get('speed'),selected.get('local',False))
+            or not self.g['REL'].speed_proof_valid(proof,selected.get('local',False))
             or self.g['REL'].excluded(key,selected)):
             return None
         return {'proof':proof,'selected':selected,'playback':playback,'checked':row[1],'year':int(row[5] or 0)}
@@ -206,7 +206,7 @@ class RussianAudio:
         baseproof=base['proof'];sid=self.g['REL'].sid(selected);idx=audio['index']
         conversion=audio.get('codec_name')!='aac' or str(audio.get('profile','')).casefold()!='lc'
         same=(sid==baseproof.get('source_id') and self.exact_proof(baseproof,selected)
-              and self.g['REL'].speed_proof_valid(baseproof.get('speed'),selected.get('local',False)))
+              and self.g['REL'].speed_proof_valid(baseproof,selected.get('local',False)))
         if same:
             duration=float(info.get('format',{}).get('duration') or 0)
             if duration<10 or not math.isfinite(duration):raise self.g['SourceFailure']('No usable audio sample duration')
@@ -354,7 +354,7 @@ class RussianAudio:
                 selected=json.loads(raw_selected);info=json.loads(raw_info);proof=json.loads(raw_proof)
                 if (self.g['REL'].sid(selected)!=sid or not self.exact_proof(proof,selected,audio_index)
                     or self.g['REL'].excluded(key,selected)):continue
-                if not self.g['REL'].speed_proof_valid(proof.get('speed'),selected.get('local',False)):continue
+                if not self.g['REL'].speed_proof_valid(proof,selected.get('local',False)):continue
                 sub=json.loads(raw_sub) if raw_sub else None
                 if sub and sub.get('source_id')!=sid:sub=None
                 if not sub or not sub.get('path') or not self.g['Path'](sub['path']).is_file():

@@ -25,15 +25,24 @@ class RussianAudioTests(unittest.TestCase):
             'file_index':self.selected['index'],'filename':self.selected['filename'],
             'length':self.selected['length'],'selected_audio_index':1,'checked_at':time.time(),
             'samples':[{'video_frames':10},{'video_frames':10}],
-            'speed':{'policy':1,'mode':'torrent','checked_at':time.time()}}
+            'speed':{'policy':1,'mode':'torrent','checked_at':time.time(),
+                'margin':1.5,'required_bytes_per_second':500000,'startup_seconds':1,
+                'windows':[{'uncached_bytes_lower_bound':8*1024**2,
+                    'bytes_per_second':1000000,'first_byte_seconds':1} for _ in range(2)]}}
         a.F.validation_result(KEY,True,proof=self.proof)
         with a.F.db() as c:
             c.execute('INSERT INTO home_titles(imdb,kind,name,original,year) VALUES (?,?,?,?,?)',
                       ('tt1234567','movie','Fixture','Fixture',2026))
             c.execute('INSERT OR REPLACE INTO playback VALUES (?,?,?)',
                 (KEY,json.dumps({'selected':self.selected,'verification_info':{'streams':[]}}),time.time()))
-        self.speed=patch.object(a.REL,'speed_proof_valid',return_value=True)
-        self.speed.start();self.addCleanup(self.speed.stop)
+
+    def test_base_accepts_real_speed_proof_and_rejects_insufficient_speed(self):
+        self.assertIsNotNone(self.worker.base(KEY))
+        invalid=json.loads(json.dumps(self.proof))
+        invalid['speed']['windows'][1]['bytes_per_second']=1
+        with a.F.db() as c:
+            c.execute('UPDATE validation SET proof=? WHERE key=?',(json.dumps(invalid),KEY))
+        self.assertIsNone(self.worker.base(KEY))
 
     def test_candidate_selection_uses_newest_year_and_requires_current_v6(self):
         with a.F.db() as c:
