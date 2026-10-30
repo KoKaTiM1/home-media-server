@@ -236,6 +236,17 @@ var executing = new Microsoft.AspNetCore.Mvc.Filters.ActionExecutingContext(acti
 Check(Jellyfin.Plugin.DynamicLibrary.Extensions.ActionContextExtensions.IsApiSearchAction(executing), "Installed Jellyfin 10.11 GetSearchHints endpoint recognized");
 Console.WriteLine("PASS: native readiness before search paging and installed TV search action");
 
+// Connection selection preserves every byte of the signed path/query.
+var remoteContext = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+remoteContext.Request.Host = new Microsoft.AspNetCore.Http.HostString("remote.example.invalid", 8096);
+var boundMedia = "http://example.invalid:8092/play/movie:tt00000000?source=" + new string('a',64) + "&sig=" + new string('b',64) + "&audio=1";
+var remoteMedia = HomeConnectionPaths.Rewrite(boundMedia, remoteContext.Request, new[] { "remote.example.invalid" });
+if (new Uri(remoteMedia).Host != "remote.example.invalid" || new Uri(remoteMedia).PathAndQuery != new Uri(boundMedia).PathAndQuery) throw new Exception("Remote playback binding changed");
+if (HomeConnectionPaths.Rewrite(boundMedia, remoteContext.Request, Array.Empty<string>()) != boundMedia) throw new Exception("Unconfigured host accepted");
+remoteContext.Request.Host = new Microsoft.AspNetCore.Http.HostString("local.example",8096);
+if (HomeConnectionPaths.Rewrite(boundMedia, remoteContext.Request, new[] { "remote.example.invalid" }) != boundMedia) throw new Exception("LAN source changed");
+Console.WriteLine("Connection routing checks passed");
+
 public class LibraryProxy : DispatchProxy
 {
     public Dictionary<Guid,BaseItem> Items { get; } = new();
@@ -298,3 +309,4 @@ sealed class ReadyHandler : HttpMessageHandler
         => Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
         { Content = new StringContent("{\"titles\":[\"movie:tt1000001\",\"movie:tt1000002\"]}", Encoding.UTF8, "application/json") });
 }
+

@@ -63,3 +63,17 @@ Local media deletion retains its native behavior. TV media-management settings
 and existing user permissions determine whether Delete is visible.
 
 Verification v5 uses signed exact-source playback URLs from the bridge. The filter validates their origin, title path and binding fields before native direct/HLS playback. Install the bridge and plugin together; see the catalogue operating guide for progress-aware source verification and resumable audits.
+
+### Secondary Tailscale playback connection
+
+The home integration selects the direct video origin from the Jellyfin request
+host when it appears in the private `/config/home-media-remote-hosts.json`
+string array. List only this server's current Tailscale IPs and DNS name there;
+keep actual addresses out of the public backup. Configure persistent tailnet-only
+TCP forwarding for bridge port 8092 in addition to Jellyfin port 8096:
+`tailscale serve --bg --tcp=8092 tcp://<server-LAN-address>:8092`.
+LAN requests retain the existing bridge origin. Signed query/source bindings
+are preserved, and subtitle delivery remains relative to Jellyfin. Native HLS
+retains the internally registered bridge source. On reinstall or Tailscale
+identity rotation, regenerate the private host list from `tailscale status --json`
+and restore the TCP forward. Tailscale clients need permission for both ports.

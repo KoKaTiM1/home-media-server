@@ -457,6 +457,9 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
                         audioService.Register(indexedId.Value, source);
                         HomeAudioService.Configure(source, indexedId.Value, playback.PlaySessionId ?? Guid.NewGuid().ToString("N"), context.HttpContext.Request);
                     }
+                    // Native HLS keeps its registered internal source. Direct
+                    // playback follows the connection used to reach Jellyfin.
+                    source.Path = HomeConnectionPaths.ForRequest(source.Path, context.HttpContext.Request);
                 }
                 catch (OperationCanceledException) when (context.HttpContext.RequestAborted.IsCancellationRequested)
                 {
