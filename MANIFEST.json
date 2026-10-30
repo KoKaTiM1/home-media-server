@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-10-30T19:23:39.144440+00:00",
+  "created_utc": "2026-10-30T19:43:59.144803+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -96,7 +96,7 @@
     "deploy/media-stack/omv-mobile/mobile.conf": "9c7980c48b1b0b069f9c0670b5cdc96d4c8cbee5275d8ea7ad913076b75b2f37",
     "deploy/media-stack/omv-mobile/mobile.css": "ec6ce6d243ad3c90f3288dc173cb4db127292711191e161c78954fac7c636809",
     "deploy/media-stack/omv-mobile/mobile.js": "8c30ddec320828d2d7163675a49f16d0e063f43891e6b129c1b8b6f1d46352d1",
-    "deploy/media-stack/omv-monitor/README.md": "bf2fe94e97d69823eeb711ff051fa71e639ec9c9c7b59ad9daa2bea0769ff0fc",
+    "deploy/media-stack/omv-monitor/README.md": "b2055071f19b88bb5be2162106ec7749cc113ca43f0056817a313ea51e4de6f2",
     "deploy/media-stack/omv-monitor/check_live.py": "460de736a39d6904920cdbfc9eb9c60ce4651090adc436956c638e45d87ab467",
     "deploy/media-stack/omv-monitor/component.yaml": "d017924bd2b9f7968d500b04c19b66f2de2faa8e3561bfae2cc660ee78c43222",
     "deploy/media-stack/omv-monitor/dashboard.yaml": "a67c7fbcbe18679f0c49a9b8e3e164e33ebee1eff833fa38e16b30802b47093e",
@@ -104,10 +104,10 @@
     "deploy/media-stack/omv-monitor/install.py": "4213869b2a3044237bb4b0d38fe88bd4d85d5d903db960c536f8dacd0dd7ddc8",
     "deploy/media-stack/omv-monitor/media-worker-status.service": "1eb94831c9bc38de5fc25247c314345b293e5881c711d1c02cf07da4d8fea0f4",
     "deploy/media-stack/omv-monitor/media-worker-status.timer": "ff774eb1055241aaa89926e44f0016fa74999da29a14a661e3cf42b897e1c40b",
-    "deploy/media-stack/omv-monitor/monitor.py": "1f6905a86636cb00934e75ac92c02b567c2cd3377382930b7b270fb240891478",
+    "deploy/media-stack/omv-monitor/monitor.py": "fbceabc34510298f4264352d039ffb0f214c91d3bd96e13374ac7381a82dfc5b",
     "deploy/media-stack/omv-monitor/navigation.yaml": "c5b3c25f85ac7f5c8fb80f905d0d45789b62712a312e7f49c03f6531e0ec6576",
     "deploy/media-stack/omv-monitor/route.yaml": "59159d3a649c96e19e2af8b7a1e6b79d05228a9a195718cc2be9e63afe6b8544",
-    "deploy/media-stack/omv-monitor/test_monitor.py": "915af18a14b5d6dc5664066d5a0abed09d434308e0b9231335c47766570217b5",
+    "deploy/media-stack/omv-monitor/test_monitor.py": "c118d70d4008493a442cf8f7a9d1b75c25c8b7e5e24589192f0522143678da4a",
     "deploy/media-stack/test_cleanup.py": "a005124307898145a6d0b5b62b9c56e550aa5639289039e6d22085dd7184c0fe",
     "deploy/media-stack/torrserver/Dockerfile": "01260ddc91e3cc9e8d42429fcec8cb9bb9fc7024f5520ba37e4bd299a3497e84",
     "deploy/media-stack/torrserver/LICENSE": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",

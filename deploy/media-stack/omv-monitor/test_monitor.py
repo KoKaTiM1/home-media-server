@@ -120,7 +120,8 @@ class MonitorTests(unittest.TestCase):
             root=Path(directory);data=root/'catalogue';data.mkdir();queue=root/'verification-worker';queue.mkdir()
             snapshot=root/'snapshot.json';now=time.time()
             snapshot.write_text(json.dumps({'time':now,'summary':{'total':100,'pending':75,'unavailable':5,
-                'playable':20,'v5':12,'v5_hour':3,'audit_done':7,'audit_total':10}}))
+                'playable':20,'v6':12,'v6_hour':3,'v6_audit_done':7,'v6_audit_total':10,
+                'v6_audit_pending':3,'v6_audit_passed':5,'v6_audit_failed':2}}))
             with sqlite3.connect(queue/'queue.sqlite') as c:
                 c.execute('CREATE TABLE totals(key TEXT,value INTEGER)')
                 c.execute("INSERT INTO totals VALUES('windows_titles_verified',4)")
@@ -135,8 +136,10 @@ class MonitorTests(unittest.TestCase):
             activity={'key':'series:tt1234567:1:2','name':'Example Show S1E2','position':2,'batch':8,'preparation':{'received_bytes':3145728}}
             with patch.object(m,'context',return_value=activity):rows=m.overview(data,snapshot)
             values={row['name']:row for row in rows}
-            self.assertEqual(values['Final decoded sources (v5+)']['value'],'12')
-            self.assertEqual(values['Not yet decode verified']['value'],'88')
+            self.assertEqual(values['V6 verified sources']['value'],'12')
+            self.assertEqual(values['Not yet V6 verified']['value'],'88')
+            self.assertEqual(values['V6 speed audit']['value'],'7 / 10')
+            self.assertEqual(values['V6 passes in last hour']['value'],'3')
             self.assertEqual(values['Windows final passes']['value'],'4')
             self.assertEqual(values['Windows decode queue']['value'],'1 active / 0 ready')
             self.assertIn('Decoding later sample',values['Windows working on']['detail'])
@@ -145,15 +148,20 @@ class MonitorTests(unittest.TestCase):
             self.assertIn('transport',values['Latest PC operation issue']['detail'])
             self.assertNotIn('private-signed-url',str(rows))
 
-    def test_completed_initial_audit_is_replaced_by_current_ready_counts(self):
+    def test_overview_uses_v6_counts_and_hides_legacy_audit_status(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);data=root/'catalogue';data.mkdir()
             snapshot=root/'snapshot.json';snapshot.write_text(json.dumps({'time':time.time(),'summary':{
-                'total':100,'pending':70,'unavailable':5,'v5':25,'v5_hour':2,
-                'audit_done':10,'audit_total':10,'ready_movies':15,'ready_shows':7}}))
+                'total':100,'pending':70,'unavailable':5,'v6':25,'v6_hour':2,
+                'v6_audit_done':10,'v6_audit_total':10,'v6_audit_pending':0,
+                'v6_audit_passed':9,'v6_audit_failed':1,'initial_v5_done':946,'initial_v5_total':946,
+                'ready_movies':15,'ready_shows':7}}))
             rows=m.overview(data,snapshot)
             values={row['name']:row['value'] for row in rows}
             self.assertNotIn('Initial v5 audit',values)
+            self.assertNotIn('V5',str(rows))
+            self.assertEqual(values['V6 verified sources'],'25')
+            self.assertEqual(values['V6 speed audit'],'10 / 10')
             self.assertEqual(values['Verified movies'],'15')
             self.assertEqual(values['Verified shows'],'7')
 
