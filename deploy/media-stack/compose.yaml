@@ -50,7 +50,8 @@ services:
     stop_grace_period: 30s
 
   torrserver:
-    image: ghcr.io/yourok/torrserver:latest
+    image: home-media-torrserver:147.1-dbindex1
+    build: ./torrserver
     container_name: torrserver
     user: "1000:100"
     environment:

@@ -1,0 +1,95 @@
+--- a/server/settings/torrent.go
++++ b/server/settings/torrent.go
+@@ -30,27 +30,36 @@
+ var mu sync.Mutex
+ 
+ func AddTorrent(torr *TorrentDB) {
+-	list := ListTorrent()
++	if torr == nil || torr.TorrentSpec == nil {
++		return
++	}
++	// Each hash is already an independent database key. Save only this entry.
++	buf, err := json.Marshal(torr)
++	if err != nil {
++		return
++	}
++	dbMigrationLock.RLock()
++	defer dbMigrationLock.RUnlock()
+ 	mu.Lock()
+-	find := -1
+-	for i, db := range list {
+-		if db.InfoHash.HexString() == torr.InfoHash.HexString() {
+-			find = i
+-			break
+-		}
++	defer mu.Unlock()
++	tdb.Set("Torrents", torr.InfoHash.HexString(), buf)
++}
++
++func GetTorrentByHash(hash metainfo.Hash) *TorrentDB {
++	dbMigrationLock.RLock()
++	defer dbMigrationLock.RUnlock()
++	mu.Lock()
++	// Own the bytes after releasing the settings lock, including cached reads.
++	buf := append([]byte(nil), tdb.Get("Torrents", hash.HexString())...)
++	mu.Unlock()
++	if len(buf) == 0 {
++		return nil
+ 	}
+-	if find != -1 {
+-		list[find] = torr
+-	} else {
+-		list = append(list, torr)
++	var torr *TorrentDB
++	if json.Unmarshal(buf, &torr) != nil || torr == nil || torr.TorrentSpec == nil || torr.InfoHash != hash {
++		return nil
+ 	}
+-	for _, db := range list {
+-		buf, err := json.Marshal(db)
+-		if err == nil {
+-			tdb.Set("Torrents", db.InfoHash.HexString(), buf)
+-		}
+-	}
+-	mu.Unlock()
++	return torr
+ }
+ 
+ func ListTorrent() []*TorrentDB {
+--- a/server/torr/dbwrapper.go
++++ b/server/torr/dbwrapper.go
+@@ -57,22 +57,20 @@
+ }
+ 
+ func GetTorrentDB(hash metainfo.Hash) *Torrent {
+-	list := settings.ListTorrent()
+-	for _, db := range list {
+-		if hash == db.InfoHash {
+-			torr := new(Torrent)
+-			torr.TorrentSpec = db.TorrentSpec
+-			torr.Title = db.Title
+-			torr.Poster = db.Poster
+-			torr.Category = db.Category
+-			torr.Timestamp = db.Timestamp
+-			torr.Size = db.Size
+-			torr.Data = db.Data
+-			torr.Stat = state.TorrentInDB
+-			return torr
+-		}
++	db := settings.GetTorrentByHash(hash)
++	if db == nil {
++		return nil
+ 	}
+-	return nil
++	torr := new(Torrent)
++	torr.TorrentSpec = db.TorrentSpec
++	torr.Title = db.Title
++	torr.Poster = db.Poster
++	torr.Category = db.Category
++	torr.Timestamp = db.Timestamp
++	torr.Size = db.Size
++	torr.Data = db.Data
++	torr.Stat = state.TorrentInDB
++	return torr
+ }
+ 
+ func RemTorrentDB(hash metainfo.Hash) {

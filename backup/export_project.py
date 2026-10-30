@@ -166,6 +166,7 @@ def export(destination):
         copy(STACK / name, Path('deploy/media-stack') / name)
     for folder, relative in [
         (STACK / 'catalogue', Path('deploy/media-stack/catalogue')),
+        (STACK / 'torrserver', Path('deploy/media-stack/torrserver')),
         (STACK / 'omv-monitor', Path('deploy/media-stack/omv-monitor')),
         (STACK / 'omv-mobile', Path('deploy/media-stack/omv-mobile')),
         (STACK / 'vendor/dynamic-library-src', Path('plugin-source/dynamic-library')),
