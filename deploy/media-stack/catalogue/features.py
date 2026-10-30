@@ -100,6 +100,7 @@ class Features:
             if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='verification_sweep_order'").fetchone():
                 conn.execute('CREATE INDEX IF NOT EXISTS verification_sweep_order ON verification_sweep_attempts(sweep_id,outcome,priority DESC,source_version,due)')
                 conn.commit()
+            conn.execute("CREATE INDEX IF NOT EXISTS verification_sweep_v5_order ON verification_sweep_attempts(sweep_id,priority DESC,due) WHERE outcome='queued' AND source_version=5")
             if conn.execute('SELECT 1 FROM verification_sweeps LIMIT 1').fetchone():return
             conn.execute('BEGIN IMMEDIATE')
             if conn.execute('SELECT 1 FROM verification_sweeps LIMIT 1').fetchone():return
@@ -127,16 +128,22 @@ class Features:
                 stale=conn.execute("SELECT 1 FROM verification_sweep_attempts WHERE sweep_id=? AND outcome='started' AND started<? LIMIT 1",(sweep_id,now-600)).fetchone()
                 if stale:
                     conn.execute("UPDATE verification_sweep_attempts SET outcome='queued',started=? WHERE sweep_id=? AND outcome='started' AND started<? AND NOT EXISTS(SELECT 1 FROM verification_claims c WHERE c.key=verification_sweep_attempts.key AND c.expires>?)",(now,sweep_id,now-600,now))
-                rows=conn.execute("""SELECT x.key,v.state,v.next_check,
+                selection="""SELECT x.key,v.state,v.next_check,
                     COALESCE(json_extract(v.proof,'$.version'),0),v.priority,
                     EXISTS(SELECT 1 FROM verification_audit a WHERE a.key=x.key AND a.reason='speed-v6' AND a.completed>0)
-                    FROM verification_sweep_attempts x INDEXED BY verification_sweep_order
+                    FROM verification_sweep_attempts x INDEXED BY {index}
                     JOIN validation v ON v.key=x.key
-                    WHERE x.sweep_id=? AND x.outcome='queued'
+                    WHERE x.sweep_id=? AND x.outcome='queued' {version_filter}
                     AND NOT EXISTS(SELECT 1 FROM verification_claims c WHERE c.key=x.key AND c.expires>?)
                     AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=x.key AND h.expires>?)
                     AND NOT EXISTS(WITH RECURSIVE parents(k,pos) AS (SELECT x.key,0 UNION ALL SELECT k,pos+1 FROM parents WHERE pos<length(k)) SELECT 1 FROM parents JOIN metadata_waits m ON m.key=CASE WHEN pos=0 THEN k ELSE substr(k,1,pos-1) END WHERE (pos=0 OR substr(k,pos,1)=':') AND m.expires>?)
-                    ORDER BY x.priority DESC,x.source_version,x.due LIMIT 64""",(sweep_id,now,now,now)).fetchall()
+                    ORDER BY {ordering} LIMIT 64"""
+                parameters=(sweep_id,now,now,now)
+                # Keep the V5 audit ahead of discovery without scanning the
+                # million-key queue or rewriting its saved priority values.
+                rows=conn.execute(selection.format(index='verification_sweep_v5_order',version_filter='AND x.source_version=5',ordering='x.priority DESC,x.due'),parameters).fetchall()
+                if not rows:
+                    rows=conn.execute(selection.format(index='verification_sweep_order',version_filter='',ordering='x.priority DESC,x.source_version,x.due'),parameters).fetchall()
                 candidates=[]
                 for key,state,due,version,priority,audited in rows:
                     if audited or (state=='verified' and version>=6):

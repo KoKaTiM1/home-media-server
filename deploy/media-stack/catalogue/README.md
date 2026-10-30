@@ -658,3 +658,10 @@ rechecks the exact token and unexpired claim after taking the writer lock;
 expired or replaced claims cannot be renewed. Playback keeps its existing
 short database timeout. Contended renewals log only retry count, elapsed
 wait and whether renewal succeeded, without title identifiers or tokens.
+
+The initial V6 sweep prioritizes unattempted entries whose saved starting
+proof version is V5, before ordinary discovery. A partial queue index keeps
+that selection bounded even with a million pending keys. Existing title
+priorities apply within the V5 group; the prior discovery ordering resumes
+when no eligible V5 entry is available. Active claims, holds and metadata
+cooldowns still apply. Passed, failed and deferred attempts are not reset.

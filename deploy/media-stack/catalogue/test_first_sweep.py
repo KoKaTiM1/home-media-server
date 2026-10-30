@@ -15,6 +15,7 @@ class FirstSweepTests(unittest.TestCase):
         CREATE TABLE verification_sweep_attempts(sweep_id INTEGER,key TEXT,started REAL,finished REAL DEFAULT 0,outcome TEXT,priority INTEGER DEFAULT 0,source_version INTEGER DEFAULT 0,due REAL DEFAULT 0,PRIMARY KEY(sweep_id,key));
         CREATE INDEX verification_sweep_attempts_id ON verification_sweep_attempts(sweep_id,outcome);
         CREATE INDEX verification_sweep_order ON verification_sweep_attempts(sweep_id,outcome,priority DESC,source_version,due);
+        CREATE INDEX verification_sweep_v5_order ON verification_sweep_attempts(sweep_id,priority DESC,due) WHERE outcome='queued' AND source_version=5;
         CREATE TABLE validation(key TEXT PRIMARY KEY,state TEXT,next_check REAL,proof TEXT,priority INTEGER);
         CREATE TABLE verification_claims(key TEXT PRIMARY KEY,expires REAL);
         CREATE TABLE verification_holds(key TEXT PRIMARY KEY,expires REAL);
@@ -54,6 +55,22 @@ class FirstSweepTests(unittest.TestCase):
                 c.execute(f"UPDATE {table} SET key='series:tt0000000:1:1' WHERE key='movie:tt0000000'")
             c.execute("INSERT INTO metadata_waits VALUES('series:tt0000000',?)",(time.time()+600,))
         self.assertEqual(self.f.first_sweep_candidate(),((1,'movie:tt0000001'),True))
+
+    def test_v5_precedes_higher_priority_unverified_discovery(self):
+        with sqlite3.connect(self.path) as c:
+            c.execute("UPDATE verification_sweep_attempts SET source_version=5 WHERE key='movie:tt0099999'")
+            c.execute("UPDATE validation SET state='verified',proof='{\"version\":5}' WHERE key='movie:tt0099999'")
+            c.execute("UPDATE verification_sweep_attempts SET priority=999 WHERE key='movie:tt0000000'")
+        self.assertEqual(self.f.first_sweep_candidate(),((1,'movie:tt0099999'),True))
+        with sqlite3.connect(self.path) as c:
+            c.execute("UPDATE verification_sweep_attempts SET outcome='deferred' WHERE key='movie:tt0099999'")
+        self.assertEqual(self.f.first_sweep_candidate(),((1,'movie:tt0000000'),True))
+
+    def test_held_v5_does_not_block_other_work(self):
+        with sqlite3.connect(self.path) as c:
+            c.execute("UPDATE verification_sweep_attempts SET source_version=5 WHERE key='movie:tt0099999'")
+            c.execute("INSERT INTO verification_holds VALUES('movie:tt0099999',?)",(time.time()+600,))
+        self.assertEqual(self.f.first_sweep_candidate(),((1,'movie:tt0000000'),True))
 
     def test_snapshot_already_exists_needs_no_write_lock(self):
         with sqlite3.connect(self.path) as c:
