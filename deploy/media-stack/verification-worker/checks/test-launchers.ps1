@@ -22,6 +22,15 @@ foreach($C in $S.containers.Values){Assert $C.State.Running 'Container not runni
 foreach($Leaf in $Before.Keys){Assert ((Get-Content -Raw ('/test/'+$Leaf+'/preserve.txt')) -eq $Before[$Leaf]) 'Data overwritten'}
 Assert (Test-Path /test/torrent-state/config/settings.json) 'Legacy backend state missing'
 Assert (Test-Path /test/torrent-state-2/config/settings.json) 'Second backend state missing'
+# Every verifier needs a reaper, and same-image legacy containers must migrate.
+foreach($C in $S.containers.Values){
+ if($C.Config.Labels.'home-media.component' -eq 'verification-worker'){Assert $C.HostConfig.Init 'Verifier has no init/subreaper'}
+}
+$Legacy='home-media-verification-worker-2';$S.containers[$Legacy].HostConfig.Init=$false;Save $S
+$OldCreates=@(Calls|Where-Object {$_ -contains '--detach'}).Count
+$null=Run Start
+Assert ((State).containers[$Legacy].HostConfig.Init) 'Same-image missing-init worker was not migrated'
+Assert (@(Calls|Where-Object {$_ -contains '--detach'}).Count -eq $OldCreates+1) 'Migration must recreate only affected worker'
 $Count=@(Calls|Where-Object {$_ -contains '--detach'}).Count
 $null=Run Start
 Assert (@(Calls|Where-Object {$_ -contains '--detach'}).Count -eq $Count) 'Repeated Start recreated containers'

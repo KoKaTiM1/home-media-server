@@ -48,6 +48,16 @@ def main():
                         subprocess.run(['docker','rm','-f',container],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
                 results.append({'suite':name,'exit_code':rc,'seconds':round(time.monotonic()-started,2)})
                 print(name+': '+('PASS' if rc==0 else 'FAIL'),flush=True)
+            # These host orchestrators launch isolated containers with no Docker socket inside.
+            extras=[('process-reaping',[sys.executable,str(root/'tests/check_process_reaping.py'),'--image',a.image]),
+                    ('windows-launchers',[sys.executable,str(root/'deploy/media-stack/verification-worker/checks/run-launcher-checks.py')])]
+            for name,command in extras:
+                started=time.monotonic()
+                with (report/(name+'.log')).open('w') as log:
+                    try:rc=subprocess.run(command,stdout=log,stderr=subprocess.STDOUT,timeout=600).returncode
+                    except subprocess.TimeoutExpired:rc=124;log.write('\nGate timeout\n')
+                results.append({'suite':name,'exit_code':rc,'seconds':round(time.monotonic()-started,2)})
+                print(name+': '+('PASS' if rc==0 else 'FAIL'),flush=True)
             result={'fingerprint':fingerprint,'image_id':image_id,'time':stamp,'commit':commit,'passed':all(r['exit_code']==0 for r in results),'suites':results,'report_directory':str(report)}
             for file in (report/'result.json',a.report_dir/'latest.json'):
                 temp=file.with_suffix('.tmp');temp.write_text(json.dumps(result,indent=2)+'\n');temp.replace(file)

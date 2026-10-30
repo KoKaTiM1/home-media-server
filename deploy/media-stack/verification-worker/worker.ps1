@@ -115,7 +115,7 @@ function Start-All {
   $Name=$C.Name.TrimStart('/');$Lane=if($Name -eq 'home-media-verification-worker'){1}else{[int]($Name.Split('-')[-1])}
   $Backend=1+[int][math]::Floor(($Lane-1)*$T.torrservers/$T.workers)
   $Expected=Get-TorrentName $Backend
-  if($Lane -gt $T.workers -or $C.Config.Image -ne $Image -or $C.Config.Labels.'home-media.backend' -ne $Expected){$Change+=$C}
+  if($Lane -gt $T.workers -or $C.Config.Image -ne $Image -or $C.Config.Labels.'home-media.backend' -ne $Expected -or $C.HostConfig.Init -ne $true){$Change+=$C}
  }
  Stop-Workers $Change
  foreach($C in $Change){Invoke-DockerExecutable rm $C.Name.TrimStart('/')}
@@ -143,7 +143,7 @@ function Start-All {
   $Data=Get-DataPath $Lane;New-Item -ItemType Directory -Force $Data|Out-Null
   if(-not $Current -or -not $Current.State.Running){Invoke-WorkerTool $Lane 'resume'}
   if(-not $Current){
-   Invoke-DockerExecutable run --detach --name $Name --label 'home-media.component=verification-worker' --label ('home-media.backend='+$TorrentName) --restart unless-stopped --network $Network --env ('WORKER_LANE='+$Lane) --env ('LOCAL_TORRENT_BACKEND_ID=torrent-'+$Backend) --env ('LOCAL_TORRSERVER_URL=http://'+$TorrentName+':8090') --mount ('type=bind,source='+$State+',target=/torrent-state') --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 96 --memory 512m --cpus 2 --log-opt max-size=2m --log-opt max-file=2 --tmpfs '/tmp:rw,nosuid,nodev,size=128m' --mount ('type=bind,source='+(Join-Path $Root 'config')+',target=/config,readonly') --mount ('type=bind,source='+$Data+',target=/data') $Image run
+   Invoke-DockerExecutable run --detach --name $Name --label 'home-media.component=verification-worker' --init --label ('home-media.backend='+$TorrentName) --restart unless-stopped --network $Network --env ('WORKER_LANE='+$Lane) --env ('LOCAL_TORRENT_BACKEND_ID=torrent-'+$Backend) --env ('LOCAL_TORRSERVER_URL=http://'+$TorrentName+':8090') --mount ('type=bind,source='+$State+',target=/torrent-state') --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 96 --memory 512m --cpus 2 --log-opt max-size=2m --log-opt max-file=2 --tmpfs '/tmp:rw,nosuid,nodev,size=128m' --mount ('type=bind,source='+(Join-Path $Root 'config')+',target=/config,readonly') --mount ('type=bind,source='+$Data+',target=/data') $Image run
   }elseif(-not $Current.State.Running){Invoke-DockerExecutable start $Name}
  }
  Write-Host ('Running '+$T.workers+' workers using '+$T.torrservers+' TorrServers. Edit config/workers.json then run 02-START-ALL.cmd to change counts.')

@@ -35,7 +35,7 @@ switch($A[0]) {
   $Image=if($Label -eq 'verification-torrent'){$A[-1]}else{$A[-2]}
   $Labels=@{'home-media.component'=$Label}
   foreach($V in $A){if($V.StartsWith('home-media.backend=')){$Labels['home-media.backend']=$V.Split('=')[1]}}
-  $State.containers[$Name]=@{Name='/'+$Name;State=@{Running=$true;Status='running'};Config=@{Image=$Image;Labels=$Labels}}
+  $State.containers[$Name]=@{Name='/'+$Name;State=@{Running=$true;Status='running'};Config=@{Image=$Image;Labels=$Labels};HostConfig=@{Init=($A -contains '--init')}}
   Save;$Name;exit 0
  }
  'logs' {'fixture progress';exit 0}

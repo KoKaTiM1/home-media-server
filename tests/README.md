@@ -39,5 +39,12 @@ keep those acceptance checks in the relevant GitHub issue.
 
 Current automated scope: Python catalogue, verification protocol/media helpers,
 OMV monitor, cleanup, metadata helper and export privacy. C# plugin builds,
-Go/TorrServer patches, PowerShell launcher checks and physical-client acceptance
+Go/TorrServer patches and physical-client acceptance
 remain separate checks; this gate does not claim to cover them.
+
+The gate also runs real cancelled-process-group/reaping regression coverage and
+the Windows PowerShell launcher mock suite in isolated containers. The latter
+requires the pinned PowerShell image recorded in
+`deploy/media-stack/verification-worker/checks/run-launcher-checks.py` to be
+available locally (prepare it before an offline run). Neither test container
+receives the Docker socket or real worker configuration/state.
