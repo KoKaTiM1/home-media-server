@@ -8,8 +8,10 @@ RUN wget -qO /tmp/upstream.tar.gz "https://codeload.github.com/YouROK/TorrServer
 COPY patches/0001-index-saved-torrents.patch /tmp/fix.patch
 RUN patch -p1 < /tmp/fix.patch
 COPY tests/torrent_index_test.go /src/server/settings/torrent_index_test.go
+COPY tests/loaded_lookup_test.go /src/server/torr/loaded_lookup_test.go
 WORKDIR /src/server
 RUN go test ./settings -run TestIndexedTorrent -count=1 \
- && go build -p 2 -ldflags '-s -w -checklinkname=0 -X server/version.Version=MatriX.147.1-home-dbindex1' -o /tmp/torrserver ./cmd
+ && go test ./torr -run TestLoadedLookup -count=1 \
+ && go build -p 2 -ldflags '-s -w -checklinkname=0 -X server/version.Version=MatriX.147.1-home-dbindex2' -o /tmp/torrserver ./cmd
 FROM ghcr.io/yourok/torrserver@sha256:c965123d980d8a3ba2d3b56755110579e09e812a283fa4f8d2a86219bc00d159
 COPY --from=builder /tmp/torrserver /usr/bin/torrserver

@@ -408,14 +408,16 @@ def cleanup_background_torrents():
             current_hashes=set(FOREGROUND_CLEANUP['hashes'])
         if infohash in current_hashes or any(key in current for _,key in by_hash[infohash]):return False
         try:
-            cache=fetch(TORR+'/cache',{'action':'get','hash':infohash},torr_headers(),timeout=.75) or {}
-            if cache.get('Readers'):return False
-            try:torr({'action':'get','hash':infohash},timeout=.75)
-            except urllib.error.HTTPError as error:
-                if error.code==404:return True
-                raise
-            cache=fetch(TORR+'/cache',{'action':'get','hash':infohash},torr_headers(),timeout=.75) or {}
-            if cache.get('Readers'):return False
+            # Cache inspection is non-activating on the pinned native build.
+            # A dormant saved record has no readers and needs no drop request.
+            for _ in range(2):
+                try:cache=fetch(TORR+'/cache',{'action':'get','hash':infohash},torr_headers(),timeout=.75) or {}
+                except urllib.error.HTTPError as error:
+                    if error.code==404:return True
+                    raise
+                if cache.get('Readers'):return False
+            with FOREGROUND_CLEANUP_LOCK:
+                if infohash in FOREGROUND_CLEANUP['hashes'] or any(key in FOREGROUND_CLEANUP['protected'] for _,key in by_hash[infohash]):return False
             torr({'action':'drop','hash':infohash},timeout=.75)
             return True
         except (OSError,TimeoutError,ValueError,urllib.error.URLError):return False

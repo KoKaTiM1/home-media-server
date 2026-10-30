@@ -12,7 +12,7 @@ hash key only. Full list operations remain available for the normal UI.
 
 Build with `docker compose build torrserver` from the deployment directory.
 The pinned Dockerfile downloads the upstream source, applies the patch, runs
-focused tests, and builds MatriX.147.1-home-dbindex1. Binary artifacts and private
+focused tests, and builds MatriX.147.1-home-dbindex2. Binary artifacts and private
 database copies are not committed. Upstream code is GPLv3; see LICENSE.
 
 Validation: record lookup/save and 32 concurrent reader/writer tests; isolated
@@ -26,3 +26,17 @@ These API measurements do not certify sustained TV playback.
 Rollback: select the pinned official runtime image from Dockerfile, recreate
 only TorrServer while no player is active, and retain its existing volumes.
 No database conversion or deletion is involved.
+
+The final dbindex2 build also makes `/cache` inspections non-activating.
+Previously, inspecting reader state restored a saved swarm. Foreground cleanup
+inspected many historical sources and loaded hundreds of dormant torrents;
+a second complete runtime dump showed 419 caches and 29,429 goroutines with
+memory at the container limit. The bridge cleanup now retires inactive ledger
+records after a non-activating 404, never calls the loading status endpoint,
+and rechecks foreground protection immediately before dropping idle state.
+
+Additional validation: 512 concurrent reader inspections against a copied
+950-entry database leave zero live torrents. An exact saved source restores
+correctly after two successive drops, while reader inspections remain 404
+when it is dormant. Five bridge cleanup regressions cover dormant records,
+active readers, unreachable backends, idle drops and newly protected playback.

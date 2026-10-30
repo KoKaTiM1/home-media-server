@@ -93,3 +93,28 @@
  }
  
  func RemTorrentDB(hash metainfo.Hash) {
+--- a/server/torr/apihelper.go
++++ b/server/torr/apihelper.go
+@@ -92,6 +92,11 @@
+ func SaveTorrentToDB(torr *Torrent) {
+ 	log.TLogln("save to db:", torr.Hash())
+ 	AddTorrentDB(torr)
++}
++
++// GetLoadedTorrent inspects live state without restoring a saved swarm.
++func GetLoadedTorrent(hashHex string) *Torrent {
++	return bts.GetTorrent(metainfo.NewHashFromHex(hashHex))
+ }
+ 
+ func GetTorrent(hashHex string) *Torrent {
+--- a/server/web/api/cache.go
++++ b/server/web/api/cache.go
+@@ -49,7 +49,7 @@
+ 		c.AbortWithError(http.StatusBadRequest, errors.New("hash is empty"))
+ 		return
+ 	}
+-	tor := torr.GetTorrent(req.Hash)
++	tor := torr.GetLoadedTorrent(req.Hash)
+ 
+ 	if tor != nil {
+ 		st := tor.CacheState()
