@@ -26,122 +26,56 @@ uses it only to replace values in the public copy; it never changes live files.
 Public upstream software/API URLs and generic localhost bindings remain so the
 source can be rebuilt. Authentication keys are supplied through runtime files.
 
-## Follow-up after verification
+## Tracked follow-up
 
-[Issue #1](../../issues/1) tracks the
-embedded Hebrew subtitle extraction defect and the playback/blank-series
-checks to repeat after the initial verification audit. Findings and closure
-criteria are kept in the issue.
+The embedded Hebrew subtitle extraction and its playback checks are complete.
+Issue [#6](../../issues/6) tracks remaining individual-title startup and TV
+retry cases; issue [#9](../../issues/9) tracks Russian-audio alternatives, which
+remain hidden until an eligible validated source is found.
 
-## Hardware currently running this stack
+## Deployment profile
 
-Measured on the source server on 2026-10-27; capacities are rounded. These are
-reference specs for the existing machine, not minimum requirements.
+The current deployment uses a Debian 13 / OpenMediaVault 8 host, with system
+and service data on SSD storage and media on a separate EXT4 filesystem. Exact
+machine models, capacities, partition sizes, filesystem identifiers and service
+resource allocations are intentionally omitted from this public repository.
+Actual throughput depends on the host, network, client and selected media.
+Use the Windows worker guide for its configurable resource requirements.
 
-| Component | Installed hardware / allocation |
-| --- | --- |
-| CPU | Intel Core i3-2120 @ 3.30 GHz, 2 cores / 4 threads, x86-64 |
-| RAM | 16 GB installed; Linux reports about 15 GiB usable |
-| Swap | Existing 3.7 GiB partition on the HDD; active and currently unused |
-| SSD | Kingston SV300S37A240G, 240 GB SATA; Debian root (80 GiB) and service data (142.6 GiB) |
-| HDD | Western Digital WD5000AZRX-00A8LB0, 500 GB SATA rotating hard drive |
-| Media partition | Existing EXT4 partition, approximately 415 GiB raw; holds Media and Downloads |
-| Container memory limits | Jellyfin 2 GiB; TorrServer 768 MiB; catalogue bridge 512 MiB; Transmission 256 MiB |
-| Operating system | Debian 13; OpenMediaVault 8 |
+## Current deployment — checked 2026-10-30
 
-The SSD holds the operating system, AppData, catalogue databases and streaming
-cache. The HDD retains the existing Media and Downloads shares. Free space
-changes during normal use; the download queue reserves at least 20 GiB. The
-stack supports one distinct video stream at a
-time, favors H.264 720p/1080p, and uses video copy with AAC-LC audio conversion
-where needed. Video transcoding is not the catalogue playback policy.
-Container and worker resource limits keep background work bounded on this PC;
-initial verification of the large metadata pool takes time.
+Jellyfin 10.11.11 runs the modified Dynamic Library plugin **1.4.0.28** and
+WizdomSubs Downloader **0.2.0.0**. The features below describe current code and
+deployed service behavior; client compatibility and torrent availability remain
+source- and device-dependent.
 
-No disk serial numbers, network addresses or machine identifiers are included
-in this hardware overview.
-
-## Current features — deployed 2026-10-26 (Dynamic Library 1.4.0.19)
-
-- Separate online movies/shows and local downloaded Movies/Shows libraries.
-  The owner's order puts online movies/shows first, then local Movies/Shows.
-- Paged movie/show browsing with no fixed total-title cap. The visible library
-  grows as background validation succeeds; saved results persist across syncs.
-  Pagination controls how many entries load per request.
-- Hebrew title lookup, related English franchise search and single/range year search.
-- Background recovery of existing IMDb-named blank series from cached metadata,
-  with targeted directory discovery and preserved watch/favorite state. Current
-  IMDb movie names also match sources when remote metadata keeps a working title.
-- Newest production year first, then real release date by default; selected score/name/runtime sorting within years.
-- Month searches such as `2026-07` and `2026-07..2026-09` where real dates are known.
-- Online libraries named סרטים צפייה ישירה and סדרות צפייה ישירה.
-- YouTube trailer links where metadata supplies them. TV playback uses the
-  native trailer control; embedded trailers within the detail page are not added.
-- Up to two distinct Hebrew subtitle choices, עברית 1 / עברית 2, with the best
-  available release match selected first. Wizdom provides free Hebrew subtitles
-  with English fallback where available. Green HE means
-  confirmed Hebrew, red EN means confirmed English, gray ? means unknown.
-- Direct AAC-LC playback or native audio-only HLS conversion with unchanged
-  video, for supported torrent streams and saved files. Verified conversion
-  sources are eligible; missing torrents remain hidden for retry.
-- Stronger v5 verification decodes six beginning seconds and a rotating two-second
-  later sample, including the selected audio. Supported other audio is tested
-  through AAC-LC stereo conversion with video copy. Zero-frame successes fail.
-- Saved working torrents stay first. Relevant new sources rank by reported
-  seeders/peers; actual file progress and decoded samples determine success.
-  Exact torrent/file bindings carry through native playback and HLS.
-- Slow useful downloads continue; 45 seconds without useful progress triggers
-  fallback. Request/work limits save checkpoints for background continuation.
-  Initial audits preserve visibility until fresh failures; daily successful-source
-  audits follow. OMV shows progress, audit outcomes and direct/converted counts.
-- Torrent streaming and an explicit download-to-server option. Completed owned
-  downloads move into the existing movies/shows storage and are preferred on
-  the original title page; managed retention removes them after viewing or age.
-- Native watched checks for movies/episodes; online whole-show completion also
-  counts known released episodes awaiting indexing. Enable the TV app's Watched
-  indicator preference locally. No inferred progress overwrites watch history.
-- OMV phone tables use labelled cards with borders and an optional table view;
-  desktop layout remains native.
-- Delete on online titles reports them for fresh verification without removing
-  metadata, saved files or watch history. Reported sources are hidden and
-  prioritized; fresh passes return them to the catalogue. Native local-file
-  deletion keeps its existing behavior.
-- Timed per-title viewing holds let other verification work continue while a
-  selected title is excluded from audits/retries and managed saved-file cleanup.
-  Holds preserve existing readiness and native progress/favorites, persist across
-  reboot and expire automatically without restarting playback services.
-- Unavailable favorites stay visible without losing hearts or watched state.
-  Normal online browsing continues to hide unavailable sources.
-- Shared 45-second foreground preparation budget, a 50-second plugin HTTP
-  timeout and a separate 15-second initial stream-data budget. Failed playback
-  returns an explicit error; unfinished preparation resumes in background and the viewer can retry Play.
-- Details-page source preparation: one job, up to 12 seconds, suppressed during
-  viewing, with successful results reused for five minutes. Failed speculative
-  preparation keeps existing verification. Slow sources can still delay Play.
-- Resource-bounded verification: one FFmpeg/FFprobe job across worker and HTTP
-  processes, single-thread decoding/filtering and small decoded checksum frames
-  keep HD checks within the bridge memory limit. Original playback resolution
-  stays unchanged; resource interruptions checkpoint instead of rejecting media.
-- Local playback diagnostics identify phase, elapsed time and exception type;
-  private links, magnets and credentials are excluded.
-- Faster shared initial loading: a compact persistent cache of verified-title
-  metadata, direct indexed lookups and reusable local posters with image cache
-  validation. Watched/favorite data remains specific to the current user.
-- Heavy validation and counter scans yield during navigation, using a 30-second
-  lease renewed by metadata requests. Images and maintenance calls do not renew it.
-- Four catalogue syncs per day, mount-aware startup and enabled background timers.
-- OMV Diagnostics > Media workers: live schedules, health, current check and queue counters.
-- Persistent video validation and retained failed-title retry queue. Ordinary
-  online browsing/search shows validated sources or saved copies; Favorites
-  preserves saved titles even when unavailable. Failures retry with backoff
-  from six hours up to 30 days; checks yield during probes when playback or navigation starts.
-
-Torrent listings, metadata and subtitle matches are not guarantees of successful
-playback or exact subtitle timing. Native TV uses its existing search controls;
-its result limits and lack of a year picker remain. Bulk metadata lacks critic
-scores/age certificates. The owner confirmed Chromecast playback including
-AAC Main converted to AAC-LC. A full system reboot verified automatic startup;
-replacement hardware and future software updates still require their own checks.
+- Four Jellyfin libraries are ordered with online Movies and Shows first,
+  followed by downloaded Movies and Shows. Browsing is paged and has no fixed
+  total-title cap; the visible set grows as source checks pass.
+- Search supports Hebrew aliases/franchise matching, English keywords and
+  single-year, year-range and month filters. Release-year ordering is the default.
+- Online titles require an accepted source check before ordinary browsing.
+  V6 verification checks exact torrent/file identity, decoded video/audio
+  samples and measured source delivery speed. Existing matching decode evidence
+  can be reused for the speed upgrade; old proof data is retained during the
+  gradual migration.
+- Playback binds to the accepted torrent file and can fall back among sources.
+  Working downloads can be saved to the server's Movies/Shows folders and are
+  managed by watch/age retention rules. A passed sample is not a guarantee of
+  future peer availability or uninterrupted playback on every client.
+- Hebrew subtitle choices and HE/EN poster badges are shown when confirmed.
+  Complete embedded Hebrew tracks can be cached on demand. Optional Russian
+  audio alternatives are kept hidden until a matching source/subtitle passes
+  validation; no eligible alternative was available at the last check.
+- Windows V6 verifier workers support configurable worker/backend counts. The
+  Debian server remains authoritative for candidate selection and final proof;
+  resource, playback and backend health guards remain enabled.
+- OMV Diagnostics > Media workers reports V6 verification, worker schedules,
+  queue health and current categorized failures. Phone and desktop layouts are
+  supported.
+- The Dynamic Library adds watched-state support for online titles, trailer
+  links where metadata provides them, and safe fresh-check reporting for broken
+  online sources. Native client settings and source availability still apply.
 
 ## Layout
 
@@ -164,7 +98,7 @@ The [worker-monitor guide](deploy/media-stack/omv-monitor/README.md) and
 [phone-layout guide](deploy/media-stack/omv-mobile/README.md) describe the installed
 OMV extensions. `RESTORE.md` includes all seven worker schedules and startup steps.
 
-Jellyfin is pinned to 10.11.11; the modified Dynamic Library is 1.4.0.19.
+Jellyfin is pinned to 10.11.11; the modified Dynamic Library is 1.4.0.28.
 The modified plugin must be built from this repository's configured source;
 installing an upstream release does not include these server-specific features.
 Its [plugin README](plugin-source/dynamic-library/README.md) describes this fork;
@@ -202,21 +136,17 @@ backup; never commit that unencrypted data here.
 
 ## Optional Windows metadata helper — LAN connection
 
-A [Windows Docker helper](deploy/media-stack/metadata-worker/README.md) has been
-prepared for offline installation from USB; the owner confirmed its demo passed
-on Windows. A restricted HTTPS receiver, durable shared leases and 30-second
-server importer are installed. The PC uses a private scoped connection file;
-metadata receipts and results survive interruptions. Windows handles series
-prefetch while server background fetches share ownership/provider budgets and
-retain an offline fallback. OMV lists the receiver/importer and metadata counts.
-The first physical Windows batch completed: 67 records imported at about
-16 results/minute. Follow [issue #2](../../issues/2) for the remaining physical stop/restart durability check. [Receiver operation/recovery](deploy/media-stack/metadata-worker/server/README.md)
-describes code installation and private credential regeneration.
-Metadata enrichment does not mark torrent sources playable or complete the
-initial verification audit. The source/protocol/launchers are backed up here;
-the USB's compiled image archive and all live credentials/state are excluded.
+The optional metadata helper enriches catalogue records independently from
+source verification. Its restricted coordinator and importer use separate
+leases and credentials; received metadata never marks a torrent source playable.
+See [the helper guide](deploy/media-stack/metadata-worker/README.md) for setup
+and recovery. Runtime credentials, queues and local databases remain private.
 
+Optional Windows source verification is implemented separately from metadata
+fetching. The current worker package is 0.4.2; the configurable launcher supports
+1–16 workers and 1–8 private TorrServer backends. The Debian server validates all
+submitted evidence. See [worker operation and recovery](deploy/media-stack/verification-worker/README.md)
+for sizing, preserved-data updates and measured-throughput limits. Issue [#4](../../issues/4)
+tracks ongoing capacity tuning; [#6](../../issues/6) tracks individual playback failures.
 
-Optional Windows source verification is implemented separately from metadata fetching. See [worker operation and recovery](deploy/media-stack/verification-worker/README.md). The server remains authoritative. The first 20-title PC pilot completed with 19 verified and one unavailable result; continuous PC assistance is now enabled under the memory and playback guards. Issue #3 tracks the host TorrServer memory investigation; issue #4 tracks current throughput and configurable Windows capacity.
-
-Windows verifier package 0.4.1 adds separate eight-minute queue and execution budgets, precise speed-checkpoint/cancellation diagnostics, and backend-lock timing. The throughput trial compares 8 workers on 2 versus 4 TorrServers while preserving V6 evidence requirements. Four backends require 14 GiB Docker VM memory and 4 GiB available Windows RAM. See the verifier README for the preserved-data update procedure.
+Windows verifier package 0.4.2 provides a durable initial V6 sweep and separates queue wait from execution time. It supports configurable worker/backend counts while retaining source-proof, memory, playback and data-preservation guards. See the verifier README for current requirements and the preserved-data update procedure.

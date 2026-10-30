@@ -29,7 +29,7 @@ os.umask(0o077)
 with path.open('w') as target:
     json.dump({'api_key':api_key,'username':username,'password':password},target)
 path.chmod(0o600)
-database=Path('/srv/dev-disk-by-uuid-bd267f22-f18a-4966-94ae-409a27252905/appdata/catalogue/catalogue.sqlite')
+database=Path('/srv/dev-disk-by-uuid-<APPDATA_FILESYSTEM_UUID>/appdata/catalogue/catalogue.sqlite')
 if database.exists():
     connection=sqlite3.connect(database,timeout=30)
     with connection:

@@ -19,7 +19,7 @@ import urllib.request
 
 ROOT = Path('/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>')
 COMPLETE = ROOT / 'downloads/complete'
-STATE = Path('/srv/dev-disk-by-uuid-bd267f22-f18a-4966-94ae-409a27252905/appdata/cleanup/state.json')
+STATE = Path('/srv/dev-disk-by-uuid-<APPDATA_FILESYSTEM_UUID>/appdata/cleanup/state.json')
 KEY = Path('/opt/media-stack/secrets/jellyfin_api_key')
 VIDEO = {'.mkv', '.mp4', '.avi', '.mov', '.m4v', '.ts', '.webm', '.mpg', '.mpeg'}
 DAY = 86400

@@ -1,7 +1,7 @@
 # Home media catalogue
 
-Current deployed behavior, reviewed 2026-10-28 against Dynamic Library
-**1.4.0.21**, Jellyfin **10.11.11**, the bridge and systemd units. This is the
+Current deployed behavior, reviewed 2026-10-30 against Dynamic Library
+**1.4.0.28**, Jellyfin **10.11.11**, the bridge and systemd units. This is the
 current operating guide, rather than a chronological list of old features.
 The installed WizdomSubs Downloader version is **0.2.0.0**.
 
@@ -102,8 +102,8 @@ in advance. One speculative job runs at a time, without a queue, for at most
 12 seconds, with a 60-second per-title cooldown. Active or paused playback and
 unavailable session status suppress the job; playback beginning cancels it.
 A successful response, including subtitle lookup, is cached for five minutes.
-After that cache expires or the bridge restarts, Play can reuse durable v5
-evidence and codec metadata for the identical torrent/file and selected audio.
+After that cache expires or the bridge restarts, Play can reuse durable accepted
+source evidence and codec metadata for the identical torrent/file and selected audio.
 The live torrent metadata is resolved again and video requests still require
 initial bytes before returning success. Changed sources or audio, exclusions,
 newer failures and requested rechecks prevent this reuse. Scheduled background
@@ -251,7 +251,7 @@ cancel work. The worker shares exclusive title/torrent claims with verification
 and never changes video validation proofs or failure counters. Completed output
 invalidates only prepared subtitle-response caches; a currently opened player
 retains its original metadata. Each job's cached cue data is bounded to2MiB.
-OMV Media workers lists the extraction service separately from v5 verification.
+OMV Media workers lists the extraction service separately from V6 source verification.
 
 Hourly badge refreshes are bounded to 25 titles and a 200-search/day application
 budget, prioritizing recently browsed titles. Badges use cached availability;
@@ -316,7 +316,12 @@ index replacement is atomic. Four daily syncs update recent metadata, release
 dates and indexed/opened shows without resetting existing validation results.
 
 Validation runs serially, at most 20 entries or an eight-minute work slice.
-Verification v5 requires actual decoded video frames and timestamps, plus the
+### Historical V5 decode-proof format
+
+The following describes the earlier decode-only proof format retained for
+existing sources during their V6 upgrade. V6 is the current verification path.
+
+The V5 format required actual decoded video frames and timestamps, plus the
 selected audio stream, over six seconds at the beginning and two seconds later.
 The later sample rotates between approximately 25%, 50% and 75% on successive
 successful audits. Non-LC audio uses fresh video-copy/AAC-LC stereo samples that
@@ -369,8 +374,9 @@ on startup. A two-window sample is not a guarantee of complete-film playback.
 Failures retry after 6 hours, 12 hours, 1 day, 2 days and increasing delays capped
 at 30 days. Prior successful proof remains saved for diagnosis; newer failed
 evidence determines current readiness. Provider HTTP429 triggers 15 minutes
-cooldown; provider server errors trigger five minutes. Initial v5 audits replace the one-time audio-policy audit without resetting
-metadata, attempts, failed-entry retry dates, watch history or saved files.
+cooldown; provider server errors trigger five minutes. The initial source audit is complete. The ongoing V6 speed audit preserves
+metadata, retry dates, watch history and saved files while existing matching
+decode evidence is upgraded.
 
 Collections maintenance reads native titles/members in pages of 100, requests
 totals once and uses a 60-second maintenance timeout. It traverses empty filtered
@@ -498,8 +504,8 @@ accessible under the existing unavailable-favorite rule.
 Reports bypass the title's current retry delay and receive the next eligible
 worker slot ahead of discovery. Provider cooldowns, active/paused playback and
 navigation priority still apply. Prepared-response caches are cleared before
-that worker attempt; the saved torrent may be retried first but must pass fresh
-v5 decoding. A cached resolution, header or old conversion is not a new pass. Old proof is retained for diagnosis; failures stay hidden
+that worker attempt; the saved torrent may be retried first but must pass the current V6 source
+check before it becomes available again. A cached resolution, header or old conversion is not a new pass. Old proof is retained for diagnosis; failures stay hidden
 and return to normal retry backoff. An in-flight check begun before the report
 cannot undo it. Requests and results survive process restarts.
 
@@ -524,10 +530,9 @@ torrent availability or compatibility with every TV.
 
 OMV **Diagnostics → Media workers** displays the current verification phase,
 useful received/downloaded bytes, speed, available required-piece buffer, time
-since useful progress and direct/converting audio. Queue counters include initial
-audit awaiting/passed/failed, passed v5 direct/conversion sources, daily audits
-due, resumable preparation checkpoints, failed titles and the existing complete
-discovery queue. A paused worker may retain its last saved phase; the worker's
+since useful progress and direct/converting audio. Queue counters include V6 sweep and speed-audit progress, V6 direct/conversion
+sources, daily audits due, resumable preparation checkpoints, failed titles and
+the complete discovery queue. A paused worker may retain its last saved phase; the worker's
 health/message explains whether it is currently running or waiting.
 
 
@@ -639,19 +644,19 @@ Large/ambiguous caches checkpoint until the bounded uncached test is possible;
 no cache eviction or torrent removal is used to force a test. Other readers,
 viewing/navigation, exhausted work budgets and resource holds checkpoint safely.
 
-For an unchanged accepted v5 file/audio policy, v6 preserves the decoded samples
-and original decode timestamp and only checks speed. Changed sources/audio and
+For an unchanged accepted legacy file/audio proof, V6 preserves the decoded
+samples and original decode timestamp and only checks speed. Changed sources/audio and
 manual fresh rechecks decode again. Gradual migration preserves legacy visibility
-until an actual source failure; old v5 playback evidence remains usable during
+until an actual source failure; historical decode evidence remains available during
 migration. Speed failures exclude that exact source for six hours, trying other
 matching sources; titles with no accepted alternative remain retryable. Daily
 background audits refresh speed evidence without redecoding unchanged torrents.
 Local files retain their decode checks and bypass torrent-speed requirements.
 Speed evidence describes the machine and network path that measured it, not
-future peer availability or the client Wi-Fi path. Optional Windows package
-0.3.0 can perform the complete V6 check with a private local TorrServer before
+future peer availability or the client Wi-Fi path. Current Windows package
+0.4.2 can perform the complete V6 check with a private local TorrServer before
 Debian retrieves torrent metadata. Debian still ranks candidates, validates raw
-evidence and commits the final proof. Exact accepted V5 samples can be reused;
+evidence and commits the final proof. Exact accepted legacy decode samples can be reused;
 Windows supplies the new speed evidence. Windows-local failures use one normal
 Debian fallback when its resource gate is healthy, otherwise the title remains
 pending. Old Windows workers keep their fixed probe/sample workflow.
@@ -686,10 +691,10 @@ short database timeout. Contended renewals log only retry count, elapsed
 wait and whether renewal succeeded, without title identifiers or tokens.
 
 The initial V6 sweep prioritizes unattempted entries whose saved starting
-proof version is V5, before ordinary discovery. A partial queue index keeps
+proof predates V6, before ordinary discovery. A partial queue index keeps
 that selection bounded even with a million pending keys. Existing title
-priorities apply within the V5 group; the prior discovery ordering resumes
-when no eligible V5 entry is available. Active claims, holds and metadata
+priorities apply within that group; the prior discovery ordering resumes
+when no eligible pre-V6 entry is available. Active claims, holds and metadata
 cooldowns still apply. Passed, failed and deferred attempts are not reset.
 
 Foreground playback retains the audio track covered by accepted exact-source

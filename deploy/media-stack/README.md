@@ -3,7 +3,7 @@
 Debian 13 / OpenMediaVault 8 runs Jellyfin, the custom catalogue bridge,
 Transmission and TorrServer through `/opt/media-stack/compose.yaml`.
 Jellyfin is pinned to 10.11.11, the modified Dynamic Library plugin is
-1.4.0.22, and the installed Wizdom subtitle provider is 0.2.0.0.
+1.4.0.28, and the installed Wizdom subtitle provider is 0.2.0.0.
 The initial Jellyfin wizard and catalogue integration are complete on the
 source server. A fresh recovery still needs its own accounts, keys and setup.
 
@@ -11,8 +11,8 @@ See [catalogue/README.md](catalogue/README.md) for browsing, validation,
 Hebrew subtitles, audio conversion, saved downloads and current limitations.
 Hebrew movie/show titles and descriptions are enriched gradually from verified
 identities, with per-field English fallback and original-name search retained.
-The public repository's root README includes measured hardware specifications;
-its RESTORE.md describes rebuilding with private deployment values.
+The public root README gives a deliberately broad, non-identifying deployment
+profile; RESTORE.md describes rebuilding with private deployment values.
 
 ## Libraries and playback
 
@@ -199,7 +199,7 @@ Local media deletion retains its native behavior. TV media-management settings
 and existing user permissions determine whether Delete is visible.
 
 
-Optional Windows source verification is implemented separately from metadata fetching. See [worker operation and recovery](verification-worker/README.md). The server remains authoritative. The first 20-title PC pilot completed with 19 verified and one unavailable result; continuous PC assistance is now enabled under the memory and playback guards. Issue #3 tracks the host TorrServer memory investigation; issue #4 tracks current throughput and configurable Windows capacity.
+Optional Windows source verification is implemented separately from metadata fetching. Debian remains authoritative for candidate selection and final proof validation. The current Windows package supports configurable multi-worker and multi-backend V6 checks under memory, playback and backend-health guards. Issue #4 tracks capacity tuning; individual-title playback failures remain in issue #6.
 
 Windows verification capacity is configured in the PC launcher through config/workers.json (defaults 8 workers / 2 TorrServers; up to 16 / 8). The authenticated coordinator applies the requested active limit and two queued jobs per worker, capped at 32. Temporary title failures use durable cooldowns; all V6 proof requirements remain enforced. Existing deployments keep their current worker capacity until the new launcher is installed.
 
@@ -216,4 +216,4 @@ and uses a stricter memory gate; when that extra lane is gated, the existing
 server V6 worker can check one Russian alternative while Windows workers are
 online, then return to V6 work. See [Russian audio alternatives](catalogue/README.md#russian-audio-alternatives).
 
-Windows verifier package 0.4.2 gives the initial V6 sweep one four-minute full attempt per eligible source key before retry work resumes. Checkpoints are deferred separately from failures; later retries retain a 470-second Windows decoder budget with 30 seconds reserved for result receipt. The initial queue snapshot and pass/fail/deferred totals persist across restarts and appear in OMV. Candidate selection, alternate-source checks and V6 proof requirements are unchanged. See the verifier README for the preserved-data update procedure.
+Windows verifier package 0.4.2 implements a durable initial V6 sweep, with checkpoints tracked separately from conclusive failures. Queue and execution windows are separately bounded; the detailed timings and retry behavior are documented in the verifier guide. OMV shows sweep progress and V6 proof totals. Candidate selection and exact-source proof requirements remain server-authoritative.

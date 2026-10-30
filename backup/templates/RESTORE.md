@@ -31,11 +31,12 @@ runtime secret files and do not belong in the deployment-values file.
 
 ## 1. Identify existing storage
 
-The source server uses EXT4 on `/dev/sda5`, UUID
-`<MEDIA_FILESYSTEM_UUID>`, mounted at
-`/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>`.
-Confirm actual mounts with `lsblk -f` and `findmnt` before changing anything.
-Device names may differ after reinstalling or moving disks.
+The source server has an existing EXT4 media filesystem mounted through OMV.
+The public deployment files use `<MEDIA_FILESYSTEM_UUID>` for that filesystem
+and `<APPDATA_FILESYSTEM_UUID>` for the separate service-data filesystem; OMV
+mount references are also parameterized. Identify actual filesystems with
+`lsblk -f` and `findmnt` before changing anything. Device names and identifiers
+vary after reinstalling or moving disks.
 
 Existing OMV shared folders are AppData (`appdata/`), Downloads (`downloads/`)
 and Media (`media/`). `deploy/omv-sharedfolders.json` is a reference, not a file
@@ -77,9 +78,9 @@ manifests; do not simulate watched flags to test cleanup on real files.
 1. Install Docker/Compose and an appropriate supported OMV/Debian combination
    if rebuilding the OS. Keep existing installations when recovering in place.
 2. Review `deploy/media-stack/compose.yaml`, service units and Python defaults:
-   they contain the original mount UUID, LAN address `<SERVER_LAN_IP>`, user/group
-   mapping `1000:100` and source paths under `/opt/media-stack`. Adapt them
-   consistently to the destination before deployment.
+   they contain deployment placeholders for filesystem mounts, LAN addresses,
+   user/group mappings and source paths under `/opt/media-stack`. Fill them
+   consistently for the destination before deployment.
 3. Copy `deploy/media-stack/` into `/opt/media-stack/`, retaining its layout.
    Place restored secrets under `/opt/media-stack/secrets` with restricted
    permissions; never add them to Git. `opensubtitles.json` may be `{}` when
@@ -90,7 +91,7 @@ manifests; do not simulate watched flags to test cleanup on real files.
    docker build -t home-media-catalogue:1 /opt/media-stack/catalogue
    ```
 
-5. Build the modified Dynamic Library version 1.4.0.19 from the configured
+5. Build the modified Dynamic Library version 1.4.0.28 from the configured
    source, then install its DLL and the public `meta.json` into
    `appdata/jellyfin/config/plugins/DynamicLibrary/` while Jellyfin is stopped.
    It was tested with Jellyfin 10.11.11. Install Wizdom from its publisher or
@@ -170,7 +171,7 @@ This downloads metadata, not movie files; allow time/storage for the initial bui
 
 ## 5. Verify recovery
 
-- Verify `/dev/sda5`/actual filesystem identity, OMV shared folders and Docker
+- Verify the actual media filesystem, OMV shared folders and Docker
   mounts. Confirm no pending OMV changes remain unexpectedly.
 - Confirm all four containers are running and Jellyfin is healthy.
 - Run Python unit tests; live catalogue checks require the configured server
@@ -184,8 +185,7 @@ This downloads metadata, not movie files; allow time/storage for the initial bui
 - Confirm systemd units/timers and mount dependencies, then test a controlled
   reboot separately if appropriate; a healthy service alone is not reboot proof.
 
-The source-server deployment was checked on 2026-10-25 with Dynamic Library
-1.4.0.19: a zero-warning plugin build, Python feature and playback-deadline/stream
+Historical source-server checks on 2026-10-25 used Dynamic Library 1.4.0.19: a zero-warning plugin build, Python feature and playback-deadline/stream
 regression suites, .NET favorites/audio/indexing checks, native
 Favorites queries retaining unavailable titles, explicit failed-source responses,
 local HTTP206 playback and unchanged existing watched/favorite records. The
@@ -283,7 +283,7 @@ backup on the same disk does not protect against losing that disk.
 
 ## Favorites and timeout verification
 
-Dynamic Library 1.4.0.19 preserves unavailable titles in explicit Favorites
+The deployed Dynamic Library 1.4.0.28 preserves unavailable titles in explicit Favorites
 queries without exposing them in normal online browse/search. Verify an existing
 unavailable favorite remains visible and that Play still returns a compatible
 source or explicit failure. Preserve user hearts/watch history during recovery.
@@ -360,34 +360,34 @@ virtual metadata/native records and watch/favorite state remain unchanged, then
 verify the reported key becomes pending/priority1000 with no retry delay.
 
 
-## Verification v5 recovery
+## V6 verification recovery
 
 The bridge image must include `catalogue/reliability.py` alongside `app.py` and
-`features.py`; build with the supplied Dockerfile. Dynamic Library 1.4.0.19
+`features.py`; build with the supplied Dockerfile. Dynamic Library 1.4.0.28
 requires the bridge's signed exact-source `PlaybackUrl` in prepared responses.
 Restore these together. No new external credentials or inbound ports are needed.
 
 The software backup recreates the audit/progress/source-choice schema. When
 runtime state is lost, the discovery queue is rebuilt and sources are verified
 again. When the existing media-partition runtime database is retained, completed
-v5 results, failed retries, source winners/backups and work checkpoints resume.
+source-verification results, failed retries, source winners/backups and work checkpoints resume.
 The initial migration preserves existing visible entries until fresh failures;
 it never formats storage or deletes downloaded media or watch/favorite data.
 
-Review the Media workers page for initial-audit pending/passed/failed counts,
-v5 direct/converted counts, daily audits and live useful-data progress. The
+Review the Media workers page for V6 first-sweep and speed-audit progress,
+V6 direct/converted counts, daily audits and live useful-data progress. The
 worker runs serially in eight-minute slices and defers during active/paused
 viewing, navigation or unavailable session status. Do not equate an eight-minute
 checkpoint or a reported peer count with a failed or successful playable source.
 
 
-For optional Windows verification, restore the restricted gateway, memory guard and remote-availability units using [the helper recovery instructions](deploy/media-stack/verification-worker/README.md). Generate fresh private tokens/PC configuration and complete the bounded live pilot before allowing continuous parallel checks. Worker state and compiled images are private runtime data and are not stored here.
+For optional Windows verification, restore the restricted gateway, memory guard and remote-availability units using [the helper recovery instructions](deploy/media-stack/verification-worker/README.md). Generate fresh private tokens/PC configuration, then start workers only after confirming the resource guard and queue settings. Worker state and compiled images are private runtime data and are not stored here.
 
 
 ### Configurable Windows V6 capacity
 
 Restore the updated verification coordinator, resource guard, and monitor before
-installing worker package 0.4.1. Preserve existing worker identities and config.
+installing worker package 0.4.2. Preserve existing worker identities and config.
 The launcher creates config/workers.json with defaults 8 workers / 2 TorrServers.
 Changing these values and running Start updates the authenticated server capacity
 and reconciles containers; no per-worker start scripts are required. Docker VM

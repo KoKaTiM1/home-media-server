@@ -1,7 +1,7 @@
 [Unit]
 Description=Apply watched and age retention to completed media downloads
 After=media-stack.service
-RequiresMountsFor=/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID> /srv/dev-disk-by-uuid-bd267f22-f18a-4966-94ae-409a27252905
+RequiresMountsFor=/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID> /srv/dev-disk-by-uuid-<APPDATA_FILESYSTEM_UUID>
 
 [Service]
 Type=oneshot
@@ -10,5 +10,5 @@ UMask=0077
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
-ReadWritePaths=/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>/downloads/complete /srv/dev-disk-by-uuid-bd267f22-f18a-4966-94ae-409a27252905/appdata /run
+ReadWritePaths=/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>/downloads/complete /srv/dev-disk-by-uuid-<APPDATA_FILESYSTEM_UUID>/appdata /run
 

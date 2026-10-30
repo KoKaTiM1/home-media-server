@@ -8,7 +8,7 @@ import urllib.request as R
 
 BASE='http://<SERVER_LAN_IP>:8096'
 KEY=Path('/opt/media-stack/secrets/jellyfin_api_key').read_text().strip()
-DB=Path('/srv/dev-disk-by-uuid-bd267f22-f18a-4966-94ae-409a27252905/appdata/catalogue/catalogue.sqlite')
+DB=Path('/srv/dev-disk-by-uuid-<APPDATA_FILESYSTEM_UUID>/appdata/catalogue/catalogue.sqlite')
 
 
 def api(path,data=None):

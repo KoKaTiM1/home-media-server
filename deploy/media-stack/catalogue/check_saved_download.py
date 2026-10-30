@@ -13,7 +13,7 @@ import urllib.request as R
 BASE='http://<SERVER_LAN_IP>:8096'
 KEY='movie:tt1254207'
 ITEM='<OPEN_FILM_ITEM_ID>'
-STATE=Path('/srv/dev-disk-by-uuid-bd267f22-f18a-4966-94ae-409a27252905/appdata/catalogue/catalogue.sqlite')
+STATE=Path('/srv/dev-disk-by-uuid-<APPDATA_FILESYSTEM_UUID>/appdata/catalogue/catalogue.sqlite')
 HEADERS={'X-Emby-Token':Path('/opt/media-stack/secrets/jellyfin_api_key').read_text().strip(),
          'Content-Type':'application/json'}
 

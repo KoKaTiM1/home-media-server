@@ -2,7 +2,7 @@
 Description=Find guarded Russian-audio alternatives with source-matched Hebrew subtitles
 Requires=media-stack.service
 After=media-stack.service
-RequiresMountsFor=/srv/dev-disk-by-uuid-bd267f22-f18a-4966-94ae-409a27252905
+RequiresMountsFor=/srv/dev-disk-by-uuid-<APPDATA_FILESYSTEM_UUID>
 
 [Service]
 Type=oneshot

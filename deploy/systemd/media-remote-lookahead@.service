@@ -2,7 +2,7 @@
 Description=Prepare independent Windows verification work ahead (producer %i)
 Requires=media-stack.service
 After=media-stack.service media-verification-coordinator.service
-RequiresMountsFor=/srv/dev-disk-by-uuid-bd267f22-f18a-4966-94ae-409a27252905 /srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>
+RequiresMountsFor=/srv/dev-disk-by-uuid-<APPDATA_FILESYSTEM_UUID> /srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>
 
 [Service]
 Type=oneshot
