@@ -541,7 +541,7 @@ class Features:
 
     def poster_url(self,kind,imdb,badge=None):
         if badge is None:badge=self.g['poster_status'](kind,imdb)
-        return f"{self.g['BASE']}/poster/{kind}/{imdb}.jpg?style={self.g.get('POSTER_STYLE','3')}&badge={badge}"
+        return f"{self.g['BASE']}/poster/{kind}/{imdb}.jpg?style={self.g.get('POSTER_STYLE','3')}&badge={U.quote(badge,safe='')}"
 
     def series_episode_counts(self,imdbs):
         """Use saved episode metadata only; do not fetch providers while browsing."""

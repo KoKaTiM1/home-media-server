@@ -117,6 +117,10 @@ class CatalogueTests(unittest.TestCase):
                 green=image.getpixel((12,20));purple=image.getpixel((282,505))
                 self.assertGreater(green[1],green[0])
                 self.assertGreater(purple[2],purple[1]+50)
+            from urllib.parse import parse_qs,urlsplit
+            query=parse_qs(urlsplit(a.F.poster_url('movie','tt1234567','HE+RU')).query)
+            self.assertEqual(query['badge'],['HE+RU'])
+            self.assertIsNotNone(a.cached_poster(folder,query))
             self.assertEqual((folder/'badge.txt').read_text(),'HE+RU')
             self.assertIsNotNone(a.cached_poster(folder,{'style':[a.POSTER_STYLE],'badge':['HE+RU']}))
             self.assertIsNone(a.cached_poster(folder,{'style':[a.POSTER_STYLE],'badge':['HE']}))
