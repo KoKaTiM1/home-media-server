@@ -1336,9 +1336,43 @@ class Features:
             return token if cursor.rowcount else None
 
     def renew_verification(self,key,token):
-        with self.db() as conn:
-            cursor=conn.execute('UPDATE verification_claims SET expires=? WHERE key=? AND token=? AND expires>?',(time.time()+30,key,token,time.time()))
-            return bool(cursor.rowcount)
+        # A busy writer must not immediately discard an otherwise valid remote
+        # operation. Retry briefly, bounded by both claim expiry and job budget.
+        started=time.monotonic();deadline=started+5;retries=0
+        budget=self.g.get('BUDGET')
+        for name in ('deadline','worker_deadline'):
+            bound=getattr(budget,name,None)
+            if bound is not None:deadline=min(deadline,bound)
+        with self.g['db']() as conn:
+            row=conn.execute('SELECT expires FROM verification_claims WHERE key=? AND token=?',(key,token)).fetchone()
+            if not row or row[0]<=time.time():return False
+            deadline=min(deadline,time.monotonic()+max(0,row[0]-time.time()))
+            while True:
+                left=deadline-time.monotonic()
+                if left<=0:
+                    raise sqlite3.OperationalError('Verification renewal wait budget exhausted')
+                conn.execute('PRAGMA busy_timeout='+str(max(1,min(250,int(left*1000)))))
+                try:
+                    conn.execute('BEGIN IMMEDIATE')
+                    # Recheck expiry after obtaining the writer lock. Never
+                    # resurrect an expired claim or replace another owner.
+                    now=time.time()
+                    if time.monotonic()>=deadline:
+                        conn.rollback();return False
+                    cursor=conn.execute('UPDATE verification_claims SET expires=? WHERE key=? AND token=? AND expires>?',(now+30,key,token,now))
+                    renewed=bool(cursor.rowcount)
+                    conn.commit()
+                    if retries:self.log('Verification claim renewal '+json.dumps({'retries':retries,'wait_seconds':round(time.monotonic()-started,3),'renewed':renewed}))
+                    return renewed
+                except sqlite3.OperationalError as error:
+                    conn.rollback()
+                    code=getattr(error,'sqlite_errorcode',0) or 0
+                    if code & 255 not in (sqlite3.SQLITE_BUSY,sqlite3.SQLITE_LOCKED):raise
+                    retries+=1
+                    if time.monotonic()>=deadline:
+                        self.log('Verification claim renewal '+json.dumps({'retries':retries,'wait_seconds':round(time.monotonic()-started,3),'renewed':False}))
+                        raise
+                    time.sleep(min(.05,max(0,deadline-time.monotonic())))
 
     def release_verification(self,key,token):
         with self.db() as conn:conn.execute('DELETE FROM verification_claims WHERE key=? AND token=?',(key,token))

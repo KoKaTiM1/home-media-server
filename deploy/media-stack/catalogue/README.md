@@ -650,3 +650,11 @@ uncertainty, lost title claims, unavailable workers, controller database/transpo
 faults, and execution/queue expiry. Viewing safeguards and V6 media/speed checks
 remain in force. Controller fault logs contain bounded code locations and numeric
 error codes, without exception text, URLs, credentials or local variables.
+
+Background verification renews its 30-second title claim every 10 seconds.
+Renewal retries SQLite busy/locked writes for at most five seconds, bounded
+by the existing claim expiry and remaining operation budget. Each attempt
+rechecks the exact token and unexpired claim after taking the writer lock;
+expired or replaced claims cannot be renewed. Playback keeps its existing
+short database timeout. Contended renewals log only retry count, elapsed
+wait and whether renewal succeeded, without title identifiers or tokens.
