@@ -11,7 +11,7 @@ class HoldTests(unittest.TestCase):
  def hold(self,key=KEY,expires=None):
   with a.F.db() as c:c.execute('INSERT OR REPLACE INTO verification_holds VALUES (?,?,?)',(key,expires if expires is not None else time.time()+86400,'Owner resuming later'))
  def run_worker(self,expected):
-  with patch.object(a.F,'jf',return_value=[]),patch.object(a.F,'seed_validation'),patch.object(a,'prepared',return_value={}) as prepare,patch('features.time.sleep'):
+  with patch.object(a.F,'jf',return_value=[]),patch.object(a.F,'seed_validation'),patch.object(a.F,'first_sweep_candidate',return_value=(None,False)),patch.object(a,'prepared',return_value={}) as prepare,patch('features.time.sleep'):
    a.F.warm_availability(1)
   prepare.assert_called_once_with(expected,background=True,cancel=unittest.mock.ANY)
  def test_initial_audit_skips_hold_preserves_visibility_and_original_proof(self):

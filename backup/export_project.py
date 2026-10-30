@@ -171,6 +171,7 @@ def export(destination):
         (STACK / 'omv-mobile', Path('deploy/media-stack/omv-mobile')),
         (STACK / 'vendor/dynamic-library-src', Path('plugin-source/dynamic-library')),
         (STACK / 'backup', Path('backup')),
+        (STACK / 'tests', Path('tests')),
     ]:
         for source in sorted(folder.rglob('*')):
             parts = source.relative_to(folder).parts

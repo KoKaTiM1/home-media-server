@@ -150,3 +150,11 @@ for sizing, preserved-data updates and measured-throughput limits. Issue [#4](..
 tracks ongoing capacity tuning; [#6](../../issues/6) tracks individual playback failures.
 
 Windows verifier package 0.4.2 provides a durable initial V6 sweep and separates queue wait from execution time. It supports configurable worker/backend counts while retaining source-proof, memory, playback and data-preservation guards. See the verifier README for current requirements and the preserved-data update procedure.
+
+## Automated regression gate
+
+The Python publisher tests the exported snapshot before committing/pushing.
+The backup checkout also has a pre-push check for the exact committed tree.
+See [tests/README.md](tests/README.md) for the container runner, coverage,
+private local reports, and remote-commit watcher. A failure blocks publication;
+passing tests does not replace physical TV acceptance or approve a PR.

@@ -1,0 +1,8 @@
+[Unit]
+Description=Watch public backup commits for regression test results
+[Timer]
+OnBootSec=5min
+OnUnitInactiveSec=5min
+Persistent=true
+[Install]
+WantedBy=timers.target

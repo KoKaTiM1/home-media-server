@@ -203,7 +203,7 @@ class ImportTests(unittest.TestCase):
             return {}
         with patch.object(app.F,'seed_validation'),patch.object(app.REL,'schedule'),patch.object(app.F,'consume_rechecks'),\
              patch.object(app.F,'repair_cached_series'),patch.object(app.F,'jf',return_value=[]),\
-             patch.object(app,'prepared',side_effect=prepare),patch('features.time.sleep'):
+             patch.object(app.F,'first_sweep_candidate',return_value=(None,False)),patch.object(app,'prepared',side_effect=prepare),patch('features.time.sleep'):
             app.F.warm_availability(2)
         self.assertEqual(visited,[series,movie])
         with app.db() as conn:

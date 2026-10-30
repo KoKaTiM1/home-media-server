@@ -1,0 +1,9 @@
+[Unit]
+Description=Check newly published source commits with isolated regression tests
+After=docker.service network-online.target
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/media-stack/tests/watch_remote.py
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=3600

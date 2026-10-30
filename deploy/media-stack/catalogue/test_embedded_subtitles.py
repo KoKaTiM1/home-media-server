@@ -81,7 +81,7 @@ class EmbeddedTests(unittest.TestCase):
         status={'hash':self.selected['hash'],'file_stats':[{'id':1,'path':'fixture.mkv','length':self.selected['length']}]}
         missing=a.urllib.error.HTTPError('private-source',404,'missing',{},None)
         with patch.object(a,'torr',side_effect=[missing,status]) as torrent:
-            revived.transport(self.selected)
+            revived.transport(KEY,self.selected)
         self.assertEqual(torrent.call_args_list[1].args[0]['action'],'add')
     def test_incomplete_packet_coverage_cannot_publish_even_if_subtitle_has_cues(self):
         raw='#tb 0: 1/1000\n0,0,1000,40,100,0x00\n0,0,2000,40,100,0x00\n'

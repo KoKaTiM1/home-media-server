@@ -5,6 +5,7 @@ import importlib.util
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 
 spec=importlib.util.spec_from_file_location('project_export',Path(__file__).with_name('export_project.py'))
@@ -29,6 +30,7 @@ def main():
     git(repo,'merge','--ff-only','origin/main')
     with tempfile.TemporaryDirectory(prefix='home-media-export-') as temporary:
         snapshot=Path(temporary)/'snapshot';exporter.export(snapshot)
+        subprocess.run([sys.executable,str(snapshot/'tests/regression_gate.py'),'--repository',str(snapshot)],check=True)
         for retired in ('artifacts/DynamicLibrary/Jellyfin.Plugin.DynamicLibrary.dll','artifacts/wizdom-0.2.0.0.zip',
                         'FOLLOW_UP.md','backup/templates/FOLLOW_UP.md'):
             (repo/retired).unlink(missing_ok=True)

@@ -210,21 +210,21 @@ class FeatureTests(unittest.TestCase):
         a.F.validation_result(good,True,proof={'audio_policy':1})
         with a.F.db() as conn:self.assertGreater(conn.execute('SELECT completed FROM audio_recheck WHERE key=?',(good,)).fetchone()[0],0)
 
-    def test_first_pass_prefers_new_titles_over_more_episodes(self):
+    def test_after_first_sweep_prefers_new_titles_over_more_episodes(self):
         self.make_search_index()
         movie='movie:tt1234567';episode='series:tt2345678:7:18'
         a.F.enqueue(movie,20);a.F.enqueue(episode,100)
-        with patch.object(a.F,'jf',return_value=[]),patch.object(a,'prepared',return_value={}) as prepare,patch('features.time.sleep'),patch.object(a.F,'worker_audit',return_value=None):
+        with patch.object(a.F,'jf',return_value=[]),patch.object(a,'prepared',return_value={}) as prepare,patch('features.time.sleep'),patch.object(a.F,'worker_audit',return_value=None),patch.object(a.F,'first_sweep_candidate',return_value=(None,False)):
             a.F.warm_availability(1)
             prepare.assert_called_once_with(movie,background=True,cancel=unittest.mock.ANY)
 
-    def test_due_failure_gets_a_retry_ahead_of_large_pending_backlog(self):
+    def test_after_first_sweep_due_failure_gets_retry_ahead_of_pending_backlog(self):
         self.make_search_index()
         failed='movie:tt1234567';new='movie:tt2345678'
         a.F.validation_result(failed,False)
         a.F.enqueue(new,100)
         with a.F.db() as conn:conn.execute('UPDATE validation SET next_check=0 WHERE key=?',(failed,))
-        with patch.object(a.F,'jf',return_value=[]),patch.object(a,'prepared',return_value={}) as prepare,patch('features.time.sleep'),patch.object(a.F,'worker_audit',return_value=None):
+        with patch.object(a.F,'jf',return_value=[]),patch.object(a,'prepared',return_value={}) as prepare,patch('features.time.sleep'),patch.object(a.F,'worker_audit',return_value=None),patch.object(a.F,'first_sweep_candidate',return_value=(None,False)):
             a.F.warm_availability(1)
             prepare.assert_called_once_with(failed,background=True,cancel=unittest.mock.ANY)
 
