@@ -84,7 +84,20 @@ class EmbeddedSubtitles:
             row=c.execute('SELECT state,proof FROM validation WHERE key=?',(key,)).fetchone()
             manual=c.execute('SELECT status FROM manual_rechecks WHERE key=?',(key,)).fetchone()
         proof=json.loads(row[1] or '{}') if row else {}
-        return bool(row and row[0]=='verified' and proof.get('version') in (5,6) and proof.get('source_id')==sid and (not manual or manual[0]=='passed'))
+        if row and row[0]=='verified' and proof.get('version') in (5,6) and proof.get('source_id')==sid and (not manual or manual[0]=='passed'):
+            return True
+        if not row or row[0]!='verified' or proof.get('version')!=6 or (manual and manual[0]!='passed'):
+            return False
+        try:
+            with self.g['F'].db() as c:
+                alternate=c.execute('''SELECT selected,proof FROM russian_audio_alternates
+                    WHERE key=? AND sid=? AND base_sid=? AND status='verified' LIMIT 1''',
+                    (key,sid,proof.get('source_id'))).fetchone()
+            if not alternate:return False
+            selected,alternate_proof=json.loads(alternate[0]),json.loads(alternate[1])
+            return (self.g['REL'].sid(selected)==sid and alternate_proof.get('version')==6
+                    and alternate_proof.get('source_id')==sid and len(alternate_proof.get('samples',[]))==2)
+        except (sqlite3.Error,ValueError,TypeError,KeyError):return False
     def resources_busy(self):
         from verification_remote import jobs
         try:

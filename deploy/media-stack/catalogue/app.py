@@ -33,6 +33,7 @@ from metadata_jobs import MetadataJobs, MetadataBusy, from_marker as metadata_co
 from reliability import Reliability, Checkpoint, SourceFailure, DecodeFailure, SourceStalled, SourceTooSlow, VERSION, rank, METADATA_SECONDS, WORK_SECONDS
 from embedded_subtitles import EmbeddedSubtitles
 from playback_diagnostics import PlaybackDiagnostics
+from russian_audio import RussianAudio
 
 DATA = Path(os.getenv('CATALOGUE_DATA', '/data'))
 LIBRARY = Path(os.getenv('CATALOGUE_LIBRARY', '/catalogue'))
@@ -1322,7 +1323,11 @@ def validation_attempt(background):
     finally:BUDGET.validation_started,BUDGET.validation_background=previous
 
 
-def prepared(key,background=False,audio_index=None,cancel=None):
+def prepared(key,background=False,audio_index=None,cancel=None,source_id=None):
+    if source_id:
+        option=RUSSIAN.prepare_option(key,source_id)
+        if option:return option
+        raise Checkpoint('Verified Russian-audio option is no longer current')
     if background and F.verification_held(key):raise Checkpoint('Title temporarily protected from background verification')
     speculative=getattr(BUDGET,'speculative',False)
     deadline=time.monotonic()+(DETAIL_SECONDS if speculative else WORK_SECONDS if background else PREPARATION_SECONDS)
@@ -1560,6 +1565,9 @@ def finish_preparation(key,background,deadline,selected,info,proof,selected_audi
         'languages':sorted(languages),'checked_at':proof.get('checked_at',time.time()),'audio_policy':2,'subtitle_policy':5,
         'verification_version':proof.get('version',VERSION),'PlaybackUrl':REL.source_url('play',key,selected),
         'DefaultAudioStreamIndex':selected_audio['index'] if selected_audio else None,'AudioConversionRequired':needs_conversion}
+    if not background:
+        try:output['RussianAlternatives']=RUSSIAN.options(key,proof,selected)
+        except (OSError,ValueError,TypeError,sqlite3.Error):output['RussianAlternatives']=[]
     if getattr(BUDGET,'speculative',False):remaining(1)
     with db() as conn:
         conn.execute('INSERT OR REPLACE INTO playback VALUES (?,?,?)',(key,json.dumps({**output,'verification_info':info}),time.time()))
@@ -1833,7 +1841,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply({'error':'Unauthorized'},401)
             if parts[0]=='info':
                 audio=U.parse_qs(parsed.query).get('audio',[None])[0]
-                info=prepared(key,audio_index=int(audio) if audio is not None else None,cancel=self.disconnected)
+                selected_source=U.parse_qs(parsed.query).get('source',[''])[0]
+                info=prepared(key,audio_index=int(audio) if audio is not None else None,cancel=self.disconnected,
+                    source_id=selected_source or None)
                 return self.reply(info)
             if parts[0]=='sub':
                 lang=U.parse_qs(parsed.query).get('lang',[''])[0]
@@ -1945,7 +1955,7 @@ def main():
     # its native metadata and downloaded sidecar subtitles beside STRM files.
     os.umask(0o002)
     parser=argparse.ArgumentParser()
-    parser.add_argument('command',choices=('serve','sync','collections','badges','trailers','discovery-sync','availability','downloads','imdb-sync','metadata-import','remote-availability','embedded-subtitles','hebrew-metadata','torrent-metadata'),default='serve',nargs='?')
+    parser.add_argument('command',choices=('serve','sync','collections','badges','trailers','discovery-sync','availability','downloads','imdb-sync','metadata-import','remote-availability','embedded-subtitles','hebrew-metadata','torrent-metadata','russian-audio'),default='serve',nargs='?')
     parser.add_argument('--movies',type=int,default=1000)
     parser.add_argument('--shows',type=int,default=200)
     parser.add_argument('--slot',type=int,choices=range(1,33),default=1)
@@ -1963,6 +1973,7 @@ def main():
     if args.command=='availability': return F.warm_availability()
     if args.command=='embedded-subtitles': return log('Embedded subtitle work steps: '+str(EMBED.work()))
     if args.command=='torrent-metadata':return log('Torrent metadata retained: '+str(backfill_torrent_metadata()))
+    if args.command=='russian-audio':return log('Russian-audio worker checked one title: '+str(RUSSIAN.work()))
     if args.command=='hebrew-metadata': return F.refresh_hebrew_metadata(limit=args.limit)
     if args.command=='remote-availability': return F.warm_availability(remote=True,slot=args.slot)
     if args.command=='downloads': return F.manage_downloads()
@@ -1977,5 +1988,6 @@ def main():
 F=Features(globals())
 REL=Reliability(globals())
 EMBED=EmbeddedSubtitles(globals())
+RUSSIAN=RussianAudio(globals())
 DIAG=PlaybackDiagnostics(globals())
 if __name__=='__main__': main()

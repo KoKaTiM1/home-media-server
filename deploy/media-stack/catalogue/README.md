@@ -166,6 +166,32 @@ does not change sources after delivery starts. Busy preparation and disconnected
 clients are not negative source proof. A real source failure clears its cached
 preparation and hides it from normal browse while retaining it for retry.
 
+## Russian audio alternatives
+
+`media-russian-audio.timer` checks every five minutes after boot. It scans
+newest release years first and only considers movie/episode records whose
+current accepted validation proof is V6, remains bound to the selected torrent
+file, has a valid speed proof, and has no pending manual recheck or active hold.
+The separate worker never rewrites the preferred playback source or primary
+validation proof.
+
+For a Russian track in the exact same torrent file, the accepted video/source
+and speed evidence is reused and the Russian audio is sampled at two positions.
+A different torrent/file must pass the normal full V6 probe, speed and decode
+checks. Alternate proof and metadata are stored separately. An option is shown
+only when a Hebrew subtitle is available and bound to that exact source. Hebrew
+embedded in the alternative is extracted in the background; the option remains
+hidden until extraction completes. Source-matched external Hebrew subtitles can
+be offered immediately. No Russian option is fabricated when neither route
+produces a usable subtitle.
+
+The extra worker requires a fresh resource-guard result, at least 2 GiB host
+memory available, and TorrServer and catalogue-bridge working memory below 65%
+of their configured limits. It also pauses during Jellyfin playback. When the
+extra lane is gated, one normal server verification slot can perform one
+Russian check only while Windows verification workers are online, then resume
+the normal V6 queue. The source audit/proof path remains unchanged.
+
 ## Subtitles
 
 Wizdom is the default free Hebrew provider and needs no account/key. Movie IMDb

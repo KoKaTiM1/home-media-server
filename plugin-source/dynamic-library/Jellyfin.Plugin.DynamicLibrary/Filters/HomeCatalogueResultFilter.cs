@@ -68,6 +68,20 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
         public int Bitrate { get; set; }
         public int? DefaultSubtitleStreamIndex { get; set; }
         public int? DefaultAudioStreamIndex { get; set; }
+        public List<PreparedRussianAlternative> RussianAlternatives { get; set; } = new();
+    }
+
+    private sealed class PreparedRussianAlternative
+    {
+        public string? Name { get; set; }
+        public string? PlaybackUrl { get; set; }
+        public List<MediaStream> MediaStreams { get; set; } = new();
+        public string Container { get; set; } = "mkv";
+        public long RunTimeTicks { get; set; }
+        public int Bitrate { get; set; }
+        public int? DefaultSubtitleStreamIndex { get; set; }
+        public int? DefaultAudioStreamIndex { get; set; }
+        public bool AudioConversionRequired { get; set; }
     }
 
     private sealed class TitleLabels
@@ -354,6 +368,7 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
         }
         if (context.Result is ObjectResult result && result.Value is PlaybackInfoResponse playback)
         {
+            var russianSources = new List<MediaSourceInfo>();
             foreach (var source in playback.MediaSources)
             {
                 var routeItem = context.RouteData.Values.TryGetValue("itemId", out var rawItemId) && Guid.TryParse(rawItemId?.ToString(), out var nativeId) ? nativeId : Guid.Empty;
@@ -455,7 +470,49 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
                         var key = Uri.UnescapeDataString(uri.AbsolutePath[6..]);
                         audioService.EnsureIndexed(indexedId.Value, key, itemCache.GetItem(indexedId.Value), info.RunTimeTicks);
                         audioService.Register(indexedId.Value, source);
-                        HomeAudioService.Configure(source, indexedId.Value, playback.PlaySessionId ?? Guid.NewGuid().ToString("N"), context.HttpContext.Request);
+                        foreach (var option in info.RussianAlternatives)
+                        {
+                            if (!Uri.TryCreate(option.PlaybackUrl, UriKind.Absolute, out _)
+                                || option.MediaStreams.Count == 0
+                                || option.DefaultAudioStreamIndex is not int russianIndex
+                                || !option.MediaStreams.Any(s => s.Type == MediaStreamType.Audio && s.Index == russianIndex
+                                    && (string.Equals(s.Language, "rus", StringComparison.OrdinalIgnoreCase)
+                                        || string.Equals(s.Language, "ru", StringComparison.OrdinalIgnoreCase)))) continue;
+                            var alternate = JsonSerializer.Deserialize<MediaSourceInfo>(JsonSerializer.Serialize(source))!;
+                            alternate.Id = "home-russian-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(option.PlaybackUrl!)))[..24].ToLowerInvariant();
+                            alternate.Name = option.Name ?? "Russian audio · V6 verified";
+                            alternate.Path = VerifiedPlaybackPath(uri, option.PlaybackUrl);
+                            alternate.MediaStreams = option.MediaStreams;
+                            alternate.Container = option.Container;
+                            alternate.RunTimeTicks = option.RunTimeTicks > 0 ? option.RunTimeTicks : source.RunTimeTicks;
+                            alternate.Bitrate = option.Bitrate;
+                            alternate.DefaultAudioStreamIndex = russianIndex;
+                            alternate.DefaultSubtitleStreamIndex = option.DefaultSubtitleStreamIndex;
+                            foreach (var stream in alternate.MediaStreams.Where(s => s.Type == MediaStreamType.Subtitle))
+                            {
+                                if (Uri.TryCreate(stream.DeliveryUrl, UriKind.Absolute, out var subtitleUri)
+                                    && subtitleUri.Host == "<SERVER_LAN_IP>" && subtitleUri.Port == 8092
+                                    && subtitleUri.AbsolutePath.StartsWith("/sub/", StringComparison.Ordinal))
+                                {
+                                    stream.DeliveryUrl = HomeSubtitleTracks.RelayUrl(subtitleUri, stream.Language);
+                                    stream.Codec = "webvtt";
+                                    stream.DeliveryMethod = MediaBrowser.Model.Dlna.SubtitleDeliveryMethod.External;
+                                    stream.SupportsExternalStream = true;
+                                }
+                            }
+                            alternate.SupportsProbing = false;
+                            alternate.SupportsTranscoding = false;
+                            audioService.Register(indexedId.Value, alternate);
+                            HomeAudioService.Configure(alternate, indexedId.Value, playback.PlaySessionId ?? Guid.NewGuid().ToString("N"), context.HttpContext.Request);
+                            alternate.Path = HomeConnectionPaths.ForRequest(alternate.Path, context.HttpContext.Request);
+                            russianSources.Add(alternate);
+                        }
+                        // Configure the primary source after cloning its
+                        // alternatives. Otherwise a required conversion for
+                        // the primary track can leak its HLS URL and capability
+                        // flags into a direct-play Russian LC source.
+                        HomeAudioService.Configure(source, indexedId.Value,
+                            playback.PlaySessionId ?? Guid.NewGuid().ToString("N"), context.HttpContext.Request);
                     }
                     // Native HLS keeps its registered internal source. Direct
                     // playback follows the connection used to reach Jellyfin.
@@ -473,6 +530,8 @@ public sealed class HomeCatalogueResultFilter(IHttpClientFactory clients,
                     break;
                 }
             }
+            if (playback.ErrorCode is null && playback.MediaSources.Count > 0 && russianSources.Count > 0)
+                playback.MediaSources = playback.MediaSources.Concat(russianSources).ToArray();
             // Android TV 0.19.10 treats a successful empty response as a stream
             // and dereferences its null MediaSource. Use the documented error.
             if (playback.MediaSources.Count == 0 && playback.ErrorCode is null)

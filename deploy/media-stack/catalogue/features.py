@@ -1424,6 +1424,21 @@ class Features:
             if self.cached('validation-provider-backoff'):
                 self.remember(worker_key,{'message':'Source provider cooldown; resumes automatically','started':time.time()},180)
                 return
+            if not remote:
+                # If the guarded extra server lane is unavailable, let the
+                # existing server worker perform one Russian-audio scan while
+                # Windows workers are actively contributing. It then returns
+                # to the normal V6 loop; Windows-off server behavior is intact.
+                try:
+                    from verification_remote import jobs
+                    from russian_audio import RussianAudio
+                    queue=jobs(self.g);status=queue.status()
+                    if (status.get('windows_slots_online',0)>0
+                        and not queue.setting_read('russian_extra_permitted',False)
+                        and queue.setting_read('russian_serial_permitted',False)):
+                        RussianAudio(self.g).work('serial')
+                except (OSError,ValueError,sqlite3.Error):
+                    self.log('Russian-audio serial fallback deferred')
             self.seed_validation()
             self.g['REL'].schedule()
             self.start_verification_sweep()

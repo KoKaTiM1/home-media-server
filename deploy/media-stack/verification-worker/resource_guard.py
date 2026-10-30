@@ -18,7 +18,8 @@ def sync_producers(queue,workers):
 def main():
     p=argparse.ArgumentParser();p.add_argument('--config',required=True);a=p.parse_args()
     cfg=json.loads(Path(a.config).read_text());q=DecodeJobs(cfg['queue_path']);q.initialize()
-    permitted=False;local_permitted=False;reason='Memory gate has not been approved';local_reason=reason;health={}
+    permitted=False;local_permitted=False;russian_extra=False
+    reason='Memory gate has not been approved';local_reason=reason;health={}
     try:
         def cgroup(name):
             item=json.loads(subprocess.check_output(['docker','inspect',name],timeout=5))[0]
@@ -53,6 +54,12 @@ def main():
             permitted=True
             lanes=max(1,min(16,int(q.setting_read('requested_windows_jobs',cfg.get('max_windows_jobs',1)))))
             reason=f'Parallel verification permitted: one server and up to {lanes} Windows '+('job' if lanes==1 else 'jobs')
+            # A second Debian torrent task gets stricter headroom than the
+            # established single server verifier. If these limits fail, the
+            # primary verifier may run the Russian check serially while the
+            # Windows fleet is online, then continue ordinary V6 work.
+            russian_extra=(available>=2*1024**3 and working<=limit*.65
+                and bridge_working<=bridge_limit*.65 and bridge_limit>0)
         # Complete-title Windows jobs do not read through Debian TorrServer.
         # Keep the host, OOM and bridge protections, but do not inherit the old
         # server-TorrServer working-memory pause.
@@ -72,6 +79,8 @@ def main():
     q.set('local_torrent_permitted',local_permitted);q.set('local_torrent_reason',local_reason)
     q.set('max_windows_jobs',max(1,min(16,int(q.setting_read('requested_windows_jobs',cfg.get('max_windows_jobs',1))))))
     q.set('prefetch_per_lane',2)
+    q.set('russian_serial_permitted',permitted)
+    q.set('russian_extra_permitted',bool(permitted and russian_extra))
     print(reason+'; '+local_reason)
 
 if __name__=='__main__':main()

@@ -110,6 +110,7 @@ quota and maintenance issues were repaired and checked.
 | `media-saved-downloads` | Every minute; track downloads, move owned files and apply managed retention |
 | `media-catalogue-badges` | Hourly; subtitle availability markers |
 | `media-embedded-subtitles` | Requested online titles; resumable Hebrew extraction while idle |
+| `media-russian-audio` | Every five minutes after boot; guarded Russian-track discovery for V6-passed titles with Hebrew subtitles |
 | `media-torrent-metadata` | One verified source per idle invocation, 30 seconds between attempts; saves torrent metadata for future startup |
 | `media-catalogue-collections` | Every 30 minutes; native collection membership |
 | `media-cleanup` | Hourly; legacy Downloads retention |
@@ -203,5 +204,16 @@ Optional Windows source verification is implemented separately from metadata fet
 Windows verification capacity is configured in the PC launcher through config/workers.json (defaults 8 workers / 2 TorrServers; up to 16 / 8). The authenticated coordinator applies the requested active limit and two queued jobs per worker, capped at 32. Temporary title failures use durable cooldowns; all V6 proof requirements remain enforced. Existing deployments keep their current worker capacity until the new launcher is installed.
 
 Streaming verification v6 adds a 1.5× bitrate delivery check. Existing matching v5 sources reuse their decoded evidence and receive speed-only upgrades; changed sources require both checks. Slow sources are excluded for six hours while alternatives are tried. Background source-metadata waits now yield after 45 seconds so the producer can try another source or title without marking the pending title unavailable. See [delivery-speed evidence](catalogue/README.md#v6-delivery-speed-evidence) and the [background validation limits](catalogue/README.md#playback-and-audio).
+
+The additional guarded server worker searches for Russian audio only on titles
+with a current V6 source proof and an available Hebrew subtitle, newest release
+years first. A different torrent must earn its own full V6 proof; a Russian
+track in the exact same torrent file reuses the source speed proof and receives
+two audio/video samples. The preferred source and its proof remain untouched.
+Russian audio appears only with a Hebrew subtitle bound to that source. Embedded
+Hebrew stays hidden until extraction finishes. The worker pauses for playback
+and uses a stricter memory gate; when that extra lane is gated, the existing
+server V6 worker can check one Russian alternative while Windows workers are
+online, then return to V6 work. See [Russian audio alternatives](catalogue/README.md#russian-audio-alternatives).
 
 Windows verifier package 0.4.2 gives the initial V6 sweep one four-minute full attempt per eligible source key before retry work resumes. Checkpoints are deferred separately from failures; later retries retain a 470-second Windows decoder budget with 30 seconds reserved for result receipt. The initial queue snapshot and pass/fail/deferred totals persist across restarts and appear in OMV. Candidate selection, alternate-source checks and V6 proof requirements are unchanged. See the verifier README for the preserved-data update procedure.

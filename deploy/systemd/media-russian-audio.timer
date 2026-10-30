@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodically look for Russian-audio alternatives after V6 approval
+
+[Timer]
+OnBootSec=10min
+OnUnitInactiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

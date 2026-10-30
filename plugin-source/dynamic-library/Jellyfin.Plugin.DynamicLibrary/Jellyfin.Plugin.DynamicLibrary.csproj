@@ -5,9 +5,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>Jellyfin.Plugin.DynamicLibrary</AssemblyName>
     <RootNamespace>Jellyfin.Plugin.DynamicLibrary</RootNamespace>
-    <Version>1.4.0.27</Version>
-    <AssemblyVersion>1.4.0.27</AssemblyVersion>
-    <FileVersion>1.4.0.27</FileVersion>
+    <Version>1.4.0.28</Version>
+    <AssemblyVersion>1.4.0.28</AssemblyVersion>
+    <FileVersion>1.4.0.28</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>
