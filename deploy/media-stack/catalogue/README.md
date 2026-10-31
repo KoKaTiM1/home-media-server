@@ -335,7 +335,8 @@ remain visible until a fresh failed check. Afterwards, one in five ordinary
 slots audits successful sources older than 24 hours. While the initial V6
 catalogue sweep is still waiting on work, every fifth cross-process dispatch is
 reserved for a pending V6 speed-audit item; deferred audit titles rotate behind
-other eligible audit work, and the other slots continue the sweep.
+other eligible audit work, including when metadata admission defers a selected
+title, and the other slots continue the sweep.
 New discovery, additional episodes and due failed retries continue through the
 durable queue. A passed episode count is not a count of distinct shows.
 

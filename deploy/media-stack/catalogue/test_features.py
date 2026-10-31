@@ -315,6 +315,24 @@ class FeatureTests(unittest.TestCase):
             due=dict(conn.execute("SELECT key,scheduled FROM verification_audit WHERE reason='speed-v6'"))
         self.assertTrue(all(due[key]>now for key in (first,second)))
 
+    def test_metadata_blocked_reserved_audit_rotates_without_claiming_title(self):
+        key='movie:tt1234567';now=time.time()
+        a.F.validation_result(key,True,proof={'version':5})
+        with a.F.g['REL'].db() as conn:
+            conn.execute("INSERT INTO verification_audit(key,reason,scheduled,completed,result,priority) VALUES (?,?,?,?,?,?)",
+                         (key,'speed-v6',now-10,0,None,50))
+        a.remember('verification-v5-slot',{'slot':3},864000)
+        with patch.object(a.F,'jf',return_value=[]),patch.object(a,'prepared') as prepare,\
+             patch.object(a.F,'metadata_admission_blocked',return_value=True),patch('features.time.sleep'),\
+             patch.object(a.F,'first_sweep_candidate',return_value=(None,True)):
+            a.F.warm_availability(1)
+        prepare.assert_not_called()
+        with a.F.g['REL'].db() as conn:
+            scheduled=conn.execute("SELECT scheduled FROM verification_audit WHERE key=? AND reason='speed-v6'",(key,)).fetchone()[0]
+            claim=conn.execute('SELECT 1 FROM verification_claims WHERE key=?',(key,)).fetchone()
+        self.assertGreater(scheduled,now)
+        self.assertIsNone(claim)
+
     def test_provider_rate_limit_pauses_the_queue(self):
         import urllib.error
         self.make_search_index()

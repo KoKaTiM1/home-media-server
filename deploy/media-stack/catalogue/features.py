@@ -1643,15 +1643,16 @@ class Features:
                 if not row:break
                 key=row[0]
                 if self.verification_held(key):continue
-                if self.metadata_admission_blocked(key):break
-                claim=self.claim_verification(key,'windows' if remote else 'server')
-                if not claim:continue
                 if speed_audit_reserved:
-                    # Rotate deferred titles so one throttled provider lookup
-                    # cannot monopolize every future reserved audit slot.
+                    # Rotate as soon as the reserved candidate is selected,
+                    # including when metadata admission defers it. Otherwise
+                    # one metadata-blocked title can occupy every reserved turn.
                     with self.g['REL'].db() as conn:
                         conn.execute("UPDATE verification_audit SET scheduled=? WHERE key=? AND reason='speed-v6' AND completed=0",
                                      (time.time()+60,key))
+                if self.metadata_admission_blocked(key):break
+                claim=self.claim_verification(key,'windows' if remote else 'server')
+                if not claim:continue
                 sweep_attempt=bool(sweep_candidate and sweep_candidate[1]==key and self.mark_first_sweep_attempt(key))
                 budget=self.g['BUDGET'];previous_sweep_flag=getattr(budget,'first_sweep_attempt',False)
                 previous_attempt_deadline=getattr(budget,'worker_deadline',None)
