@@ -574,7 +574,7 @@ def fetch_waiting_metadata(jobs):
     now=time.time()
     if metadata_pool_config()['enabled']:
         with jobs.db() as provider:
-            if max(jobs.value(provider,'provider_after'),jobs.value(provider,'provider_slot'))>now:return False
+            if max(jobs.value(provider,'provider_after'),jobs.value(provider,'provider_slot'),jobs.value(provider,'preparation_yield_until'))>now:return False
     with F.db() as conn:
         if not conn.execute("SELECT 1 FROM verification_metadata_dependencies WHERE state='waiting' LIMIT 1").fetchone() and not conn.execute('SELECT 1 FROM metadata_preparation_requests LIMIT 1').fetchone():return None
         conn.execute('BEGIN IMMEDIATE')
@@ -605,6 +605,14 @@ def fetch_waiting_metadata(jobs):
     if lease is None:
         with F.db() as conn:conn.execute('UPDATE verification_metadata_fetch SET next_fetch=? WHERE metadata_key=? AND next_fetch=?',(now+3,meta,now+120))
         return False
+    if metadata_pool_config()['enabled']:
+        with jobs.db(True) as provider:
+            burst=jobs.value(provider,'preparation_burst')+1
+            if burst>=4:
+                # Leave a normal provider slot for catalogue-page callers.
+                jobs.put(provider,'preparation_yield_until',time.time()+6)
+                burst=0
+            jobs.put(provider,'preparation_burst',burst)
     previous=getattr(BUDGET,'metadata_background',False)
     BUDGET.metadata_background=True
     try:

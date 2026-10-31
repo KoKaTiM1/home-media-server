@@ -756,3 +756,6 @@ use per-slot locks and cooperative stop files; systemd retries failures. Playbac
 or navigation pauses fetching. OMV shows both slots, outstanding parents,
 metadata-ready resumed titles and admission state separately from V6 passes.
 Metadata fetching does not alter accepted source proofs or media quality rules.
+
+After four preparation request starts, the pool leaves one three-second provider
+slot for catalogue-page callers. Shared provider cooldown remains authoritative.

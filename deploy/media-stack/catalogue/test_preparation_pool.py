@@ -134,3 +134,19 @@ class PoolTests(unittest.TestCase):
         with app.F.db() as c:
             self.assertEqual(c.execute('SELECT state,proof FROM validation WHERE key=?',(KEY,)).fetchone(),('verified',proof))
 
+
+    def test_pool_leaves_a_provider_slot_for_catalogue_pages(self):
+        for i in range(2,7):
+            key='movie:tt000000'+str(i);self.add(key)
+            self.assertFalse(app.F.metadata_admission_blocked(key))
+        def fetch(url,**kwargs):
+            return {'meta':fixtures.result(kind='movie',imdb=url.rsplit('/',1)[1].split('.')[0])['metadata']}
+        with patch.object(app,'fetch',side_effect=fetch):
+            for i in range(4):
+                with self.jobs.db(True) as c:self.jobs.put(c,'provider_slot',0)
+                self.assertTrue(app.fetch_waiting_metadata(self.jobs));app.metadata_import()
+            with self.jobs.db(True) as c:
+                self.jobs.put(c,'provider_slot',0)
+                self.assertGreater(self.jobs.value(c,'preparation_yield_until'),time.time())
+            self.assertFalse(app.fetch_waiting_metadata(self.jobs))
+        self.assertEqual(self.jobs.reserve_provider(),0)
