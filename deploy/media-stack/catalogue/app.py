@@ -1130,7 +1130,10 @@ def stream_candidates(key):
         fallback=mediafusion_streams(key)
         if fallback is not None:
             choices=filtered_streams({'streams':fallback})
-            if choices:saved=remember('streams:'+key,choices[:20],1800)
+            if choices:
+                saved=remember('streams:'+key,choices[:20],1800)
+                if not getattr(BUDGET,'speculative',False):
+                    remember('source-status:'+key,{'state':'listed','checked_at':time.time()},21600)
     if saved is not None:
         if not getattr(BUDGET,'speculative',False) and not cached('source-status:'+key):
             remember('source-status:'+key,{'state':'listed' if saved else 'unavailable','checked_at':time.time()},21600)

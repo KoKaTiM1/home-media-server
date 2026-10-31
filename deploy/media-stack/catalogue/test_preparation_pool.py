@@ -277,10 +277,12 @@ class FallbackTests(unittest.TestCase):
         self.assertEqual(len(rows),1);self.assertEqual(rows[0]['_provider'],'mediafusion')
     def test_cached_empty_primary_is_filled_without_primary_request(self):
         app.remember('streams:movie:tt0000001',[],300)
+        app.remember('source-status:movie:tt0000001',{'state':'unavailable'},300)
         with patch.object(app,'fetch',return_value={'streams':[self.stream()]}) as fetch:
             self.assertEqual(len(app.stream_candidates('movie:tt0000001')),1)
             self.assertEqual(fetch.call_count,1)
             self.assertTrue(fetch.call_args.args[0].startswith('https://fallback.example.invalid/'))
+            self.assertEqual(app.cached('source-status:movie:tt0000001')['state'],'listed')
     def test_torrentio_derived_and_unknown_origin_are_excluded(self):
         with patch.object(app,'fetch',return_value={'streams':[self.stream('Torrentio'),{**self.stream(),'description':'unknown'}]}):
             self.assertEqual(app.mediafusion_streams('movie:tt0000001'),[])
