@@ -132,6 +132,23 @@ class MetadataResumeTests(unittest.TestCase):
         with app.F.db() as c:
             self.assertEqual(c.execute('SELECT state,attempts FROM validation').fetchone(),('pending',0))
 
+    def test_bounded_batch_imports_each_parent_before_selecting_next(self):
+        keys=['movie:tt000000'+str(i) for i in range(2,7)]
+        with app.F.db() as c:
+            for key in keys:c.execute("INSERT INTO validation(key,state) VALUES (?,'pending')",(key,))
+        for key in keys:self.wait(key)
+        def fetched(url,**kwargs):
+            imdb=url.rsplit('/',1)[1].split('.')[0]
+            return {'meta':fixtures.result(kind='movie',imdb=imdb)['metadata']}
+        def spacing(seconds):
+            with self.jobs.db(True) as c:self.jobs.put(c,'provider_slot',0)
+        with patch.object(app,'fetch',side_effect=fetched) as fetch,\
+             patch.object(app.time,'sleep',side_effect=spacing),patch('metadata_jobs.MetadataJobs.seed'):
+            applied=app.metadata_import(seed=True)
+        self.assertEqual(applied,4);self.assertEqual(fetch.call_count,4)
+        self.assertEqual(sum(self.outcome(k)=='queued' for k in keys),4)
+        self.assertEqual(sum(self.outcome(k)=='metadata_wait' for k in keys),1)
+
     def test_claim_and_hold_block_resume_then_poll_recovers(self):
         token=self.wait(release=False);self.submit();app.metadata_import()
         self.assertEqual(self.outcome(),'metadata_wait')

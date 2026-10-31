@@ -52,6 +52,7 @@ def payload(g,key):
             x['_exact']['link']=x.get('torrentUrl') or magnet(h)
         candidates.append(x)
         if len(candidates)>=20:break
+    if not candidates:raise SourceFailure('No eligible torrent candidates')
     with g['F'].db() as db:
         r=db.execute('SELECT state,proof,reason FROM validation WHERE key=?',(key,)).fetchone()
         m=db.execute('SELECT requested FROM manual_rechecks WHERE key=?',(key,)).fetchone()

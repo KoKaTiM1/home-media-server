@@ -721,9 +721,13 @@ proofs and newer manual reports remain protected. Unmarked historical deferrals
 are retained rather than guessed to be metadata-only waits. No Windows package
 update is needed for this server-side scheduling change.
 
-The import timer also fetches at most one missing, explicitly subscribed
-metadata prerequisite per run when no helper owns it. A separate per-parent
+The import timer also fetches at most four missing, explicitly subscribed
+metadata prerequisites per run when no helper owns it. A separate per-parent
 schedule prevents duplicate fetches and rotates blocked parents. Ordinary
 provider backoff, metadata lease generations, viewing holds and source cooldowns
 still apply. This fetch only fills the catalogue cache; media proofs still require
 the complete V6 verification path.
+
+Each result is imported before selecting the next parent, with provider spacing
+between attempts. Empty eligible torrent listings are source-unavailable results
+before Windows dispatch; they do not indicate a decoder failure.

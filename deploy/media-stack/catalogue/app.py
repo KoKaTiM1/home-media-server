@@ -525,7 +525,7 @@ def metadata(kind,imdb):
 
 
 def fetch_waiting_metadata(jobs):
-    """One prerequisite per timer run, with ordinary provider/lease fences."""
+    """One prerequisite, with ordinary provider/lease fences."""
     now=time.time()
     with F.db() as conn:
         if not conn.execute("SELECT 1 FROM verification_metadata_dependencies WHERE state='waiting' LIMIT 1").fetchone():return False
@@ -574,11 +574,17 @@ def metadata_import(limit=20,key=None,seed=False):
     """Apply durable metadata handoffs. No source proofs/native userdata writes."""
     jobs=metadata_coordinator(DATA)
     if not jobs:return 0
+    applied=0
     if seed:
-        fetch_waiting_metadata(jobs)
+        # Bound the run below the service timeout; each claim still reserves
+        # the shared provider slot. Import before selecting another parent.
+        for position in range(4):
+            if position:time.sleep(3.1)
+            fetched=fetch_waiting_metadata(jobs)
+            applied+=metadata_import(limit=limit)
+            if not fetched:break
         jobs.seed(DATA/'catalogue.sqlite')
         with F.db() as conn:conn.execute('DELETE FROM metadata_waits WHERE expires<?',(time.time()-3600,))
-    applied=0
     for receipt in jobs.pending_imports(limit=limit,key=key):
         kind,imdb=receipt['job_id'].split(':')
         if kind not in ('movie','series') or not re.fullmatch(r'tt\d{5,12}',imdb):

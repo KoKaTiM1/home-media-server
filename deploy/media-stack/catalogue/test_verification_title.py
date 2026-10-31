@@ -16,7 +16,7 @@ import unittest
 from unittest.mock import patch
 from test_app import a
 from verification_jobs import DecodeJobs,WorkerWait
-from verification_title import validate_evidence,validate_task,execute_title,controller_fault
+from verification_title import payload,validate_evidence,validate_task,execute_title,controller_fault
 from reliability import Checkpoint
 
 KEY='movie:tt0000001';HASH='a'*40
@@ -31,6 +31,11 @@ class TitleTests(unittest.TestCase):
         self.payload={'schema':1,'key':KEY,'meta':self.meta,'candidates':[{'infoHash':HASH,'title':'Fixture 2026 1080p','behaviorHints':{'filename':'Fixture.2026.mp4'}}], 'aliases':[],'prior':{'state':'pending'}}
         self.q=DecodeJobs(self.root/'queue.sqlite');self.q.initialize();self.q.set('enabled',True);self.q.set('local_torrent_enabled',True);self.q.set('local_torrent_permitted',True);self.q.set('max_windows_jobs',4)
         self.q.claim('pc-new',['local-torrent-v1']);self.q.backend_health('pc-new',True)
+    def test_empty_listing_is_source_unavailable_before_windows_submission(self):
+        from reliability import SourceFailure
+        with patch.object(a,'metadata',return_value=self.meta),patch.object(a,'verification_candidates',return_value=[]):
+            with self.assertRaises(SourceFailure):payload(a.__dict__,KEY)
+
     def test_local_metadata_wait_returns_checkpoint_inside_child_budget(self):
         # A healthy HTTP endpoint that never supplies torrent metadata must not
         # hold the child until the longer app default or parent kill deadline.
