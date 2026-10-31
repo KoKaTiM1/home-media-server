@@ -441,9 +441,13 @@ def overview(data=DATA,snapshot=None):
         provider_labels={'torrentio':'Torrentio','mediafusion':'MediaFusion fallback','mixed':'Torrentio + MediaFusion candidates',
                          'other':'Other source','none':'None'}
         provider_value=provider_labels.get(provider,'None')
-        provider_detail=('Provider candidates for the active Windows title; after completion this identifies the selected source. '
-                         'None means no accepted Torrentio or MediaFusion candidate is available.' if provider!='none' else
-                         'No accepted Torrentio or MediaFusion candidate is currently selected or available.')
+        if provider_state is None:
+            provider_detail='No Windows title/source lookup is active; no provider is currently in use.'
+        elif provider!='none':
+            provider_detail=('Provider candidates for the active Windows title; after completion this identifies the selected source. '
+                             'Mixed means candidates from both providers are present.')
+        else:
+            provider_detail='No accepted Torrentio or MediaFusion candidate is available for the active title.'
         add('Current torrent provider',provider_value,provider_detail,'success' if provider in ('torrentio','mediafusion') else 'muted')
         if problem:
             label='Decode rejected' if problem['outcome']=='decode_failure' else 'Checkpoint'
