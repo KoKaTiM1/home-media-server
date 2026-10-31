@@ -124,6 +124,7 @@ class Features:
         conn.execute('CREATE INDEX IF NOT EXISTS verification_metadata_due ON verification_metadata_dependencies(state,next_check)')
         conn.execute('CREATE INDEX IF NOT EXISTS verification_metadata_parent ON verification_metadata_dependencies(metadata_key,state)')
         conn.execute('CREATE INDEX IF NOT EXISTS verification_metadata_ready ON verification_metadata_dependencies(state,sweep_id,waiting)')
+        conn.execute('CREATE TABLE IF NOT EXISTS verification_metadata_fetch(metadata_key TEXT PRIMARY KEY,next_fetch REAL NOT NULL)')
 
     def wait_for_metadata(self,key):
         """Record a prerequisite wait before a media-verification attempt ran."""
@@ -160,7 +161,7 @@ class Features:
                 JOIN verification_sweeps s ON s.id=a.sweep_id WHERE a.sweep_id=? AND a.key=?''',(sweep,key)).fetchone()
             if not row or row[0]!='metadata_wait':
                 conn.execute("UPDATE verification_metadata_dependencies SET state='closed' WHERE sweep_id=? AND key=?",(sweep,key));continue
-            if row[1]!=checked or (row[5] and row[6]<=row[7]) or (row[2]=='verified' and json.loads(row[3] or '{}').get('version',0)>=6):
+            if row[2]=='downloaded' or row[1]!=checked or (row[5] and row[6]<=row[7]) or (row[2]=='verified' and json.loads(row[3] or '{}').get('version',0)>=6):
                 conn.execute("UPDATE verification_sweep_attempts SET outcome='deferred',finished=? WHERE sweep_id=? AND key=? AND outcome='metadata_wait'",(now,sweep,key))
                 conn.execute("UPDATE verification_metadata_dependencies SET state='closed' WHERE sweep_id=? AND key=?",(sweep,key));continue
             cached=conn.execute('SELECT 1 FROM cache WHERE key=? AND expires>?',(meta,now)).fetchone()

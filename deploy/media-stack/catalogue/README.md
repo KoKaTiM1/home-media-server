@@ -720,3 +720,10 @@ priority and precede fresh discovery. Holds, claims, source cooldowns, changed
 proofs and newer manual reports remain protected. Unmarked historical deferrals
 are retained rather than guessed to be metadata-only waits. No Windows package
 update is needed for this server-side scheduling change.
+
+The import timer also fetches at most one missing, explicitly subscribed
+metadata prerequisite per run when no helper owns it. A separate per-parent
+schedule prevents duplicate fetches and rotates blocked parents. Ordinary
+provider backoff, metadata lease generations, viewing holds and source cooldowns
+still apply. This fetch only fills the catalogue cache; media proofs still require
+the complete V6 verification path.

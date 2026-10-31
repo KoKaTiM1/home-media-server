@@ -32,6 +32,84 @@ class MetadataResumeTests(unittest.TestCase):
         with app.F.db() as c:
             state,attempts,proof=c.execute('SELECT state,attempts,proof FROM validation WHERE key=?',(KEY,)).fetchone()
         self.assertEqual((state,attempts),('pending',0));self.assertEqual(json.loads(proof),{'fixture':'original-proof'})
+    def test_import_timer_fetches_waiting_dependency_without_metadata_helper(self):
+        self.wait()
+        with patch.object(app,'fetch',return_value={'meta':fixtures.result()['metadata']}) as fetch,\
+             patch('metadata_jobs.MetadataJobs.seed'):
+            app.metadata_import(seed=True)
+        self.assertEqual(fetch.call_count,1)
+        self.assertEqual(self.outcome(),'queued')
+        with app.F.db() as c:
+            row=c.execute('SELECT state,attempts,proof FROM validation WHERE key=?',(KEY,)).fetchone()
+        self.assertEqual(row[:2],('pending',0));self.assertEqual(json.loads(row[2]),{'fixture':'original-proof'})
+
+    def test_dependency_fetch_respects_provider_backoff_and_other_owner(self):
+        self.wait();self.jobs.enqueue([('series','tt0000001',100)])
+        task=self.jobs.claim('server','original','series','tt0000001')
+        self.assertTrue(task)
+        with self.jobs.db(True) as c:self.jobs.put(c,'provider_slot',0)
+        with patch.object(app,'fetch',side_effect=AssertionError('duplicate fetch')):
+            self.assertFalse(app.fetch_waiting_metadata(self.jobs))
+        self.assertTrue(self.jobs.renew('server','original',task))
+        with app.F.db() as c:c.execute('DELETE FROM verification_metadata_fetch')
+        with self.jobs.db(True) as c:c.execute("UPDATE jobs SET state='pending',expires=0")
+        self.jobs.provider_backoff(429)
+        with patch.object(app,'fetch',side_effect=AssertionError('provider backoff')):
+            self.assertFalse(app.fetch_waiting_metadata(self.jobs))
+        self.assertEqual(self.outcome(),'metadata_wait')
+
+    def test_dependency_fetch_failure_releases_own_lease_and_rotates(self):
+        self.wait()
+        with patch.object(app,'fetch',side_effect=TimeoutError):
+            self.assertFalse(app.fetch_waiting_metadata(self.jobs))
+        with self.jobs.db() as c:
+            state,due=c.execute('SELECT state,due FROM jobs WHERE job_id=?',('series:tt0000001',)).fetchone()
+        self.assertEqual(state,'retry');self.assertGreater(due,time.time())
+        with patch.object(app,'fetch',side_effect=AssertionError('must back off')):
+            self.assertFalse(app.fetch_waiting_metadata(self.jobs))
+        self.assertEqual(self.outcome(),'metadata_wait')
+
+    def test_dependency_fetch_skips_hold_and_source_retry(self):
+        self.wait()
+        for table,sql in [('hold','INSERT INTO verification_holds VALUES (?,?,?)'),
+                          ('retry',None)]:
+            if table=='hold':
+                with app.F.db() as c:c.execute(sql,(KEY,time.time()+120,'fixture'))
+            else:app.F.defer_verification(KEY,'transport')
+            with patch.object(app,'fetch',side_effect=AssertionError('protected title')):
+                self.assertFalse(app.fetch_waiting_metadata(self.jobs))
+            with app.F.db() as c:c.execute('DELETE FROM verification_holds')
+
+    def test_downloaded_state_never_resumes_even_with_same_checked(self):
+        self.wait()
+        with app.F.db() as c:c.execute("UPDATE validation SET state='downloaded' WHERE key=?",(KEY,))
+        self.submit();app.metadata_import()
+        self.assertEqual(self.outcome(),'deferred')
+        with app.F.db() as c:self.assertEqual(c.execute('SELECT state FROM validation WHERE key=?',(KEY,)).fetchone()[0],'downloaded')
+
+    def test_concurrent_dependency_fetch_has_one_provider_owner(self):
+        self.wait()
+        from concurrent.futures import ThreadPoolExecutor
+        with patch.object(app,'fetch',return_value={'meta':fixtures.result()['metadata']}) as fetch:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                results=list(pool.map(lambda _:app.fetch_waiting_metadata(self.jobs),range(2)))
+        self.assertEqual(sum(results),1);self.assertEqual(fetch.call_count,1)
+        app.metadata_import();self.assertEqual(self.outcome(),'queued')
+
+    def test_disabled_coordinator_leaves_dependency_waiting(self):
+        self.wait();self.jobs.set_enabled(False)
+        with patch.object(app,'fetch',side_effect=AssertionError('disabled coordinator')):
+            self.assertFalse(app.fetch_waiting_metadata(self.jobs))
+        self.assertEqual(self.outcome(),'metadata_wait')
+
+    def test_previous_v5_proof_can_obtain_missing_metadata(self):
+        with app.F.db() as c:c.execute("UPDATE validation SET state='verified',proof=? WHERE key=?",(json.dumps({'version':5}),KEY))
+        self.wait()
+        with patch.object(app,'fetch',return_value={'meta':fixtures.result()['metadata']}):
+            self.assertTrue(app.fetch_waiting_metadata(self.jobs))
+        app.metadata_import();self.assertEqual(self.outcome(),'queued')
+        with app.F.db() as c:self.assertEqual(json.loads(c.execute('SELECT proof FROM validation').fetchone()[0]),{'version':5})
+
     def test_claim_and_hold_block_resume_then_poll_recovers(self):
         token=self.wait(release=False);self.submit();app.metadata_import()
         self.assertEqual(self.outcome(),'metadata_wait')

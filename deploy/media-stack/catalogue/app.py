@@ -521,11 +521,54 @@ def metadata(kind,imdb):
     return F.localize(saved)
 
 
+def fetch_waiting_metadata(jobs):
+    """One prerequisite per timer run, with ordinary provider/lease fences."""
+    now=time.time()
+    with F.db() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        row=conn.execute("""SELECT d.metadata_key FROM verification_metadata_dependencies d
+            LEFT JOIN verification_metadata_fetch f ON f.metadata_key=d.metadata_key
+            JOIN verification_sweep_attempts a ON a.sweep_id=d.sweep_id AND a.key=d.key
+            JOIN validation v ON v.key=d.key
+            WHERE d.state='waiting' AND a.outcome='metadata_wait'
+            AND v.checked=d.validation_checked AND v.state!='downloaded'
+            AND NOT(v.state='verified' AND COALESCE(json_extract(v.proof,'$.version'),0)>=6)
+            AND COALESCE(f.next_fetch,0)<=?
+            AND NOT EXISTS(SELECT 1 FROM cache c WHERE c.key=d.metadata_key AND c.expires>?)
+            AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE (h.key=d.key OR h.key=substr(d.metadata_key,6)) AND h.expires>?)
+            AND NOT EXISTS(SELECT 1 FROM verification_retry_waits r WHERE (r.key=d.key OR r.key=substr(d.metadata_key,6)) AND r.next_retry>?)
+            AND NOT EXISTS(SELECT 1 FROM preparation_work p WHERE p.key=substr(d.metadata_key,6))
+            ORDER BY COALESCE(f.next_fetch,0),d.waiting LIMIT 1""",(now,now,now,now)).fetchone()
+        if not row:return False
+        meta=row[0]
+        # Separate from readiness polling; concurrent timer invocations cannot
+        # pick this parent, and blocked parents cannot starve the rest.
+        conn.execute('INSERT OR REPLACE INTO verification_metadata_fetch VALUES (?,?)',(meta,now+120))
+    _,kind,imdb=meta.split(':')
+    worker='metadata-dependency-'+uuid.uuid4().hex
+    jobs.enqueue([(kind,imdb,2000)])
+    try:lease=jobs.claim('server',worker,kind,imdb)
+    except MetadataBusy:return False
+    if lease is None:return False
+    previous=getattr(BUDGET,'metadata_background',False)
+    BUDGET.metadata_background=True
+    try:
+        data=fetch(f'{CINEMETA}/meta/{kind}/{imdb}.json',timeout=8)['meta']
+        ack=jobs.receive('server',worker,lease,{'result_id':uuid.uuid4().hex,
+            'source':'cinemeta','fetched_at':time.time(),'status':'ok','metadata':data})
+        return ack in ('accepted','duplicate')
+    except Exception as error:
+        jobs.release(lease,getattr(error,'code',None),worker_id=worker)
+        return False
+    finally:BUDGET.metadata_background=previous
+
+
 def metadata_import(limit=20,key=None,seed=False):
     """Apply durable metadata handoffs. No source proofs/native userdata writes."""
     jobs=metadata_coordinator(DATA)
     if not jobs:return 0
     if seed:
+        fetch_waiting_metadata(jobs)
         jobs.seed(DATA/'catalogue.sqlite')
         with F.db() as conn:conn.execute('DELETE FROM metadata_waits WHERE expires<?',(time.time()-3600,))
     applied=0

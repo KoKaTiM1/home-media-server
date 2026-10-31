@@ -232,9 +232,9 @@ class MetadataJobs:
             conn.execute('UPDATE jobs SET state=?,due=?,expires=0,updated=? WHERE job_id=?', (state, due, now, row['job_id']))
             return 'accepted'
 
-    def release(self, task, status=None):
+    def release(self, task, status=None, worker_id='server'):
         with self.db(True) as conn:
-            row = self.owned(conn, 'server', 'server', task, time.time())
+            row = self.owned(conn, 'server', worker_id, task, time.time())
             if row:
                 conn.execute("UPDATE jobs SET state='retry',expires=0,due=? WHERE job_id=?", (time.time() + 30, row['job_id']))
             if status in (429, 503):
