@@ -262,6 +262,26 @@ class FeatureTests(unittest.TestCase):
             tickets=list(pool.map(lambda _:a.F.next_verification_slot(),range(20)))
         self.assertEqual(sorted(tickets),list(range(1,21)))
 
+    def test_deferred_speed_audit_rotates_to_another_title(self):
+        first='movie:tt1234567';second='movie:tt2345678';now=time.time()
+        a.F.validation_result(first,True,proof={'version':5})
+        a.F.validation_result(second,True,proof={'version':5})
+        with a.F.g['REL'].db() as conn:
+            conn.executemany("INSERT INTO verification_audit(key,reason,scheduled,completed,result,priority) VALUES (?,?,?,?,?,?)",
+                ((first,'speed-v6',now-20,0,None,50),(second,'speed-v6',now-10,0,None,50)))
+        a.remember('verification-v5-slot',{'slot':3},864000)
+        with patch.object(a.F,'jf',return_value=[]),patch.object(a,'prepared',side_effect=a.SourceProviderWait('cooldown')) as prepare,\
+             patch('features.time.sleep'),patch.object(a.F,'first_sweep_candidate',return_value=(None,True)):
+            a.F.warm_availability(1)
+            a.remember('verification-v5-slot',{'slot':8},864000)
+            a.F.warm_availability(1)
+        selected=[call.args[0] for call in prepare.call_args_list]
+        self.assertEqual(len(selected),2)
+        self.assertEqual(len(set(selected)),2)
+        with a.F.g['REL'].db() as conn:
+            due=dict(conn.execute("SELECT key,scheduled FROM verification_audit WHERE reason='speed-v6'"))
+        self.assertTrue(all(due[key]>now for key in (first,second)))
+
     def test_provider_rate_limit_pauses_the_queue(self):
         import urllib.error
         self.make_search_index()

@@ -1517,10 +1517,11 @@ class Features:
     def worker_audit(self,recurring=False,reason=None):
         # Holds are scheduling exclusions, not failed/finished audit results.
         # Keep original proof/readiness/history and automatically retry after expiry.
+        now=time.time()
         reason_filter=' AND a.reason=?' if reason else ''
-        params=(time.time(),reason) if reason else (time.time(),)
+        params=(now,reason,now) if reason else (now,now)
         with self.g['REL'].db() as conn:
-            row=conn.execute("SELECT a.key FROM verification_audit a JOIN validation v ON v.key=a.key WHERE a.completed=0"+reason_filter+" AND (v.state='verified' OR v.next_check<=?) AND NOT EXISTS(SELECT 1 FROM verification_claims vc WHERE vc.key=v.key AND vc.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=v.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (v.key=mw.key OR v.key LIKE mw.key||':%')) ORDER BY a.priority DESC,COALESCE(json_extract(v.proof,'$.version'),0),a.scheduled LIMIT 1",((reason,params[0]) if reason else params)).fetchone()
+            row=conn.execute("SELECT a.key FROM verification_audit a JOIN validation v ON v.key=a.key WHERE a.completed=0 AND a.scheduled<=?"+reason_filter+" AND (v.state='verified' OR v.next_check<=?) AND NOT EXISTS(SELECT 1 FROM verification_claims vc WHERE vc.key=v.key AND vc.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=v.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (v.key=mw.key OR v.key LIKE mw.key||':%')) ORDER BY a.priority DESC,COALESCE(json_extract(v.proof,'$.version'),0),a.scheduled LIMIT 1",params).fetchone()
             if not row and recurring:
                 row=conn.execute("SELECT key FROM validation WHERE state='verified' AND checked<=? AND NOT EXISTS(SELECT 1 FROM verification_claims vc WHERE vc.key=validation.key AND vc.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=validation.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (validation.key=mw.key OR validation.key LIKE mw.key||':%')) ORDER BY checked LIMIT 1",(time.time()-86400,)).fetchone()
         return row
@@ -1607,13 +1608,16 @@ class Features:
                     break
                 slot=self.next_verification_slot()
                 sweep_candidate,sweep_waiting=self.first_sweep_candidate()
+                speed_audit_reserved=False
                 with self.db() as conn:
                     row=conn.execute("SELECT v.key FROM manual_rechecks m JOIN validation v ON v.key=m.key WHERE m.status='pending' AND v.next_check<=? AND NOT EXISTS(SELECT 1 FROM verification_claims vc WHERE vc.key=v.key AND vc.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=v.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (v.key=mw.key OR v.key LIKE mw.key||':%')) ORDER BY m.requested LIMIT 1",(time.time(),)).fetchone()
                     # Give the pending V6 speed audit a reserved one-in-five
                     # dispatch even while a large initial sweep is waiting.
                     # The audit selector retains source state, hold, claim and
                     # metadata-wait guards; it does not weaken V6 proof checks.
-                    if not row and slot%5==4:row=self.worker_audit(reason='speed-v6')
+                    if not row and slot%5==4:
+                        row=self.worker_audit(reason='speed-v6')
+                        speed_audit_reserved=bool(row)
                     if not row and sweep_candidate:row=(sweep_candidate[1],)
                     # Outside a waiting first sweep, pending audits precede
                     # discovery; the fifth slot may also perform a daily refresh.
@@ -1639,6 +1643,12 @@ class Features:
                 if self.metadata_admission_blocked(key):break
                 claim=self.claim_verification(key,'windows' if remote else 'server')
                 if not claim:continue
+                if speed_audit_reserved:
+                    # Rotate deferred titles so one throttled provider lookup
+                    # cannot monopolize every future reserved audit slot.
+                    with self.g['REL'].db() as conn:
+                        conn.execute("UPDATE verification_audit SET scheduled=? WHERE key=? AND reason='speed-v6' AND completed=0",
+                                     (time.time()+60,key))
                 sweep_attempt=bool(sweep_candidate and sweep_candidate[1]==key and self.mark_first_sweep_attempt(key))
                 budget=self.g['BUDGET'];previous_sweep_flag=getattr(budget,'first_sweep_attempt',False)
                 previous_attempt_deadline=getattr(budget,'worker_deadline',None)
