@@ -1,0 +1,6 @@
+{
+  "enabled": true,
+  "concurrency": 2,
+  "high": 256,
+  "low": 128
+}

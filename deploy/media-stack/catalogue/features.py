@@ -125,6 +125,33 @@ class Features:
         conn.execute('CREATE INDEX IF NOT EXISTS verification_metadata_parent ON verification_metadata_dependencies(metadata_key,state)')
         conn.execute('CREATE INDEX IF NOT EXISTS verification_metadata_ready ON verification_metadata_dependencies(state,sweep_id,waiting)')
         conn.execute('CREATE TABLE IF NOT EXISTS verification_metadata_fetch(metadata_key TEXT PRIMARY KEY,next_fetch REAL NOT NULL)')
+        conn.execute('CREATE TABLE IF NOT EXISTS metadata_preparation_requests(key TEXT PRIMARY KEY,metadata_key TEXT NOT NULL,created REAL NOT NULL,validation_checked REAL NOT NULL)')
+        conn.execute('CREATE INDEX IF NOT EXISTS metadata_preparation_parent ON metadata_preparation_requests(metadata_key)')
+        conn.execute('CREATE TABLE IF NOT EXISTS metadata_preparation_control(key TEXT PRIMARY KEY,value REAL NOT NULL)')
+        conn.execute('CREATE TABLE IF NOT EXISTS metadata_preparation_workers(slot INTEGER PRIMARY KEY,heartbeat REAL NOT NULL,phase TEXT NOT NULL)')
+
+    def metadata_admission_blocked(self,key,conn=None):
+        config=self.g.get('metadata_pool_config',lambda:{'enabled':False})()
+        if not config['enabled']:return False
+        if conn is None:
+            with self.db() as own:return self.metadata_admission_blocked(key,own)
+        now=time.time();meta='meta:'+':'.join(key.split(':')[:2])
+        state=conn.execute('SELECT state FROM validation WHERE key=?',(key,)).fetchone()
+        if not state or state[0]=='downloaded':return True
+        if conn.execute('SELECT 1 FROM cache WHERE key=? AND expires>?',(meta,now)).fetchone():return False
+        if not conn.in_transaction:conn.execute('BEGIN IMMEDIATE')
+        existing=conn.execute("SELECT 1 FROM verification_metadata_dependencies WHERE metadata_key=? AND state IN ('waiting','resumed') UNION ALL SELECT 1 FROM metadata_preparation_requests WHERE metadata_key=? LIMIT 1",(meta,meta)).fetchone()
+        manual=conn.execute("SELECT 1 FROM manual_rechecks WHERE key=? AND status='pending'",(key,)).fetchone()
+        if not existing and not manual:
+            count=conn.execute("SELECT count(*) FROM (SELECT metadata_key FROM verification_metadata_dependencies WHERE state IN ('waiting','resumed') UNION SELECT metadata_key FROM metadata_preparation_requests LIMIT ?)",(config['high']+1,)).fetchone()[0]
+            paused=conn.execute("SELECT value FROM metadata_preparation_control WHERE key='paused'").fetchone()
+            paused=bool(paused and paused[0])
+            paused=count>config['low'] if paused else count>=config['high']
+            conn.execute("INSERT OR REPLACE INTO metadata_preparation_control VALUES ('paused',?)",(int(paused),))
+            if paused:return True
+        row=conn.execute('SELECT checked FROM validation WHERE key=?',(key,)).fetchone()
+        if row:conn.execute('INSERT OR IGNORE INTO metadata_preparation_requests VALUES (?,?,?,?)',(key,meta,now,row[0]))
+        return False
 
     def wait_for_metadata(self,key):
         """Record a prerequisite wait before a media-verification attempt ran."""
@@ -208,10 +235,13 @@ class Features:
                 # Keep the V5 audit ahead of discovery without scanning the
                 # million-key queue or rewriting its saved priority values.
                 rows=conn.execute(selection.format(source='verification_sweep_attempts x INDEXED BY verification_sweep_v5_order',version_filter='AND x.source_version=5',ordering='x.priority DESC,x.due'),parameters).fetchall()
+                rows=[row for row in rows if not self.metadata_admission_blocked(row[0],conn)]
                 if not rows:
                     rows=conn.execute(selection.format(source='verification_metadata_dependencies d INDEXED BY verification_metadata_ready JOIN verification_sweep_attempts x ON x.sweep_id=d.sweep_id AND x.key=d.key',version_filter="AND d.state='resumed'",ordering='d.waiting,d.key'),parameters).fetchall()
+                    rows=[row for row in rows if not self.metadata_admission_blocked(row[0],conn)]
                 if not rows:
                     rows=conn.execute(selection.format(source='verification_sweep_attempts x INDEXED BY verification_sweep_order',version_filter='',ordering='x.priority DESC,x.source_version,x.due'),parameters).fetchall()
+                    rows=[row for row in rows if not self.metadata_admission_blocked(row[0],conn)]
                 candidates=[]
                 for key,state,due,version,priority,audited in rows:
                     if audited or (state=='verified' and version>=6):
@@ -1580,11 +1610,13 @@ class Features:
                 if not row:break
                 key=row[0]
                 if self.verification_held(key):continue
+                if self.metadata_admission_blocked(key):break
                 claim=self.claim_verification(key,'windows' if remote else 'server')
                 if not claim:continue
                 sweep_attempt=bool(sweep_candidate and sweep_candidate[1]==key and self.mark_first_sweep_attempt(key))
                 budget=self.g['BUDGET'];previous_sweep_flag=getattr(budget,'first_sweep_attempt',False)
                 previous_attempt_deadline=getattr(budget,'worker_deadline',None)
+                budget.preparation_key=key
                 budget.first_sweep_attempt=sweep_attempt
                 if sweep_attempt:budget.worker_deadline=min(previous_attempt_deadline or time.monotonic()+240,time.monotonic()+240)
                 sweep_outcome='deferred'
@@ -1710,6 +1742,7 @@ class Features:
                         jobs(self.g).count('windows_titles_unavailable')
                 finally:
                     if sweep_attempt:self.finish_first_sweep_attempt(key,sweep_outcome)
+                    budget.preparation_key=None
                     budget.first_sweep_attempt=previous_sweep_flag
                     if sweep_attempt:budget.worker_deadline=previous_attempt_deadline
                     self.release_verification(key,claim)

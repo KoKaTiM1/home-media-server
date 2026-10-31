@@ -721,7 +721,7 @@ proofs and newer manual reports remain protected. Unmarked historical deferrals
 are retained rather than guessed to be metadata-only waits. No Windows package
 update is needed for this server-side scheduling change.
 
-The import timer also fetches at most four missing, explicitly subscribed
+When the preparation pool is disabled, the import timer fetches at most four missing, explicitly subscribed
 metadata prerequisites per run when no helper owns it. A separate per-parent
 schedule prevents duplicate fetches and rotates blocked parents. Ordinary
 provider backoff, metadata lease generations, viewing holds and source cooldowns
@@ -731,3 +731,28 @@ the complete V6 verification path.
 Each result is imported before selecting the next parent, with provider spacing
 between attempts. Empty eligible torrent listings are source-unavailable results
 before Windows dispatch; they do not indicate a decoder failure.
+
+
+### Separate metadata preparation pool
+
+Two server slots fetch missing catalogue metadata continuously, with the existing
+shared three-second provider spacing and provider cooldowns. Background source
+producers queue missing metadata rather than competing to fetch it themselves.
+Each durable receipt is imported before ready work resumes. The eight optional
+Windows verifiers keep their media-verification role; no Windows package update
+is required. Debian also uses the pool when Windows is offline.
+
+Create `metadata-preparation.json` in the private catalogue data directory using
+`metadata-preparation.example.json`. Defaults are two slots, an admission high
+watermark of 256 distinct metadata parents and a low watermark of 128. A larger
+existing backlog is retained and drained before ordinary missing-metadata
+admission reopens. Cached/resumed work and explicit manual rechecks can continue.
+Catalogue ingestion remains enabled; waiting admission is not a negative check.
+
+Enable `media-metadata-prepare@1.service` and `media-metadata-prepare@2.service`.
+The existing import timer remains enabled for seeding, durable import replay and
+reconciliation, and skips its fetch loop while the pool is enabled. Slot processes
+use per-slot locks and cooperative stop files; systemd retries failures. Playback
+or navigation pauses fetching. OMV shows both slots, outstanding parents,
+metadata-ready resumed titles and admission state separately from V6 passes.
+Metadata fetching does not alter accepted source proofs or media quality rules.

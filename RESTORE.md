@@ -397,3 +397,16 @@ when counts are reduced. Keep source/remote assignment timers and mounted shared
 verification modules in sync during restore; enable the verification guard and the normal producer timers. The guard
 automatically reconciles lookahead producer timers to twice the requested worker
 count, up to 32, while queue guards constrain actual work.
+
+### Restore the separate metadata preparation pool
+
+Copy `deploy/media-stack/catalogue/metadata-preparation.example.json` to
+`metadata-preparation.json` in the private catalogue data directory. Keep the
+metadata coordinator's existing private queue marker/configuration. Install the
+exported `media-metadata-prepare@.service` template, reload systemd, and enable
+instances `media-metadata-prepare@1.service` and
+`media-metadata-prepare@2.service` for the default two-slot configuration.
+Keep `media-metadata-import.timer` enabled for seeding and acknowledged receipt
+replay. With the pool enabled that timer does not run its legacy fetch loop.
+No Windows verifier update is required. Verify both pool heartbeats and admission
+state in OMV after starting the services; preparation completions are not V6 passes.

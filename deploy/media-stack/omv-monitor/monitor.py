@@ -25,6 +25,8 @@ JOBS=[
  ('media-catalogue-collections','Jellyfin collections','Every 30 minutes'),
  ('media-cleanup','Download retention cleanup','Hourly'),
  ('media-worker-status','Worker status counters','1 minute after previous snapshot'),
+ ('media-metadata-prepare@1','Metadata preparation slot 1','Continuous; shared provider spacing and playback guard'),
+ ('media-metadata-prepare@2','Metadata preparation slot 2','Continuous; shared provider spacing and playback guard'),
 ]
 PROPS='Id,ActiveState,SubState,Result,ExecMainStatus,ExecMainStartTimestamp,ExecMainExitTimestamp,InactiveEnterTimestamp,LastTriggerUSec,NextElapseUSecRealtime,NextElapseUSecMonotonic,UnitFileState'
 
@@ -38,7 +40,7 @@ def span(seconds):
     return f'{seconds//3600}h {(seconds%3600)//60}m'
 
 def systemd():
-    units=[base+suffix for base,_,_ in JOBS for suffix in (('.service',) if base=='media-verification-coordinator' else ('.service','.timer'))]
+    units=[base+suffix for base,_,_ in JOBS for suffix in (('.service',) if base=='media-verification-coordinator' or base.startswith('media-metadata-prepare@') else ('.service','.timer'))]
     run=subprocess.run(['systemctl','show',*units,'--property='+PROPS],capture_output=True,text=True,timeout=8,check=True)
     result={}
     for block in run.stdout.strip().split('\n\n'):
@@ -186,6 +188,18 @@ def counts(data=DATA,refresh=False):
             if speed.get('pending',0):
                 for status,status_label in [('pending','awaiting check'),('passed','passed'),('failed','failed')]:
                     add('V6 speed audit — '+status_label,speed.get(status,0),'A failed fresh check updates current availability; retries remain scheduled')
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE name='metadata_preparation_workers'").fetchone():
+            pool=conn.execute('SELECT slot,heartbeat,phase FROM metadata_preparation_workers').fetchall()
+            online=sum(row[1]>time.time()-20 for row in pool)
+            active=sum(row[1]>time.time()-20 and row[2]=='fetching metadata' for row in pool)
+            pending=conn.execute("SELECT count(*) FROM (SELECT metadata_key FROM verification_metadata_dependencies WHERE state='waiting' UNION SELECT metadata_key FROM metadata_preparation_requests)").fetchone()[0]
+            ready=conn.execute("SELECT count(*) FROM verification_metadata_dependencies WHERE state='resumed'").fetchone()[0]
+            paused=conn.execute("SELECT value FROM metadata_preparation_control WHERE key='paused'").fetchone()
+            empty=conn.execute("SELECT count(*) FROM validation WHERE reason IN ('EmptyTorrentCandidates','Source preparation failed (EmptyTorrentCandidates)')").fetchone()[0]
+            add('Empty torrent candidate listings',empty,'No eligible source was available for dispatch; separate from failed media decoding')
+            summary.update(empty_torrent_listings=empty,metadata_pool_online=online,metadata_pool_fetching=active,metadata_pool_pending=pending,metadata_pool_ready=ready,metadata_admission_paused=bool(paused and paused[0]))
+            add('Metadata preparation pool',online,f'{active} fetching; {pending} outstanding parents; {ready} resumed titles')
+            add('New metadata admission','Paused' if paused and paused[0] else 'Open','Existing catalogue and waiting work are retained; ready titles continue')
         if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='verification_sweeps'").fetchone():
             sweep=conn.execute('SELECT id,started,baseline_total,completed FROM verification_sweeps ORDER BY id DESC LIMIT 1').fetchone()
             if sweep:
@@ -315,6 +329,9 @@ def overview(data=DATA,snapshot=None):
             detail+=f"{values.get('first_sweep_deferred',0):,} deferred; {values.get('first_sweep_remaining',0):,} not completed"
             add('Initial V6 first sweep',f"{values.get('first_sweep_attempted',0):,} / {values['first_sweep_total']:,}",detail+('; complete' if values.get('first_sweep_complete') else ''))
             add('Waiting for catalogue metadata',f"{values.get('first_sweep_metadata_wait',0):,}",'Prerequisite waits; source verification has not finished')
+        if 'metadata_pool_online' in values:
+            add('Metadata preparation pool',str(values['metadata_pool_online'])+' online',str(values.get('metadata_pool_fetching',0))+' fetching; '+str(values.get('metadata_pool_pending',0))+' outstanding parents; '+str(values.get('metadata_pool_ready',0))+' resumed titles')
+            add('New metadata admission','Paused' if values.get('metadata_admission_paused') else 'Open','Existing catalogue is retained; cached and resumed work continues')
         add('V6 passes in last hour',f"{values.get('v6_hour',0):,}",'Latest V6 verified state per title; not a count of decoder operations','success')
     updated=stamp(now)
     queue=data.parent/'verification-worker/queue.sqlite'

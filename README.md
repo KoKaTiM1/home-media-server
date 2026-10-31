@@ -158,3 +158,11 @@ The backup checkout also has a pre-push check for the exact committed tree.
 See [tests/README.md](tests/README.md) for the container runner, coverage,
 private local reports, and remote-commit watcher. A failure blocks publication;
 passing tests does not replace physical TV acceptance or approve a PR.
+
+Catalogue metadata preparation uses a separate two-slot server pool. Background
+source preparation queues missing metadata; the pool shares provider spacing and
+imports results before verification resumes. Admission pauses at 256 outstanding
+metadata parents and reopens at 128, retaining larger existing backlogs. Optional
+Windows workers remain available for full V6 media checks. OMV shows preparation
+health and admission separately from verification passes. See the catalogue guide
+and restore instructions for the private configuration and systemd units.

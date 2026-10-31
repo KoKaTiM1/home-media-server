@@ -472,6 +472,48 @@ def signed_path(route,key):
     return f'{BASE}/{route}/{U.quote(key,safe=":")}?sig={signature(key)}'
 
 
+def metadata_pool_config():
+    defaults={'enabled':False,'concurrency':2,'high':256,'low':128}
+    try:values=json.loads((DATA/'metadata-preparation.json').read_text())
+    except FileNotFoundError:return defaults
+    cfg={**defaults,**values}
+    if type(cfg['enabled']) is not bool or not 1<=cfg['concurrency']<=4 or not 0<cfg['low']<cfg['high']<=4096:
+        raise ValueError('Invalid preparation pool configuration')
+    return cfg
+
+
+def metadata_prepare(slot):
+    stop=DATA/('metadata-prepare-'+str(slot)+'.stop')
+    with (DATA/('metadata-prepare-'+str(slot)+'.lock')).open('a') as lock:
+        try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError:return
+        stop.unlink(missing_ok=True);next_session=0;busy=True
+        while not stop.exists():
+            cfg=metadata_pool_config()
+            if not cfg['enabled'] or slot>cfg['concurrency']:return
+            phase='idle'
+            try:
+                if time.monotonic()>=next_session:
+                    busy=F.foreground_busy() or any(x.get('NowPlayingItem') for x in jf('/Sessions',timeout=1))
+                    next_session=time.monotonic()+5
+                if busy or F.foreground_busy():phase='playback pause'
+                else:
+                    metadata_import()
+                    F.resume_metadata_dependencies()
+                    with F.db() as conn:conn.execute('INSERT OR REPLACE INTO metadata_preparation_workers VALUES (?,?,?)',(slot,time.time(),'fetching metadata'))
+                    fetched=fetch_waiting_metadata(metadata_coordinator(DATA))
+                    metadata_import()
+                    phase='metadata imported' if fetched else 'provider or queue wait'
+            except Exception as error:
+                phase='retry '+type(error).__name__
+                log('Metadata pool checkpoint '+type(error).__name__)
+                next_session=0
+            with F.db() as conn:
+                conn.execute('INSERT OR REPLACE INTO metadata_preparation_workers VALUES (?,?,?)',(slot,time.time(),phase))
+            time.sleep(1)
+        with F.db() as conn:conn.execute('DELETE FROM metadata_preparation_workers WHERE slot=?',(slot,))
+
+
 def metadata(kind,imdb):
     key=f'meta:{kind}:{imdb}'
     saved=cached(key)
@@ -482,6 +524,9 @@ def metadata(kind,imdb):
         saved=cached(key)
     if saved is None and jobs and getattr(BUDGET,'metadata_background',False):
         jobs.enqueue([(kind,imdb,2000)])
+        if metadata_pool_config()['enabled'] and getattr(BUDGET,'preparation_key',None):
+            F.metadata_admission_blocked(BUDGET.preparation_key)
+            raise MetadataPending('Metadata queued for preparation pool')
         lease=jobs.claim('server','server',kind,imdb)
         if lease is None:
             with F.db() as conn:
@@ -527,22 +572,26 @@ def metadata(kind,imdb):
 def fetch_waiting_metadata(jobs):
     """One prerequisite, with ordinary provider/lease fences."""
     now=time.time()
+    if metadata_pool_config()['enabled']:
+        with jobs.db() as provider:
+            if max(jobs.value(provider,'provider_after'),jobs.value(provider,'provider_slot'))>now:return False
     with F.db() as conn:
-        if not conn.execute("SELECT 1 FROM verification_metadata_dependencies WHERE state='waiting' LIMIT 1").fetchone():return None
+        if not conn.execute("SELECT 1 FROM verification_metadata_dependencies WHERE state='waiting' LIMIT 1").fetchone() and not conn.execute('SELECT 1 FROM metadata_preparation_requests LIMIT 1').fetchone():return None
         conn.execute('BEGIN IMMEDIATE')
-        row=conn.execute("""SELECT d.metadata_key FROM verification_metadata_dependencies d
+        conn.execute("DELETE FROM metadata_preparation_requests WHERE NOT EXISTS(SELECT 1 FROM validation v WHERE v.key=metadata_preparation_requests.key AND v.checked=metadata_preparation_requests.validation_checked AND v.state!='downloaded')")
+        row=conn.execute("""SELECT d.metadata_key FROM (
+                SELECT key,metadata_key,waiting,validation_checked FROM verification_metadata_dependencies WHERE state='waiting'
+                UNION ALL SELECT key,metadata_key,created,validation_checked FROM metadata_preparation_requests
+            ) d
             LEFT JOIN verification_metadata_fetch f ON f.metadata_key=d.metadata_key
-            JOIN verification_sweep_attempts a ON a.sweep_id=d.sweep_id AND a.key=d.key
             JOIN validation v ON v.key=d.key
-            WHERE d.state='waiting' AND a.outcome='metadata_wait'
-            AND v.checked=d.validation_checked AND v.state!='downloaded'
-            AND NOT(v.state='verified' AND COALESCE(json_extract(v.proof,'$.version'),0)>=6)
+            WHERE v.checked=d.validation_checked AND v.state!='downloaded'
             AND COALESCE(f.next_fetch,0)<=?
             AND NOT EXISTS(SELECT 1 FROM cache c WHERE c.key=d.metadata_key AND c.expires>?)
             AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE (h.key=d.key OR h.key=substr(d.metadata_key,6)) AND h.expires>?)
             AND NOT EXISTS(SELECT 1 FROM verification_retry_waits r WHERE (r.key=d.key OR r.key=substr(d.metadata_key,6)) AND r.next_retry>?)
             AND NOT EXISTS(SELECT 1 FROM preparation_work p WHERE p.key=substr(d.metadata_key,6))
-            ORDER BY COALESCE(f.next_fetch,0),d.waiting LIMIT 1""",(now,now,now,now)).fetchone()
+            ORDER BY CASE WHEN EXISTS(SELECT 1 FROM manual_rechecks m WHERE m.key=d.key AND m.status='pending') THEN 0 WHEN COALESCE(json_extract(v.proof,'$.version'),0)=5 THEN 1 ELSE 2 END,COALESCE(f.next_fetch,0),d.waiting LIMIT 1""",(now,now,now,now)).fetchone()
         if not row:return None
         meta=row[0]
         # Separate from readiness polling; concurrent timer invocations cannot
@@ -553,7 +602,9 @@ def fetch_waiting_metadata(jobs):
     jobs.enqueue([(kind,imdb,2000)])
     try:lease=jobs.claim('server',worker,kind,imdb)
     except MetadataBusy:return None
-    if lease is None:return False
+    if lease is None:
+        with F.db() as conn:conn.execute('UPDATE verification_metadata_fetch SET next_fetch=? WHERE metadata_key=? AND next_fetch=?',(now+3,meta,now+120))
+        return False
     previous=getattr(BUDGET,'metadata_background',False)
     BUDGET.metadata_background=True
     try:
@@ -575,7 +626,7 @@ def metadata_import(limit=20,key=None,seed=False):
     jobs=metadata_coordinator(DATA)
     if not jobs:return 0
     applied=0
-    if seed:
+    if seed and not metadata_pool_config()['enabled']:
         # Bound the run below the service timeout; each claim still reserves
         # the shared provider slot. Import before selecting another parent.
         for position in range(4):
@@ -586,6 +637,7 @@ def metadata_import(limit=20,key=None,seed=False):
             if not fetched:
                 provider=jobs.status()
                 if not provider.get('enabled') or provider.get('provider_after',0)>time.time():break
+    if seed:
         jobs.seed(DATA/'catalogue.sqlite')
         with F.db() as conn:conn.execute('DELETE FROM metadata_waits WHERE expires<?',(time.time()-3600,))
     for receipt in jobs.pending_imports(limit=limit,key=key):
@@ -608,6 +660,7 @@ def metadata_import(limit=20,key=None,seed=False):
             has_preparation=bool(conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='preparation_work'").fetchone())
             if not has_preparation or not conn.execute('SELECT 1 FROM preparation_work WHERE key=?',(parent,)).fetchone():
                 conn.execute('DELETE FROM metadata_waits WHERE key=? AND NOT EXISTS(SELECT 1 FROM verification_retry_waits WHERE key=?)',(parent,parent))
+            conn.execute('DELETE FROM metadata_preparation_requests WHERE metadata_key=?',('meta:'+parent,))
             F.resume_metadata_dependencies(conn,'meta:'+kind+':'+imdb)
         # If interrupted between these databases, the cache expiry comparison
         # makes replay a no-op; native import/watch state is never changed here.
@@ -2026,13 +2079,16 @@ def main():
     # its native metadata and downloaded sidecar subtitles beside STRM files.
     os.umask(0o002)
     parser=argparse.ArgumentParser()
-    parser.add_argument('command',choices=('serve','sync','collections','badges','trailers','discovery-sync','availability','downloads','imdb-sync','metadata-import','remote-availability','embedded-subtitles','hebrew-metadata','torrent-metadata','russian-audio'),default='serve',nargs='?')
+    parser.add_argument('command',choices=('serve','sync','collections','badges','trailers','discovery-sync','availability','downloads','imdb-sync','metadata-import','metadata-prepare','metadata-prepare-stop','remote-availability','embedded-subtitles','hebrew-metadata','torrent-metadata','russian-audio'),default='serve',nargs='?')
     parser.add_argument('--movies',type=int,default=1000)
     parser.add_argument('--shows',type=int,default=200)
     parser.add_argument('--slot',type=int,choices=range(1,33),default=1)
     parser.add_argument('--limit',type=int,default=8)
     args=parser.parse_args()
     BUDGET.metadata_background=args.command!='serve'
+    if args.command=='metadata-prepare-stop':
+        (DATA/('metadata-prepare-'+str(args.slot)+'.stop')).touch();return
+    if args.command=='metadata-prepare':return metadata_prepare(args.slot)
     if args.command=='metadata-import':
         log('LAN metadata imports applied: '+str(metadata_import(seed=True)))
         return

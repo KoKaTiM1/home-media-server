@@ -1,0 +1,16 @@
+[Unit]
+Description=Catalogue metadata preparation slot %i
+Requires=media-stack.service
+After=media-stack.service
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/docker exec catalogue-bridge python /app/app.py metadata-prepare --slot %i
+ExecStop=-/usr/bin/docker exec catalogue-bridge python /app/app.py metadata-prepare-stop --slot %i
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+Nice=15
+
+[Install]
+WantedBy=multi-user.target

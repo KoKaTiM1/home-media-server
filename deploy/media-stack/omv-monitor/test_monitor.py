@@ -148,6 +148,18 @@ class MonitorTests(unittest.TestCase):
             self.assertIn('transport',values['Latest PC operation issue']['detail'])
             self.assertNotIn('private-signed-url',str(rows))
 
+    def test_preparation_pool_and_admission_are_separate_from_v6_passes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);data=root/'catalogue';data.mkdir()
+            snapshot=root/'snapshot.json';snapshot.write_text(json.dumps({'time':time.time(),'summary':{
+                'total':100,'v6':3,'metadata_pool_online':2,'metadata_pool_fetching':1,
+                'metadata_pool_pending':400,'metadata_pool_ready':5,'metadata_admission_paused':True}}))
+            with patch.object(m,'context',return_value={}):rows=m.overview(data,snapshot)
+            values={r['name']:r['value'] for r in rows}
+            self.assertEqual(values['Metadata preparation pool'],'2 online')
+            self.assertEqual(values['New metadata admission'],'Paused')
+            self.assertEqual(values['V6 verified sources'],'3')
+
     def test_metadata_wait_is_visible_without_counting_as_finished_verification(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);data=root/'catalogue';data.mkdir()
