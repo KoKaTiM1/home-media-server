@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-10-31T19:35:53.771014+00:00",
+  "created_utc": "2026-10-31T19:39:11.473254+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -18,7 +18,7 @@
     "deploy/media-stack/README.md": "0562a802954db8056d28f204d12d62d757f605e1e9f79f428bcffd50345c56d1",
     "deploy/media-stack/catalogue/Dockerfile": "ce04557b530984de2b95ed30eb584ae460c2d9bd75067b3f5d19f6afba0ac730",
     "deploy/media-stack/catalogue/README.md": "799f922a7c05030d5e82df84663bd1b9b45485618a51aab92a4a21a5d1e346d1",
-    "deploy/media-stack/catalogue/app.py": "da9db96e8340d892f5744f2b32e8850ac796a90c125015bfc291168691b1bfa0",
+    "deploy/media-stack/catalogue/app.py": "1069f320db10a5ec7fb653d84067a8f803091f4336488bc1d1e9a571704951e0",
     "deploy/media-stack/catalogue/bootstrap.py": "002cb58a203f36b9ee66d83900cf939a273e73e75637dfd8b342a67b48edfad9",
     "deploy/media-stack/catalogue/check_audio_conversion.py": "669463dd9be988b0becf34db0014739e559e2f1fa6c350be11d5dd4a81c4a899",
     "deploy/media-stack/catalogue/check_audio_subtitles.py": "f89e81cd25fa7767dddef438e63e8155a92e8689e5aeeaf5e27af306ed4eb02f",
@@ -51,7 +51,7 @@
     "deploy/media-stack/catalogue/test_metadata_resume.py": "80ae58ed103826f0921b9b87cfa108cc74a952f652108c5c6360c91f00feace5",
     "deploy/media-stack/catalogue/test_multi_subtitles.py": "5a0d8e7c6d0fdd99e00448ab6f7f8612c986db2280078ec7ea47584861791366",
     "deploy/media-stack/catalogue/test_playback_deadlines.py": "82dfa592a697d2eabde631908bb7acdbb4701b3afc04cbf46b2b2bc63f169613",
-    "deploy/media-stack/catalogue/test_preparation_pool.py": "5bc61a8ded1df1bcd35faa72e2df15fbacb19db625b1f576e17b9fa3f7c3f48d",
+    "deploy/media-stack/catalogue/test_preparation_pool.py": "f0611c5aa531b62d2f1227cb46ee114e911cd4195be845203b827244bc86853e",
     "deploy/media-stack/catalogue/test_recheck.py": "dbf72ed5627f444ac83152df11ddf3b389531a6a882058e9fcf834251dac64f1",
     "deploy/media-stack/catalogue/test_reliability.py": "61327d2462991ac4accfb2520c43924e1c2dabbe517a614bb6466204821f051b",
     "deploy/media-stack/catalogue/test_russian_audio.py": "708f3a496191b77d615df79ace9650bb7372fc62267f983bc538bd9e3cad0774",
@@ -154,7 +154,7 @@
     "deploy/systemd/media-metadata-coordinator.service": "7014e7ddb59a104780707711a62a7db531db3be8b8c6e3a15d133db7f0060795",
     "deploy/systemd/media-metadata-import.service": "d79df28dd3c634f0a677f87456371aa27804a7a4b73252b9c41d58b622d73c99",
     "deploy/systemd/media-metadata-import.timer": "5c25f77151d5263bb9ac9d97f3788814786a093bcd9a36c87e81a54a5f0b42cb",
-    "deploy/systemd/media-metadata-prepare@.service": "4e6e89255c04a021c2f835b54f864b0cf7cc9916832da4f311dc1ea74b0c0e6a",
+    "deploy/systemd/media-metadata-prepare@.service": "7fdd7f57f5476eec9ba67f94ed1ba9cd107b8c0d5c5e6311d2d609d592f2226d",
     "deploy/systemd/media-regression-watch.service": "415723dbfc7a30beeb5c8be03570113ae8db853cdc2c8b6ab8ef3e4f38cfcaba",
     "deploy/systemd/media-regression-watch.timer": "7ab45f60dfb08c6ca14ff31a54b27bc7ecf72262d1a65d58ae12d36002a04656",
     "deploy/systemd/media-remote-availability-2.service": "851b1637dcf6c5601cc1b0b109a1a26861f7b6c9bf8082299f81b0fa0bada366",

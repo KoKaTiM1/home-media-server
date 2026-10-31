@@ -482,11 +482,22 @@ def metadata_pool_config():
     return cfg
 
 
+def metadata_prepare_stop(slot):
+    (DATA/('metadata-prepare-'+str(slot)+'.stop')).touch()
+    deadline=time.monotonic()+30
+    with (DATA/('metadata-prepare-'+str(slot)+'.lock')).open('a') as lock:
+        while True:
+            try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB);return
+            except BlockingIOError:
+                if time.monotonic()>=deadline:raise RuntimeError('Metadata preparation stop is still pending') from None
+                time.sleep(.1)
+
+
 def metadata_prepare(slot):
     stop=DATA/('metadata-prepare-'+str(slot)+'.stop')
     with (DATA/('metadata-prepare-'+str(slot)+'.lock')).open('a') as lock:
         try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        except BlockingIOError:return
+        except BlockingIOError:raise RuntimeError('Metadata preparation slot is still stopping') from None
         stop.unlink(missing_ok=True);next_session=0;busy=True
         while not stop.exists():
             cfg=metadata_pool_config()
@@ -2096,7 +2107,7 @@ def main():
     args=parser.parse_args()
     BUDGET.metadata_background=args.command!='serve'
     if args.command=='metadata-prepare-stop':
-        (DATA/('metadata-prepare-'+str(args.slot)+'.stop')).touch();return
+        return metadata_prepare_stop(args.slot)
     if args.command=='metadata-prepare':return metadata_prepare(args.slot)
     if args.command=='metadata-import':
         log('LAN metadata imports applied: '+str(metadata_import(seed=True)))

@@ -9,7 +9,7 @@ ExecStart=/usr/bin/docker exec catalogue-bridge python /app/app.py metadata-prep
 ExecStop=-/usr/bin/docker exec catalogue-bridge python /app/app.py metadata-prepare-stop --slot %i
 Restart=on-failure
 RestartSec=5
-TimeoutStopSec=20
+TimeoutStopSec=45
 Nice=15
 
 [Install]

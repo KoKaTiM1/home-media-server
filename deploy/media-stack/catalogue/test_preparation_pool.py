@@ -177,3 +177,28 @@ class PoolTests(unittest.TestCase):
         with app.F.db() as c:
             self.assertEqual(c.execute('SELECT state FROM validation').fetchone()[0],'downloaded')
             self.assertEqual(c.execute('SELECT outcome FROM verification_sweep_attempts').fetchone()[0],'deferred')
+
+    def test_stop_waits_for_old_slot_lock_before_restart(self):
+        import threading,fcntl
+        locked=threading.Event();finished=threading.Event()
+        def old_worker():
+            with (app.DATA/'metadata-prepare-1.lock').open('a') as lock:
+                fcntl.flock(lock,fcntl.LOCK_EX);locked.set()
+                until=time.monotonic()+3
+                while not (app.DATA/'metadata-prepare-1.stop').exists():
+                    if time.monotonic()>until:return
+                    time.sleep(.01)
+                time.sleep(.15)
+            finished.set()
+        thread=threading.Thread(target=old_worker);thread.start();self.assertTrue(locked.wait(2))
+        try:
+            app.metadata_prepare_stop(1)
+            self.assertTrue(finished.wait(.1))
+        finally:thread.join(4)
+    def test_busy_slot_fails_for_supervisor_retry_and_retains_stop_flag(self):
+        import fcntl
+        stop=app.DATA/'metadata-prepare-1.stop';stop.touch()
+        with (app.DATA/'metadata-prepare-1.lock').open('a') as lock:
+            fcntl.flock(lock,fcntl.LOCK_EX)
+            with self.assertRaises(RuntimeError):app.metadata_prepare(1)
+        self.assertTrue(stop.exists())
