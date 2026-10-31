@@ -525,6 +525,7 @@ def fetch_waiting_metadata(jobs):
     """One prerequisite per timer run, with ordinary provider/lease fences."""
     now=time.time()
     with F.db() as conn:
+        if not conn.execute("SELECT 1 FROM verification_metadata_dependencies WHERE state='waiting' LIMIT 1").fetchone():return False
         conn.execute('BEGIN IMMEDIATE')
         row=conn.execute("""SELECT d.metadata_key FROM verification_metadata_dependencies d
             LEFT JOIN verification_metadata_fetch f ON f.metadata_key=d.metadata_key

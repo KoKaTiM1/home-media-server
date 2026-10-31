@@ -110,6 +110,10 @@ class MetadataResumeTests(unittest.TestCase):
         app.metadata_import();self.assertEqual(self.outcome(),'queued')
         with app.F.db() as c:self.assertEqual(json.loads(c.execute('SELECT proof FROM validation').fetchone()[0]),{'version':5})
 
+    def test_empty_dependency_queue_does_not_require_preparation_schema(self):
+        with patch.object(app,'fetch',side_effect=AssertionError('no subscribed work')):
+            self.assertFalse(app.fetch_waiting_metadata(self.jobs))
+
     def test_claim_and_hold_block_resume_then_poll_recovers(self):
         token=self.wait(release=False);self.submit();app.metadata_import()
         self.assertEqual(self.outcome(),'metadata_wait')

@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-10-31T17:52:01.315386+00:00",
+  "created_utc": "2026-10-31T17:54:46.857685+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -18,7 +18,7 @@
     "deploy/media-stack/README.md": "0562a802954db8056d28f204d12d62d757f605e1e9f79f428bcffd50345c56d1",
     "deploy/media-stack/catalogue/Dockerfile": "ce04557b530984de2b95ed30eb584ae460c2d9bd75067b3f5d19f6afba0ac730",
     "deploy/media-stack/catalogue/README.md": "01fa0bb129349271aff82125656a60cdff2b703da30be841b921710dbdc1fc2d",
-    "deploy/media-stack/catalogue/app.py": "9622b0d35a26bd1032eea3e3a79037ffaa6af4d6b1be73af831630965c6cb6c3",
+    "deploy/media-stack/catalogue/app.py": "4852f6d0e5e7418d54242d83c1872044adedb3bbb97547fcf391eca73c1913bb",
     "deploy/media-stack/catalogue/bootstrap.py": "002cb58a203f36b9ee66d83900cf939a273e73e75637dfd8b342a67b48edfad9",
     "deploy/media-stack/catalogue/check_audio_conversion.py": "669463dd9be988b0becf34db0014739e559e2f1fa6c350be11d5dd4a81c4a899",
     "deploy/media-stack/catalogue/check_audio_subtitles.py": "f89e81cd25fa7767dddef438e63e8155a92e8689e5aeeaf5e27af306ed4eb02f",
@@ -47,7 +47,7 @@
     "deploy/media-stack/catalogue/test_foreground_cleanup.py": "6975a968ad02298d6e2913daf5d271ad4b4e3f1efd8f68193d718917a3069db0",
     "deploy/media-stack/catalogue/test_holds.py": "0c07366ec2a7c3b57452b0951446ccabab45991bdb293353e002f2d3e1d0790a",
     "deploy/media-stack/catalogue/test_metadata_lan.py": "c79b79dddae4931b2306df9d9d55b1ae6343f080955b37371899f580c68d6674",
-    "deploy/media-stack/catalogue/test_metadata_resume.py": "e2609f4e9e5c3004c24ff80b9a0d8ae68c32d83721ce33199135c72ec662d741",
+    "deploy/media-stack/catalogue/test_metadata_resume.py": "fc6e3be92f481c001a19b2006d66192d03da549f343b0f53cbbfdaad882b0823",
     "deploy/media-stack/catalogue/test_multi_subtitles.py": "5a0d8e7c6d0fdd99e00448ab6f7f8612c986db2280078ec7ea47584861791366",
     "deploy/media-stack/catalogue/test_playback_deadlines.py": "82dfa592a697d2eabde631908bb7acdbb4701b3afc04cbf46b2b2bc63f169613",
     "deploy/media-stack/catalogue/test_recheck.py": "dbf72ed5627f444ac83152df11ddf3b389531a6a882058e9fcf834251dac64f1",
