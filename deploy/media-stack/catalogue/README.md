@@ -759,3 +759,5 @@ Metadata fetching does not alter accepted source proofs or media quality rules.
 
 After four preparation request starts, the pool leaves one three-second provider
 slot for catalogue-page callers. Shared provider cooldown remains authoritative.
+
+Background source searches share a process lock and five-second spacing. HTTP 429 and server errors set a source-provider cooldown; longer numeric Retry-After values are honored. After expiry one request tests recovery before the next request can start. Waiting for pacing retains the same queued first-sweep attempt and source proof. Cached source choices remain usable during a source-search cooldown after any legacy global cooldown has expired. Metadata preparation retains its separate provider budget. Safe logs include HTTP status without upstream URLs or credentials.

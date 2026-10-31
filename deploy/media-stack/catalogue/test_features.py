@@ -233,11 +233,13 @@ class FeatureTests(unittest.TestCase):
         self.make_search_index()
         key='movie:tt1234567';a.F.enqueue(key,100)
         error=urllib.error.HTTPError('https://example.invalid',429,'Rate limited',{},None)
-        with patch.object(a.F,'jf',return_value=[]),patch.object(a,'prepared',side_effect=error) as prepare:
+        def source_request(*args,**kwargs):return a.fetch(a.PROVIDER+'/stream/movie/tt1234567.json')
+        with patch.object(a.F,'jf',return_value=[]),patch.object(a,'prepared',side_effect=source_request),patch.object(a,'fetch_raw',side_effect=error) as request:
             a.F.warm_availability(1)
-            self.assertTrue(a.cached('validation-provider-backoff'))
+            self.assertEqual(a.cached('source-provider-control')['status'],429)
+            self.assertIsNone(a.cached('validation-provider-backoff'))
             a.F.warm_availability(1)
-            self.assertEqual(prepare.call_count,1)
+            self.assertEqual(request.call_count,1)
         self.assertEqual(a.F.source_state(key),'pending')
 
     def test_null_release_date_search_queues_once_and_caches_provider_response(self):

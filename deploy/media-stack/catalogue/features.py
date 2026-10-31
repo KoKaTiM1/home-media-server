@@ -1688,6 +1688,15 @@ class Features:
                     # A lease held by the metadata PC is a scheduling wait, not
                     # a source failure. Its short SQL exclusion lets this batch
                     # continue checking other titles rather than stalling.
+                    source_wait=self.g.get('SourceProviderWait')
+                    if source_wait and isinstance(error,source_wait):
+                        if sweep_attempt:
+                            with self.db() as conn:
+                                conn.execute("UPDATE verification_sweep_attempts SET outcome='queued',started=0,finished=0 WHERE key=? AND outcome='started' AND sweep_id=(SELECT max(id) FROM verification_sweeps)",(key,))
+                            sweep_attempt=False
+                            budget.worker_deadline=previous_attempt_deadline
+                        self.remember(worker_key,{'message':'Source provider pacing or cooldown; queue retained','started':time.time()},180)
+                        break
                     pending=self.g.get('MetadataPending')
                     if pending and isinstance(error,pending):
                         if sweep_attempt:self.wait_for_metadata(key)
@@ -1727,7 +1736,7 @@ class Features:
                         self.remember(worker_key,{'message':'Work checkpointed; resumes after foreground activity or next batch','started':time.time(),'batch':batch_number},180)
                         break
                     if isinstance(error,urllib.error.HTTPError) and (error.code==429 or error.code>=500):
-                        self.remember('validation-provider-backoff',True,900 if error.code==429 else 300)
+                        # Provider-specific requests own their shared cooldown in fetch().
                         self.log('Validation paused for source provider cooldown')
                         break
                     from reliability import SourceFailure

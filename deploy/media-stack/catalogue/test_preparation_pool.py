@@ -202,3 +202,60 @@ class PoolTests(unittest.TestCase):
             fcntl.flock(lock,fcntl.LOCK_EX)
             with self.assertRaises(RuntimeError):app.metadata_prepare(1)
         self.assertTrue(stop.exists())
+
+class SourcePacingTests(unittest.TestCase):
+    def setUp(self):fixtures.ImportTests.setUp(self)
+    def tearDown(self):fixtures.ImportTests.tearDown(self)
+    def test_concurrent_producer_cannot_issue_second_request(self):
+        import threading
+        entered=threading.Event();release=threading.Event();errors=[]
+        def request():
+            try:
+                with app.source_provider_slot():entered.set();release.wait(5)
+            except Exception as error:errors.append(type(error).__name__)
+        thread=threading.Thread(target=request);thread.start()
+        try:
+            self.assertTrue(entered.wait(2))
+            with self.assertRaises(app.Checkpoint):
+                with app.source_provider_slot():self.fail('Concurrent upstream call')
+        finally:release.set();thread.join(5)
+        self.assertEqual(errors,[])
+        with self.assertRaises(app.Checkpoint):
+            with app.source_provider_slot():self.fail('Missing pacing delay')
+    def test_rate_limit_has_one_recovery_request_and_preserves_retry_after(self):
+        import urllib.error
+        from email.message import Message
+        headers=Message();headers['Retry-After']='1200'
+        with patch.object(app.time,'time',return_value=1000):
+            with self.assertRaises(urllib.error.HTTPError):
+                with app.source_provider_slot():raise urllib.error.HTTPError('https://example.invalid',429,'limited',headers,None)
+            state=app.cached('source-provider-control');self.assertEqual(state['cooldown'],2200)
+        with patch.object(app.time,'time',return_value=2199):
+            with self.assertRaises(app.Checkpoint):
+                with app.source_provider_slot():self.fail('Cooldown bypassed')
+        with patch.object(app.time,'time',return_value=2201):
+            with app.source_provider_slot():pass
+            with self.assertRaises(app.Checkpoint):
+                with app.source_provider_slot():self.fail('Recovery burst')
+    def test_metadata_request_does_not_use_source_gate(self):
+        with patch.object(app,'source_provider_slot',side_effect=AssertionError('wrong provider')),patch.object(app,'fetch_raw',return_value={'ok':True}):
+            self.assertEqual(app.fetch('https://v3-cinemeta.strem.io/meta/movie/tt0000001.json'),{'ok':True})
+    def test_pacing_wait_keeps_first_sweep_queued(self):
+        app.REL.db().close()
+        app.F.start_verification_sweep()
+        with app.F.db() as c:
+            c.execute("INSERT OR REPLACE INTO verification_sweep_attempts(sweep_id,key,started,outcome) VALUES (1,?,0,'queued')",(KEY,))
+        from contextlib import ExitStack
+        with ExitStack() as stack:
+            for name in ('seed_validation','repair_cached_series'):
+                stack.enter_context(patch.object(app.F,name))
+            stack.enter_context(patch.object(app.REL,'schedule'))
+            stack.enter_context(patch.object(app.F,'foreground_busy',return_value=False))
+            stack.enter_context(patch.object(app.F,'jf',return_value=[]))
+            stack.enter_context(patch.object(app.F,'first_sweep_candidate',return_value=((1,KEY),True)))
+            stack.enter_context(patch.object(app.F,'metadata_admission_blocked',return_value=False))
+            stack.enter_context(patch.object(app,'prepared',side_effect=app.SourceProviderWait('Source provider request deferred')))
+            app.F.warm_availability(limit=1)
+        with app.F.db() as c:
+            self.assertEqual(tuple(c.execute('SELECT outcome,finished FROM verification_sweep_attempts WHERE key=?',(KEY,)).fetchone()),('queued',0))
+            self.assertEqual(c.execute('SELECT count(*) FROM verification_claims').fetchone()[0],0)

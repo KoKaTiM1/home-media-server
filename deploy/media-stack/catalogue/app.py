@@ -220,7 +220,44 @@ def remember(key, value, ttl):
     return value
 
 
+class SourceProviderWait(Checkpoint):
+    pass
+
+
+@contextmanager
+def source_provider_slot():
+    # Cross-process ownership includes the response, so expiry permits one
+    # recovery request and never a simultaneous producer burst.
+    with (DATA/'source-provider.lock').open('a') as lock:
+        try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError:raise SourceProviderWait('Source provider request already active') from None
+        state=cached('source-provider-control') or {}
+        if max(state.get('next',0),state.get('cooldown',0))>time.time():
+            raise SourceProviderWait('Source provider request deferred')
+        try:
+            yield
+        except urllib.error.HTTPError as error:
+            if error.code==429 or error.code>=500:
+                seconds=900 if error.code==429 else 300
+                try:seconds=max(seconds,min(86400,int(error.headers.get('Retry-After','0'))))
+                except (ValueError,TypeError,AttributeError):pass
+                remember('source-provider-control',{'next':time.time()+5,'cooldown':time.time()+seconds,'status':error.code},max(90000,seconds+60))
+                log('Source provider cooldown HTTP '+str(error.code))
+            raise
+        finally:
+            state=cached('source-provider-control') or {}
+            state['next']=time.time()+5
+            remember('source-provider-control',state,90000)
+
+
 def fetch(url, data=None, headers=None, timeout=20, raw=False, method=None):
+    if U.urlsplit(url).hostname==U.urlsplit(PROVIDER).hostname:
+        with source_provider_slot():
+            return fetch_raw(url,data,headers,timeout,raw,method)
+    return fetch_raw(url,data,headers,timeout,raw,method)
+
+
+def fetch_raw(url, data=None, headers=None, timeout=20, raw=False, method=None):
     # Background catalogue-page requests share the helper's provider budget.
     # Per-title metadata calls have already reserved their slot with a lease.
     parsed=U.urlsplit(url)
