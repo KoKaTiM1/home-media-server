@@ -528,7 +528,7 @@ def fetch_waiting_metadata(jobs):
     """One prerequisite, with ordinary provider/lease fences."""
     now=time.time()
     with F.db() as conn:
-        if not conn.execute("SELECT 1 FROM verification_metadata_dependencies WHERE state='waiting' LIMIT 1").fetchone():return False
+        if not conn.execute("SELECT 1 FROM verification_metadata_dependencies WHERE state='waiting' LIMIT 1").fetchone():return None
         conn.execute('BEGIN IMMEDIATE')
         row=conn.execute("""SELECT d.metadata_key FROM verification_metadata_dependencies d
             LEFT JOIN verification_metadata_fetch f ON f.metadata_key=d.metadata_key
@@ -543,7 +543,7 @@ def fetch_waiting_metadata(jobs):
             AND NOT EXISTS(SELECT 1 FROM verification_retry_waits r WHERE (r.key=d.key OR r.key=substr(d.metadata_key,6)) AND r.next_retry>?)
             AND NOT EXISTS(SELECT 1 FROM preparation_work p WHERE p.key=substr(d.metadata_key,6))
             ORDER BY COALESCE(f.next_fetch,0),d.waiting LIMIT 1""",(now,now,now,now)).fetchone()
-        if not row:return False
+        if not row:return None
         meta=row[0]
         # Separate from readiness polling; concurrent timer invocations cannot
         # pick this parent, and blocked parents cannot starve the rest.
@@ -552,7 +552,7 @@ def fetch_waiting_metadata(jobs):
     worker='metadata-dependency-'+uuid.uuid4().hex
     jobs.enqueue([(kind,imdb,2000)])
     try:lease=jobs.claim('server',worker,kind,imdb)
-    except MetadataBusy:return False
+    except MetadataBusy:return None
     if lease is None:return False
     previous=getattr(BUDGET,'metadata_background',False)
     BUDGET.metadata_background=True
@@ -582,7 +582,10 @@ def metadata_import(limit=20,key=None,seed=False):
             if position:time.sleep(3.1)
             fetched=fetch_waiting_metadata(jobs)
             applied+=metadata_import(limit=limit)
-            if not fetched:break
+            if fetched is None:break
+            if not fetched:
+                provider=jobs.status()
+                if not provider.get('enabled') or provider.get('provider_after',0)>time.time():break
         jobs.seed(DATA/'catalogue.sqlite')
         with F.db() as conn:conn.execute('DELETE FROM metadata_waits WHERE expires<?',(time.time()-3600,))
     for receipt in jobs.pending_imports(limit=limit,key=key):

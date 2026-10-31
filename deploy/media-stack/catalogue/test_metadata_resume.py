@@ -93,7 +93,7 @@ class MetadataResumeTests(unittest.TestCase):
         with patch.object(app,'fetch',return_value={'meta':fixtures.result()['metadata']}) as fetch:
             with ThreadPoolExecutor(max_workers=2) as pool:
                 results=list(pool.map(lambda _:app.fetch_waiting_metadata(self.jobs),range(2)))
-        self.assertEqual(sum(results),1);self.assertEqual(fetch.call_count,1)
+        self.assertEqual(sum(bool(x) for x in results),1);self.assertEqual(fetch.call_count,1)
         app.metadata_import();self.assertEqual(self.outcome(),'queued')
 
     def test_disabled_coordinator_leaves_dependency_waiting(self):
@@ -148,6 +148,12 @@ class MetadataResumeTests(unittest.TestCase):
         self.assertEqual(applied,4);self.assertEqual(fetch.call_count,4)
         self.assertEqual(sum(self.outcome(k)=='queued' for k in keys),4)
         self.assertEqual(sum(self.outcome(k)=='metadata_wait' for k in keys),1)
+
+    def test_provider_slot_contention_does_not_abort_whole_batch(self):
+        with patch.object(app,'fetch_waiting_metadata',side_effect=[False,True,None]) as fetch,\
+             patch.object(app.time,'sleep'),patch('metadata_jobs.MetadataJobs.seed'):
+            app.metadata_import(seed=True)
+        self.assertEqual(fetch.call_count,3)
 
     def test_claim_and_hold_block_resume_then_poll_recovers(self):
         token=self.wait(release=False);self.submit();app.metadata_import()
