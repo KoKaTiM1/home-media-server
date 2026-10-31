@@ -1054,23 +1054,48 @@ def sync(movie_limit=1000,show_limit=200):
     jf('/Library/Refresh',{},method='POST')
 
 
-def stream_candidates(key):
-    # Stable, publisher-distributed open-film source for setup/playback checks.
-    # Preserve HTTP web seeds by adding its actual .torrent rather than a magnet.
-    open_film={'infoHash':'dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c',
-        'torrentUrl':'https://webtorrent.io/torrents/big-buck-bunny.torrent',
-        'title':'Big Buck Bunny — publisher web-seeded release',
-        'behaviorHints':{'filename':'Big Buck Bunny.mp4'},'_score':999999}
-    saved=cached('streams:'+key)
-    if saved is not None:
-        if not getattr(BUDGET,'speculative',False) and not cached('source-status:'+key):
-            remember('source-status:'+key,{'state':'listed' if saved else 'unavailable','checked_at':time.time()},21600)
-        if key=='movie:tt1254207' and not cached('open-film-failed') and not any(s['infoHash']==open_film['infoHash'] for s in saved):
-            return [open_film]+saved
-        return sorted(saved,key=rank,reverse=True)
-    kind,imdb,*parts=key.split(':')
-    ident=imdb+(':'+':'.join(parts) if parts else '')
-    response=fetch(f'{PROVIDER}/stream/{kind}/{ident}.json',timeout=15)
+def mediafusion_streams(key):
+    marker=DATA/'source-providers.json'
+    if not marker.exists():return None
+    cfg=json.loads(marker.read_text());base=cfg.get('mediafusion_url','').rstrip('/')
+    if not cfg.get('mediafusion_enabled'):return None
+    parsed=U.urlsplit(base)
+    if parsed.scheme!='https' or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise Checkpoint('Invalid fallback provider configuration')
+    saved=cached('mediafusion:'+key)
+    if saved is not None:return saved
+    with (DATA/'mediafusion-provider.lock').open('a') as lock:
+        try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError:raise SourceProviderWait('Source provider request already active') from None
+        control=cached('mediafusion-provider-control') or {}
+        if max(control.get('next',0),control.get('cooldown',0))>time.time():raise SourceProviderWait('Source provider request deferred')
+        kind,imdb,*parts=key.split(':');ident=imdb+(':'+':'.join(parts) if parts else '')
+        try:
+            result=fetch(base+'/stream/'+kind+'/'+ident+'.json',timeout=15)
+            if not isinstance(result,dict) or not isinstance(result.get('streams'),list):raise Checkpoint('Invalid fallback source response')
+            rows=[]
+            for row in result['streams']:
+                if not isinstance(row,dict):continue
+                description=str(row.get('description') or row.get('title') or '')
+                origin=re.search(r'🔗\s*([^\n]+)',description)
+                if not origin or 'torrentio' in origin[1].casefold():continue
+                filename=str((row.get('behaviorHints') or {}).get('filename') or '')
+                rows.append({**row,'title':filename+'\n'+description,'_provider':'mediafusion'})
+            remember('mediafusion-provider-control',{'next':time.time()+15,'status':200},90000)
+            return remember('mediafusion:'+key,rows,1800 if rows else 900)
+        except urllib.error.HTTPError as error:
+            seconds=900 if error.code==429 else 300
+            try:seconds=max(seconds,min(86400,int(error.headers.get('Retry-After','0'))))
+            except (ValueError,TypeError,AttributeError):pass
+            remember('mediafusion-provider-control',{'next':time.time()+15,'cooldown':time.time()+seconds,'status':error.code},90000)
+            log('Fallback provider cooldown HTTP '+str(error.code))
+            raise Checkpoint('Fallback source provider unavailable') from None
+        except (urllib.error.URLError,TimeoutError):
+            remember('mediafusion-provider-control',{'next':time.time()+15,'cooldown':time.time()+60},90000)
+            raise Checkpoint('Fallback source provider unavailable') from None
+
+
+def filtered_streams(response):
     candidates=[]
     for stream in response.get('streams',[]):
         infohash=stream.get('infoHash','')
@@ -1085,6 +1110,44 @@ def stream_candidates(key):
         # Counts are hints; even a reported zero can be stale.
         candidate['_score']=(2000 if '1080' in title else 1000)+(500 if re.search('x264|h[ .]?264',title,re.I) else 0)+(200 if 'AAC' in title.upper() else 0)+min(int(seeds[1]) if seeds else 0,3000)*3
         candidates.append(candidate)
+    seen=set();unique=[]
+    for row in candidates:
+        h=row['infoHash'].lower()
+        if h in seen:continue
+        seen.add(h);row['infoHash']=h;unique.append(row)
+    return unique
+
+
+def stream_candidates(key):
+    # Stable, publisher-distributed open-film source for setup/playback checks.
+    # Preserve HTTP web seeds by adding its actual .torrent rather than a magnet.
+    open_film={'infoHash':'dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c',
+        'torrentUrl':'https://webtorrent.io/torrents/big-buck-bunny.torrent',
+        'title':'Big Buck Bunny — publisher web-seeded release',
+        'behaviorHints':{'filename':'Big Buck Bunny.mp4'},'_score':999999}
+    saved=cached('streams:'+key)
+    if saved==[]:
+        fallback=mediafusion_streams(key)
+        if fallback is not None:
+            choices=filtered_streams({'streams':fallback})
+            if choices:saved=remember('streams:'+key,choices[:20],1800)
+    if saved is not None:
+        if not getattr(BUDGET,'speculative',False) and not cached('source-status:'+key):
+            remember('source-status:'+key,{'state':'listed' if saved else 'unavailable','checked_at':time.time()},21600)
+        if key=='movie:tt1254207' and not cached('open-film-failed') and not any(s['infoHash']==open_film['infoHash'] for s in saved):
+            return [open_film]+saved
+        return sorted(saved,key=rank,reverse=True)
+    kind,imdb,*parts=key.split(':')
+    ident=imdb+(':'+':'.join(parts) if parts else '')
+    primary_error=None
+    try:response=fetch(f'{PROVIDER}/stream/{kind}/{ident}.json',timeout=15)
+    except (SourceProviderWait,urllib.error.URLError,TimeoutError) as error:
+        primary_error=error;response={'streams':[]}
+    candidates=filtered_streams(response)
+    if not candidates:
+        fallback=mediafusion_streams(key)
+        if fallback is not None:candidates=filtered_streams({'streams':fallback})
+        if not candidates and primary_error:raise Checkpoint('Source providers awaiting recovery') from None
     candidates.sort(key=rank,reverse=True)
     if key=='movie:tt1254207' and not cached('open-film-failed'): candidates.insert(0,open_film)
     if not getattr(BUDGET,'speculative',False):

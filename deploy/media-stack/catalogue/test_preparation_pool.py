@@ -259,3 +259,41 @@ class SourcePacingTests(unittest.TestCase):
         with app.F.db() as c:
             self.assertEqual(tuple(c.execute('SELECT outcome,finished FROM verification_sweep_attempts WHERE key=?',(KEY,)).fetchone()),('queued',0))
             self.assertEqual(c.execute('SELECT count(*) FROM verification_claims').fetchone()[0],0)
+
+class FallbackTests(unittest.TestCase):
+    def setUp(self):
+        fixtures.ImportTests.setUp(self)
+        (app.DATA/'source-providers.json').write_text(json.dumps({'mediafusion_enabled':True,'mediafusion_url':'https://fallback.example.invalid'}))
+    def tearDown(self):fixtures.ImportTests.tearDown(self)
+    def stream(self,origin='BT4G'):
+        return {'infoHash':'a'*40,'name':'MediaFusion 1080p','description':'x264 AAC\n🔗 '+origin,'behaviorHints':{'filename':'Example.Movie.2020.1080p.x264.mkv'}}
+    def test_rate_limited_primary_uses_independent_fallback(self):
+        import urllib.error
+        def request(url,**kwargs):
+            if url.startswith(app.PROVIDER):raise urllib.error.HTTPError(url,429,'limited',{},None)
+            return {'streams':[self.stream(),self.stream()]}
+        with patch.object(app,'fetch',side_effect=request):
+            rows=app.stream_candidates('movie:tt0000001')
+        self.assertEqual(len(rows),1);self.assertEqual(rows[0]['_provider'],'mediafusion')
+    def test_cached_empty_primary_is_filled_without_primary_request(self):
+        app.remember('streams:movie:tt0000001',[],300)
+        with patch.object(app,'fetch',return_value={'streams':[self.stream()]}) as fetch:
+            self.assertEqual(len(app.stream_candidates('movie:tt0000001')),1)
+            self.assertEqual(fetch.call_count,1)
+            self.assertTrue(fetch.call_args.args[0].startswith('https://fallback.example.invalid/'))
+    def test_torrentio_derived_and_unknown_origin_are_excluded(self):
+        with patch.object(app,'fetch',return_value={'streams':[self.stream('Torrentio'),{**self.stream(),'description':'unknown'}]}):
+            self.assertEqual(app.mediafusion_streams('movie:tt0000001'),[])
+    def test_healthy_primary_does_not_query_fallback(self):
+        with patch.object(app,'fetch',return_value={'streams':[{**self.stream(),'title':'Example 1080p x264'}]}) as fetch:
+            self.assertEqual(len(app.stream_candidates('movie:tt0000001')),1)
+            self.assertEqual(fetch.call_count,1)
+    def test_two_provider_faults_do_not_cache_false_unavailable(self):
+        import urllib.error
+        with patch.object(app,'fetch',side_effect=urllib.error.HTTPError('https://example.invalid',429,'limited',{},None)):
+            with self.assertRaises(app.Checkpoint):app.stream_candidates('movie:tt0000001')
+        self.assertIsNone(app.cached('streams:movie:tt0000001'))
+        self.assertIsNone(app.cached('source-status:movie:tt0000001'))
+    def test_compatibility_filter_keeps_hevc_excluded_pending_tv_test(self):
+        s=self.stream();s['title']='1080p HEVC x265'
+        self.assertEqual(app.filtered_streams({'streams':[s]}),[])
