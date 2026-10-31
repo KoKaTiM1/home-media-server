@@ -332,9 +332,11 @@ Initial audits cover existing successful sources and failed sources retaining
 older positive proof. Older proofs and reported problem titles run first;
 user Delete/recheck reports have highest priority. Existing catalogue entries
 remain visible until a fresh failed check. Afterwards, one in five ordinary
-slots audits successful sources older than 24 hours. New discovery, additional
-episodes and due failed retries continue through the durable queue. A passed
-episode count is not a count of distinct shows.
+slots audits successful sources older than 24 hours. While the initial V6
+catalogue sweep is still waiting on work, every fifth cross-process dispatch is
+reserved for a pending V6 speed-audit item; the other slots continue the sweep.
+New discovery, additional episodes and due failed retries continue through the
+durable queue. A passed episode count is not a count of distinct shows.
 
 Every sample and playback URL binds the exact torrent hash, file ID, path and
 length. The last working source is preferred; verified backups precede new

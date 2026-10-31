@@ -1514,14 +1514,28 @@ class Features:
     def release_verification(self,key,token):
         with self.db() as conn:conn.execute('DELETE FROM verification_claims WHERE key=? AND token=?',(key,token))
 
-    def worker_audit(self,recurring=False):
+    def worker_audit(self,recurring=False,reason=None):
         # Holds are scheduling exclusions, not failed/finished audit results.
         # Keep original proof/readiness/history and automatically retry after expiry.
+        reason_filter=' AND a.reason=?' if reason else ''
+        params=(time.time(),reason) if reason else (time.time(),)
         with self.g['REL'].db() as conn:
-            row=conn.execute("SELECT a.key FROM verification_audit a JOIN validation v ON v.key=a.key WHERE a.completed=0 AND (v.state='verified' OR v.next_check<=?) AND NOT EXISTS(SELECT 1 FROM verification_claims vc WHERE vc.key=v.key AND vc.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=v.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (v.key=mw.key OR v.key LIKE mw.key||':%')) ORDER BY a.priority DESC,COALESCE(json_extract(v.proof,'$.version'),0),a.scheduled LIMIT 1",(time.time(),)).fetchone()
+            row=conn.execute("SELECT a.key FROM verification_audit a JOIN validation v ON v.key=a.key WHERE a.completed=0"+reason_filter+" AND (v.state='verified' OR v.next_check<=?) AND NOT EXISTS(SELECT 1 FROM verification_claims vc WHERE vc.key=v.key AND vc.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=v.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (v.key=mw.key OR v.key LIKE mw.key||':%')) ORDER BY a.priority DESC,COALESCE(json_extract(v.proof,'$.version'),0),a.scheduled LIMIT 1",((reason,params[0]) if reason else params)).fetchone()
             if not row and recurring:
                 row=conn.execute("SELECT key FROM validation WHERE state='verified' AND checked<=? AND NOT EXISTS(SELECT 1 FROM verification_claims vc WHERE vc.key=validation.key AND vc.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=validation.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (validation.key=mw.key OR validation.key LIKE mw.key||':%')) ORDER BY checked LIMIT 1",(time.time()-86400,)).fetchone()
         return row
+
+    def next_verification_slot(self):
+        """Allocate a cross-process dispatch ticket for fair queue scheduling."""
+        with self.db() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            row=conn.execute("SELECT value FROM cache WHERE key='verification-v5-slot'").fetchone()
+            try:slot=int(json.loads(row[0]).get('slot',0)) if row else 0
+            except (TypeError,ValueError,AttributeError,json.JSONDecodeError):slot=0
+            slot+=1
+            conn.execute("INSERT OR REPLACE INTO cache VALUES ('verification-v5-slot',?,?)",
+                         (json.dumps({'slot':slot}),time.time()+10*365*86400))
+        return slot
 
     def warm_availability(self,limit=20,remote=False,slot=1):
         if remote:
@@ -1586,18 +1600,23 @@ class Features:
             local_title_mode=bool(remote and queue and queue.setting_read('local_torrent_enabled',False) and queue.local_workers()) if remote else False
             if local_title_mode:limit=1
             self.g['BUDGET'].worker_deadline=started+(960 if local_title_mode else 480)
-            slot=int((self.cached('verification-v5-slot') or {}).get('slot',0))
             while checked<limit and time.monotonic()-started<480:
                 blocked=busy()
                 if blocked:
                     self.remember(worker_key,{'message':blocked+'; resumes automatically','started':time.time()},180)
                     break
+                slot=self.next_verification_slot()
                 sweep_candidate,sweep_waiting=self.first_sweep_candidate()
                 with self.db() as conn:
                     row=conn.execute("SELECT v.key FROM manual_rechecks m JOIN validation v ON v.key=m.key WHERE m.status='pending' AND v.next_check<=? AND NOT EXISTS(SELECT 1 FROM verification_claims vc WHERE vc.key=v.key AND vc.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=v.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (v.key=mw.key OR v.key LIKE mw.key||':%')) ORDER BY m.requested LIMIT 1",(time.time(),)).fetchone()
+                    # Give the pending V6 speed audit a reserved one-in-five
+                    # dispatch even while a large initial sweep is waiting.
+                    # The audit selector retains source state, hold, claim and
+                    # metadata-wait guards; it does not weaken V6 proof checks.
+                    if not row and slot%5==4:row=self.worker_audit(reason='speed-v6')
                     if not row and sweep_candidate:row=(sweep_candidate[1],)
-                    # Initial audits precede discovery; one in five ordinary
-                    # slots subsequently rechecks a success older than 24 hours.
+                    # Outside a waiting first sweep, pending audits precede
+                    # discovery; the fifth slot may also perform a daily refresh.
                     if not row and not sweep_waiting:row=self.worker_audit(recurring=slot%5==4)
                     if not row and not sweep_waiting:
                         work=conn.execute("SELECT w.key,w.value FROM preparation_work w JOIN validation v ON v.key=w.key WHERE (v.state='verified' OR v.next_check<=?) AND NOT EXISTS(SELECT 1 FROM verification_claims vc WHERE vc.key=v.key AND vc.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=v.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (v.key=mw.key OR v.key LIKE mw.key||':%')) ORDER BY w.updated LIMIT 1",(time.time(),)).fetchone()
@@ -1629,7 +1648,6 @@ class Features:
                 sweep_outcome='deferred'
                 self.remember(worker_key,{'key':key,'started':time.time(),'position':checked+1,'batch':batch_number,'message':'Video sample validation running'},180)
                 attempt_started=time.time()
-                slot+=1;self.remember('verification-v5-slot',{'slot':slot},10*365*86400)
                 try:
                     # Retry only when due, with fresh source listings. A cached
                     # negative listing must not poison its own next retry.

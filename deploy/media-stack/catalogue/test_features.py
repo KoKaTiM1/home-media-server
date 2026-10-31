@@ -228,6 +228,40 @@ class FeatureTests(unittest.TestCase):
             a.F.warm_availability(1)
             prepare.assert_called_once_with(failed,background=True,cancel=unittest.mock.ANY)
 
+    def test_pending_v6_speed_audit_gets_reserved_slot_while_first_sweep_waits(self):
+        key='movie:tt1234567'
+        a.F.validation_result(key,True,proof={'version':5})
+        with a.F.g['REL'].db() as conn:
+            conn.execute("INSERT INTO verification_audit(key,reason,scheduled,completed,result,priority) VALUES (?,?,?,?,?,?)",
+                         (key,'speed-v6',time.time(),0,None,50))
+        # The next globally allocated dispatch ticket is the reserved fifth slot.
+        a.remember('verification-v5-slot',{'slot':3},864000)
+        with patch.object(a.F,'jf',return_value=[]),patch.object(a,'prepared',return_value={}) as prepare,\
+             patch('features.time.sleep'),patch.object(a.F,'first_sweep_candidate',return_value=(None,True)):
+            a.F.warm_availability(1)
+        prepare.assert_called_once_with(key,background=True,cancel=unittest.mock.ANY)
+        with a.F.g['REL'].db() as conn:
+            self.assertEqual(conn.execute('SELECT completed FROM verification_audit WHERE key=?',(key,)).fetchone()[0],0)
+
+    def test_nonreserved_slot_keeps_initial_sweep_ahead_of_speed_audit(self):
+        audit='movie:tt1234567';sweep='movie:tt2345678'
+        a.F.validation_result(audit,True,proof={'version':5})
+        a.F.validation_result(sweep,True,proof={'version':5})
+        with a.F.g['REL'].db() as conn:
+            conn.executemany("INSERT INTO verification_audit(key,reason,scheduled,completed,result,priority) VALUES (?,?,?,?,?,?)",
+                ((audit,'speed-v6',time.time(),0,None,50),(sweep,'speed-v6',time.time(),0,None,50)))
+        a.remember('verification-v5-slot',{'slot':4},864000)
+        with patch.object(a.F,'jf',return_value=[]),patch.object(a,'prepared',return_value={}) as prepare,\
+             patch('features.time.sleep'),patch.object(a.F,'first_sweep_candidate',return_value=((1,sweep),True)):
+            a.F.warm_availability(1)
+        prepare.assert_called_once_with(sweep,background=True,cancel=unittest.mock.ANY)
+
+    def test_verification_dispatch_tickets_are_unique_across_concurrent_lanes(self):
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            tickets=list(pool.map(lambda _:a.F.next_verification_slot(),range(20)))
+        self.assertEqual(sorted(tickets),list(range(1,21)))
+
     def test_provider_rate_limit_pauses_the_queue(self):
         import urllib.error
         self.make_search_index()
