@@ -137,17 +137,24 @@ class Features:
             with self.db() as own:return self.metadata_admission_blocked(key,own)
         now=time.time();meta='meta:'+':'.join(key.split(':')[:2])
         state=conn.execute('SELECT state FROM validation WHERE key=?',(key,)).fetchone()
-        if not state or state[0]=='downloaded':return True
+        if not state:return True
+        if state[0]=='downloaded':
+            conn.execute("UPDATE verification_sweep_attempts SET outcome='deferred',finished=? WHERE key=? AND outcome='queued' AND sweep_id=(SELECT max(id) FROM verification_sweeps)",(now,key))
+            return True
         if conn.execute('SELECT 1 FROM cache WHERE key=? AND expires>?',(meta,now)).fetchone():return False
-        if not conn.in_transaction:conn.execute('BEGIN IMMEDIATE')
         existing=conn.execute("SELECT 1 FROM verification_metadata_dependencies WHERE metadata_key=? AND state IN ('waiting','resumed') UNION ALL SELECT 1 FROM metadata_preparation_requests WHERE metadata_key=? LIMIT 1",(meta,meta)).fetchone()
         manual=conn.execute("SELECT 1 FROM manual_rechecks WHERE key=? AND status='pending'",(key,)).fetchone()
+        if not existing and not manual:
+            pressure=dict(conn.execute('SELECT key,value FROM metadata_preparation_control'))
+            if pressure.get('paused') and pressure.get('checked',0)>now-5:return True
+        if not conn.in_transaction:conn.execute('BEGIN IMMEDIATE')
         if not existing and not manual:
             count=conn.execute("SELECT count(*) FROM (SELECT metadata_key FROM verification_metadata_dependencies WHERE state IN ('waiting','resumed') UNION SELECT metadata_key FROM metadata_preparation_requests LIMIT ?)",(config['high']+1,)).fetchone()[0]
             paused=conn.execute("SELECT value FROM metadata_preparation_control WHERE key='paused'").fetchone()
             paused=bool(paused and paused[0])
             paused=count>config['low'] if paused else count>=config['high']
             conn.execute("INSERT OR REPLACE INTO metadata_preparation_control VALUES ('paused',?)",(int(paused),))
+            conn.execute("INSERT OR REPLACE INTO metadata_preparation_control VALUES ('checked',?)",(now,))
             if paused:return True
         row=conn.execute('SELECT checked FROM validation WHERE key=?',(key,)).fetchone()
         if row:conn.execute('INSERT OR IGNORE INTO metadata_preparation_requests VALUES (?,?,?,?)',(key,meta,now,row[0]))

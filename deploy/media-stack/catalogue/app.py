@@ -669,6 +669,7 @@ def metadata_import(limit=20,key=None,seed=False):
             if not has_preparation or not conn.execute('SELECT 1 FROM preparation_work WHERE key=?',(parent,)).fetchone():
                 conn.execute('DELETE FROM metadata_waits WHERE key=? AND NOT EXISTS(SELECT 1 FROM verification_retry_waits WHERE key=?)',(parent,parent))
             conn.execute('DELETE FROM metadata_preparation_requests WHERE metadata_key=?',('meta:'+parent,))
+            conn.execute("UPDATE metadata_preparation_control SET value=0 WHERE key='checked'")
             F.resume_metadata_dependencies(conn,'meta:'+kind+':'+imdb)
         # If interrupted between these databases, the cache expiry comparison
         # makes replay a no-op; native import/watch state is never changed here.

@@ -38,6 +38,7 @@ class PoolTests(unittest.TestCase):
         with app.F.db() as c:
             self.assertEqual(c.execute('SELECT count(distinct metadata_key) FROM metadata_preparation_requests').fetchone()[0],2)
             c.execute('DELETE FROM metadata_preparation_requests WHERE metadata_key=?',('meta:'+second,))
+            c.execute("UPDATE metadata_preparation_control SET value=0 WHERE key='checked'")
         fourth='movie:tt0000004';self.add(fourth)
         self.assertFalse(app.F.metadata_admission_blocked(fourth))
     def test_existing_backlog_is_retained_and_ready_import_can_resume(self):
@@ -150,3 +151,29 @@ class PoolTests(unittest.TestCase):
                 self.assertGreater(self.jobs.value(c,'preparation_yield_until'),time.time())
             self.assertFalse(app.fetch_waiting_metadata(self.jobs))
         self.assertEqual(self.jobs.reserve_provider(),0)
+
+    def test_paused_admission_polls_without_taking_a_writer_lock(self):
+        self.configure(2,1)
+        for i in range(2,4):
+            key='movie:tt000000'+str(i);self.add(key)
+            self.assertFalse(app.F.metadata_admission_blocked(key))
+        self.assertTrue(app.F.metadata_admission_blocked(KEY))
+        with app.F.db() as c:
+            c.commit();before=c.total_changes
+            self.assertTrue(app.F.metadata_admission_blocked(KEY,c))
+            self.assertEqual(c.total_changes,before);self.assertFalse(c.in_transaction)
+    def test_concurrent_discovery_does_not_over_admit_parents(self):
+        self.configure(2,1)
+        keys=['movie:tt00000'+str(i).zfill(2) for i in range(2,18)]
+        for key in keys:self.add(key)
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            results=list(executor.map(app.F.metadata_admission_blocked,keys))
+        self.assertEqual(sum(not blocked for blocked in results),2)
+        with app.F.db() as c:self.assertEqual(c.execute('SELECT count(distinct metadata_key) FROM metadata_preparation_requests').fetchone()[0],2)
+    def test_downloaded_queue_entry_does_not_prevent_sweep_completion(self):
+        with app.F.db() as c:c.execute("UPDATE validation SET state='downloaded' WHERE key=?",(KEY,))
+        self.assertEqual(app.F.first_sweep_candidate(),(None,False))
+        with app.F.db() as c:
+            self.assertEqual(c.execute('SELECT state FROM validation').fetchone()[0],'downloaded')
+            self.assertEqual(c.execute('SELECT outcome FROM verification_sweep_attempts').fetchone()[0],'deferred')
