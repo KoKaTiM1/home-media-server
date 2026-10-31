@@ -299,3 +299,8 @@ class FallbackTests(unittest.TestCase):
     def test_compatibility_filter_keeps_hevc_excluded_pending_tv_test(self):
         s=self.stream();s['title']='1080p HEVC x265'
         self.assertEqual(app.filtered_streams({'streams':[s]}),[])
+
+    def test_malformed_responses_preserve_unknown_source_state(self):
+        with patch.object(app,'fetch',side_effect=ValueError('Malformed upstream JSON')):
+            with self.assertRaises(app.Checkpoint):app.stream_candidates('movie:tt0000001')
+        self.assertIsNone(app.cached('source-status:movie:tt0000001'))

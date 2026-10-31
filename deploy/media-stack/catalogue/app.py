@@ -1090,7 +1090,7 @@ def mediafusion_streams(key):
             remember('mediafusion-provider-control',{'next':time.time()+15,'cooldown':time.time()+seconds,'status':error.code},90000)
             log('Fallback provider cooldown HTTP '+str(error.code))
             raise Checkpoint('Fallback source provider unavailable') from None
-        except (urllib.error.URLError,TimeoutError):
+        except (urllib.error.URLError,TimeoutError,ValueError):
             remember('mediafusion-provider-control',{'next':time.time()+15,'cooldown':time.time()+60},90000)
             raise Checkpoint('Fallback source provider unavailable') from None
 
@@ -1143,8 +1143,10 @@ def stream_candidates(key):
     kind,imdb,*parts=key.split(':')
     ident=imdb+(':'+':'.join(parts) if parts else '')
     primary_error=None
-    try:response=fetch(f'{PROVIDER}/stream/{kind}/{ident}.json',timeout=15)
-    except (SourceProviderWait,urllib.error.URLError,TimeoutError) as error:
+    try:
+        response=fetch(f'{PROVIDER}/stream/{kind}/{ident}.json',timeout=15)
+        if not isinstance(response,dict) or not isinstance(response.get('streams'),list):raise ValueError('Invalid source response')
+    except (SourceProviderWait,urllib.error.URLError,TimeoutError,ValueError) as error:
         primary_error=error;response={'streams':[]}
     candidates=filtered_streams(response)
     if not candidates:
