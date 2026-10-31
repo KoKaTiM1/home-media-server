@@ -36,6 +36,14 @@ class TitleTests(unittest.TestCase):
         with patch.object(a,'metadata',return_value=self.meta),patch.object(a,'verification_candidates',return_value=[]):
             with self.assertRaises(SourceFailure):payload(a.__dict__,KEY)
 
+    def test_payload_retains_fallback_provider_attribution(self):
+        candidate={'infoHash':HASH,'title':'Fixture 2026 1080p','_provider':'mediafusion',
+                   'behaviorHints':{'filename':'Fixture.2026.mp4'}}
+        with patch.object(a,'metadata',return_value=self.meta),patch.object(a,'verification_candidates',return_value=[candidate]):
+            result=payload(a.__dict__,KEY)
+        self.assertEqual(result['provider'],'mediafusion')
+        self.assertEqual(result['candidates'][0]['provider'],'mediafusion')
+
     def test_local_metadata_wait_returns_checkpoint_inside_child_budget(self):
         # A healthy HTTP endpoint that never supplies torrent metadata must not
         # hold the child until the longer app default or parent kill deadline.

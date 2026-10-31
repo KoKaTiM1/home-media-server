@@ -126,7 +126,8 @@ class MonitorTests(unittest.TestCase):
                 c.execute('CREATE TABLE totals(key TEXT,value INTEGER)')
                 c.execute("INSERT INTO totals VALUES('windows_titles_verified',4)")
                 c.execute('CREATE TABLE control(key TEXT,value TEXT)')
-                c.executemany('INSERT INTO control VALUES (?,?)',[('enabled','true'),('reason','"Verification permitted"')])
+                c.executemany('INSERT INTO control VALUES (?,?)',[('enabled','true'),('reason','"Verification permitted"'),
+                    ('producer:3',json.dumps({'key':'series:tt1234567:1:2','phase':'torrent_resolution','provider':'mediafusion','updated':now}))])
                 c.execute('CREATE TABLE client(id INTEGER,seen REAL)');c.execute('INSERT INTO client VALUES(1,?)',(now,))
                 c.execute('CREATE TABLE decode_jobs(key TEXT,operation TEXT,params TEXT,state TEXT,created REAL,stream_started REAL,phase TEXT,phase_at REAL,controller REAL,outcome TEXT,reason_code TEXT,finished REAL,url TEXT)')
                 c.execute('INSERT INTO decode_jobs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',('series:tt1234567:1:2','sample',json.dumps({'position':140}),'leased',now-20,now-15,'sample decode',now-10,now+30,'','',0,'private-signed-url'))
@@ -144,9 +145,15 @@ class MonitorTests(unittest.TestCase):
             self.assertEqual(values['Windows decode queue']['value'],'1 active / 0 ready')
             self.assertIn('Decoding later sample',values['Windows working on']['detail'])
             self.assertIn('3.0 MiB received',values['Windows working on']['detail'])
+            self.assertEqual(values['Current torrent provider']['value'],'MediaFusion fallback')
             self.assertIn('Run 8',values['Windows batch']['value'])
             self.assertIn('transport',values['Latest PC operation issue']['detail'])
             self.assertNotIn('private-signed-url',str(rows))
+            with sqlite3.connect(queue/'queue.sqlite') as c:
+                c.execute('UPDATE control SET value=? WHERE key=?',(json.dumps({'key':'series:tt1234567:1:2','phase':'source preparation','provider':'none','updated':time.time()}),'producer:3'))
+            with patch.object(m,'context',return_value=activity):rows=m.overview(data,snapshot)
+            values={row['name']:row for row in rows}
+            self.assertEqual(values['Current torrent provider']['value'],'None')
 
     def test_preparation_pool_and_admission_are_separate_from_v6_passes(self):
         with tempfile.TemporaryDirectory() as directory:

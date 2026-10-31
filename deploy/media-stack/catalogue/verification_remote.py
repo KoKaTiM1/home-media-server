@@ -25,12 +25,13 @@ def ready(runtime):
     except (OSError,ValueError,sqlite3.Error):return False
 
 
-def producer_phase(runtime,key,phase=None):
+def producer_phase(runtime,key,phase=None,provider=None):
     budget=runtime['BUDGET']
     if phase is not None:budget.remote_phase=phase
+    if provider is not None:budget.remote_provider=provider
     try:
         q=jobs(runtime)
-        if q:q.producer(getattr(budget,'remote_slot',1),key,getattr(budget,'remote_phase','source preparation'))
+        if q:q.producer(getattr(budget,'remote_slot',1),key,getattr(budget,'remote_phase','source preparation'),getattr(budget,'remote_provider','none'))
     except (OSError,ValueError,sqlite3.Error):pass # Telemetry cannot fail verification.
 
 

@@ -160,6 +160,7 @@ class CatalogueTests(unittest.TestCase):
             result=a.stream_candidates('movie:tt1234567')
             self.assertEqual(result[0]['infoHash'],'c'*40)
             self.assertEqual(result[-1]['infoHash'],'a'*40)
+            self.assertTrue(all(row['_provider']=='torrentio' for row in result))
 
     def test_identity_rejects_invalid_input(self):
         self.assertEqual(a.identity('series','tt1234567',2,3),'series:tt1234567:2:3')

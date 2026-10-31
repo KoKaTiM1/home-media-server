@@ -96,12 +96,13 @@ class DecodeJobs:
     def queue_capacity(self,c):
         capacity=max(1,min(MAX_WORKERS,int(self.setting(c,'max_windows_jobs',1))))
         return min(32,capacity*max(1,min(8,int(self.setting(c,'prefetch_per_lane',1)))))
-    def producer(self,slot,key,phase):
+    def producer(self,slot,key,phase,provider='none'):
         if slot not in range(1,33) or not re.fullmatch('(movie:tt[0-9]{5,12}|series:tt[0-9]{5,12}:[0-9]+:[0-9]+)',key):raise InvalidJob('Invalid producer')
         if phase not in ('source preparation','torrent_resolution','waiting for source metadata','video_probe','preparation',
-                         'waiting for decoder','waiting for speed check','speed verification','probe','sample','finished','windows local torrent','server fallback'):
+                         'waiting for decoder','waiting for speed check','speed verification','probe','sample','title validation','finished','windows local torrent','server fallback'):
             raise InvalidJob('Invalid producer phase')
-        self.set('producer:'+str(slot),{'key':key,'phase':phase,'updated':time.time()})
+        if provider not in ('torrentio','mediafusion','mixed','other','none'):raise InvalidJob('Invalid source provider')
+        self.set('producer:'+str(slot),{'key':key,'phase':phase,'provider':provider,'updated':time.time()})
     def setting_read(self,key,default=None):
         with self.db() as c:return self.setting(c,key,default)
     def backend_health(self,worker,available,backend_id=None):

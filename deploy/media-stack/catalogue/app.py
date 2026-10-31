@@ -1124,7 +1124,7 @@ def stream_candidates(key):
     open_film={'infoHash':'dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c',
         'torrentUrl':'https://webtorrent.io/torrents/big-buck-bunny.torrent',
         'title':'Big Buck Bunny — publisher web-seeded release',
-        'behaviorHints':{'filename':'Big Buck Bunny.mp4'},'_score':999999}
+        'behaviorHints':{'filename':'Big Buck Bunny.mp4'},'_score':999999,'_provider':'other'}
     saved=cached('streams:'+key)
     if saved==[]:
         fallback=mediafusion_streams(key)
@@ -1135,6 +1135,10 @@ def stream_candidates(key):
                 if not getattr(BUDGET,'speculative',False):
                     remember('source-status:'+key,{'state':'listed','checked_at':time.time()},21600)
     if saved is not None:
+        # Rows cached before provider attribution were only produced by the
+        # primary Torrentio path; preserve explicit MediaFusion labels.
+        for row in saved:
+            if isinstance(row,dict):row.setdefault('_provider','torrentio')
         if not getattr(BUDGET,'speculative',False) and not cached('source-status:'+key):
             remember('source-status:'+key,{'state':'listed' if saved else 'unavailable','checked_at':time.time()},21600)
         if key=='movie:tt1254207' and not cached('open-film-failed') and not any(s['infoHash']==open_film['infoHash'] for s in saved):
@@ -1149,6 +1153,7 @@ def stream_candidates(key):
     except (SourceProviderWait,urllib.error.URLError,TimeoutError,ValueError) as error:
         primary_error=error;response={'streams':[]}
     candidates=filtered_streams(response)
+    for candidate in candidates:candidate['_provider']='torrentio'
     if not candidates:
         fallback=mediafusion_streams(key)
         if fallback is not None:candidates=filtered_streams({'streams':fallback})
@@ -1215,10 +1220,12 @@ def verification_candidates(key):
     for selected in REL.choices(key):
         if selected.get('local'):continue
         seen.add(selected['hash'])
-        yield {'infoHash':selected['hash'],'torrentUrl':selected.get('torrent_url'),'_exact':selected}
+        provider=selected.get('source_provider') or ('other' if selected['hash']=='dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c' else 'torrentio')
+        yield {'infoHash':selected['hash'],'torrentUrl':selected.get('torrent_url'),'_exact':selected,'_provider':provider}
     selected=cached('resolved:'+key)
     if selected and selected.get('hash') not in seen and not REL.excluded(key,selected):
-        seen.add(selected['hash']);yield {'infoHash':selected['hash'],'torrentUrl':selected.get('torrent_url'),'_exact':selected}
+        seen.add(selected['hash']);provider=selected.get('source_provider') or ('other' if selected['hash']=='dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c' else 'torrentio')
+        yield {'infoHash':selected['hash'],'torrentUrl':selected.get('torrent_url'),'_exact':selected,'_provider':provider}
     for candidate in stream_candidates(key):
         if candidate['infoHash'].lower() not in seen and candidate_matches(candidate,key):yield candidate
 
@@ -1232,6 +1239,12 @@ def resolve(key,deadline=None):
     # alternatives. A healthy preferred source never triggers a provider search.
     for candidate in verification_candidates(key):
         remaining(1)
+        source_provider=candidate.get('_provider','torrentio')
+        if source_provider not in ('torrentio','mediafusion','other'):source_provider='none'
+        BUDGET.remote_provider=source_provider
+        if background and getattr(BUDGET,'remote_verification',False):
+            from verification_remote import producer_phase
+            producer_phase(globals(),key,'torrent_resolution',source_provider)
         infohash=candidate['infoHash'].lower()
         if cached('source-excluded:'+key+':'+infohash):continue
         exact=candidate.get('_exact')
@@ -1283,13 +1296,14 @@ def resolve(key,deadline=None):
             if exact:
                 matches=[f for f in status['file_stats'] if f.get('id')==exact['index'] and f.get('path')==exact['filename'] and f.get('length')==exact['length']]
                 if len(matches)!=1:raise SourceFailure('Exact source file changed')
-                selected=exact
+                selected={**exact,'source_provider':source_provider}
             else:
                 try:f=choose_file(status['file_stats'],key,candidate.get('fileIdx'),candidate.get('behaviorHints',{}).get('filename'))
                 except ValueError:raise SourceFailure('Source file selection rejected') from None
                 if key.startswith('movie:') and not candidate_matches({**candidate,'behaviorHints':{'filename':f['path']}},key):raise SourceFailure('Movie filename does not match requested title/year')
                 selected={'hash':infohash,'index':f['id'],'filename':f['path'],'length':f['length'],
-                    'source_name':candidate.get('title',''),'file_count':len(status['file_stats']),'torrent_url':candidate.get('torrentUrl'),'link':candidate.get('torrentUrl') or magnet}
+                    'source_name':candidate.get('title',''),'file_count':len(status['file_stats']),'torrent_url':candidate.get('torrentUrl'),'link':candidate.get('torrentUrl') or magnet,
+                    'source_provider':source_provider}
             if REL.excluded(key,selected):continue
             playback_event(key,'torrent_metadata_ready',metadata_attempt,'ok')
             # Native persistence allows later get/add to recover InfoBytes

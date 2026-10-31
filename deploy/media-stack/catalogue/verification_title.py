@@ -29,9 +29,11 @@ def magnet(infohash):
 
 def validate_task(p):
     if not isinstance(p,dict) or p.get('schema')!=1 or not re.fullmatch(r'(movie:tt[0-9]{5,12}|series:tt[0-9]{5,12}:[0-9]+:[0-9]+)',p.get('key','')):raise ValueError('Invalid title job')
+    if p.get('provider','none') not in ('torrentio','mediafusion','mixed','other','none'):raise ValueError('Invalid provider attribution')
     if not isinstance(p.get('meta'),dict) or not isinstance(p.get('candidates'),list) or not 1<=len(p['candidates'])<=20:raise ValueError('Invalid candidates')
     for c in p['candidates']:
         if not re.fullmatch('[a-f0-9]{40}',c.get('infoHash','')):raise ValueError('Invalid hash')
+        if c.get('provider','none') not in ('torrentio','mediafusion','other','none'):raise ValueError('Invalid provider attribution')
         # The only publisher URL supported for the public canary; all other
         # jobs use public hash magnets, never server credentials/signed URLs.
         if c.get('torrentUrl') not in (None,'https://webtorrent.io/torrents/big-buck-bunny.torrent'):raise ValueError('Invalid publisher source')
@@ -42,12 +44,15 @@ def validate_task(p):
 def payload(g,key):
     kind,imdb,*_=key.split(':')
     meta={k:v for k,v in g['metadata'](kind,imdb).items() if k in ('name','year','id','type','original_title','originalName','releaseInfo','released')}
-    candidates=[]
+    candidates=[];providers=set()
     for c in g['verification_candidates'](key):
         h=c['infoHash'].lower()
         if g['cached']('source-excluded:'+key+':'+h):continue
         x={'infoHash':h,'title':str(c.get('title',''))[:2000],
-           'behaviorHints':{'filename':str(c.get('behaviorHints',{}).get('filename',''))[:2000]}}
+           'behaviorHints':{'filename':str(c.get('behaviorHints',{}).get('filename',''))[:2000]},
+           'provider':c.get('_provider','torrentio')}
+        if x['provider'] not in ('torrentio','mediafusion','other'):x['provider']='none'
+        providers.add(x['provider'])
         if c.get('fileIdx') is not None:x['fileIdx']=int(c['fileIdx'])
         if c.get('torrentUrl')=='https://webtorrent.io/torrents/big-buck-bunny.torrent':x['torrentUrl']=c['torrentUrl']
         if c.get('_exact'):
@@ -62,7 +67,8 @@ def payload(g,key):
         alias=db.execute('SELECT english FROM aliases WHERE imdb=?',(imdb,)).fetchone()
         local=db.execute("SELECT name,original FROM home_titles WHERE imdb=? AND kind=?",(imdb,kind)).fetchone()
     names=[str(v) for v in ((list(local) if local else [])+([alias[0]] if alias else [])) if v]
-    p={'schema':1,'key':key,'meta':meta,'aliases':names,'candidates':candidates,
+    provider=next(iter(providers)) if len(providers)==1 else 'mixed' if providers else 'none'
+    p={'schema':1,'key':key,'meta':meta,'aliases':names,'candidates':candidates,'provider':provider,
        'prior':{'state':r[0] if r else 'pending','proof':json.loads(r[1]) if r and r[1] else None,'reason':r[2] if r else '', 'requested':m[0] if m else 0}}
     validate_task(p);return p
 
@@ -128,6 +134,7 @@ def validate_evidence(g,key,p,result,started):
         if w['offset']!=min(selected['length']-size,max(0,int(selected['length']*fraction))) or w['uncached_bytes_lower_bound']!=size-cached or not math.isclose(w['bytes_per_second'],(size-cached)/seconds,rel_tol=1e-6):raise ValueError('Speed attribution mismatch')
     selected={k:selected[k] for k in ('hash','index','filename','length')}
     selected.update(link=candidate.get('torrentUrl') or magnet(selected['hash']),torrent_url=candidate.get('torrentUrl'),source_name=candidate.get('title',''))
+    selected['source_provider']=candidate.get('provider','none')
     proof={**proof,'verification_worker':'windows','source_backend':'windows-torrent','speed':{**speed,'measurement_worker':'windows'}}
     return selected,info,proof,audio,conversion
 
@@ -157,6 +164,7 @@ def _execute_title(g,key,cancel,execution_seconds):
     if not q or not q.setting_read('local_torrent_enabled',False) or not q.setting_read('local_torrent_permitted',False) or not q.local_workers():return False
     if not q.setting_read('local_torrent_continuous',False) and q.setting_read('local_torrent_pilot_remaining',20)<=0:return False
     with g['request_budget'](time.monotonic()+60,cancel):p=payload(g,key)
+    producer_phase(g,key,'source preparation',p.get('provider','none'))
     started=time.time();deadline=min(time.monotonic()+execution_seconds,getattr(g['BUDGET'],'worker_deadline',float('inf')))
     fallback=False;job=None;consumed=False;failure_category="transport";cancel_code="controller_error"
     # Queue waiting has its own bounded window. Active execution remains capped
@@ -193,6 +201,7 @@ def _execute_title(g,key,cancel,execution_seconds):
                     except (ValueError,KeyError,TypeError,RuntimeError):
                         q.count('windows_local_invalid_results');failure_category='validation';fallback=True;break
                     if cancel and cancel():raise Checkpoint('Verification interrupted')
+                    producer_phase(g,key,'title validation',selected.get('source_provider','none'))
                     g['REL'].bind(key,selected)
                     g['finish_preparation'](key,True,deadline,selected,info,proof,audio,conversion)
                     with g['F'].db() as db:

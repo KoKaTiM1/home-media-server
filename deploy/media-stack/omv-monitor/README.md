@@ -5,7 +5,9 @@ It provides three read-only tabs:
 
 - **Progress overview**: current V6 verified sources, currently verified movies and shows,
   keys still lacking V6 proof, retries, V6 passes in the last hour, PC contribution,
-  connected Windows lanes, current operation and the latest categorized PC issue.
+  connected Windows lanes, current operation, the current Torrentio/MediaFusion
+  source attribution (or None when neither yields an accepted candidate) and the
+  latest categorized PC issue.
   The V6 speed-audit card shows its passed, failed and pending counts. The V6 first-sweep row
   reports one-attempt coverage of the starting queue, with passes, conclusive
   failures and deferred checkpoints counted separately.

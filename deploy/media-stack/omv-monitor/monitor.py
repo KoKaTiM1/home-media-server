@@ -428,6 +428,23 @@ def overview(data=DATA,snapshot=None):
             batch=details.get('batch',0) if details.get('key')==key else 0
             if position:add('Windows batch',f"Run {batch or '?'} · item {position}/20",'Windows-local producers process one title with separate queue and execution budgets')
         else:add('Windows working on','Waiting','The next guarded batch starts automatically when work is eligible')
+        fresh_producers=[v for k,v in control.items() if k.startswith('producer:') and isinstance(v,dict)
+                         and v.get('updated',0)>now-45 and v.get('phase')!='finished']
+        provider_state=None
+        if active:
+            matching=[v for v in control.values() if isinstance(v,dict) and v.get('key')==active['key']
+                      and v.get('updated',0)>now-45]
+            if matching:provider_state=max(matching,key=lambda v:v.get('updated',0))
+        if provider_state is None and fresh_producers:
+            provider_state=max(fresh_producers,key=lambda v:v.get('updated',0))
+        provider=(provider_state or {}).get('provider','none')
+        provider_labels={'torrentio':'Torrentio','mediafusion':'MediaFusion fallback','mixed':'Torrentio + MediaFusion candidates',
+                         'other':'Other source','none':'None'}
+        provider_value=provider_labels.get(provider,'None')
+        provider_detail=('Provider candidates for the active Windows title; after completion this identifies the selected source. '
+                         'None means no accepted Torrentio or MediaFusion candidate is available.' if provider!='none' else
+                         'No accepted Torrentio or MediaFusion candidate is currently selected or available.')
+        add('Current torrent provider',provider_value,provider_detail,'success' if provider in ('torrentio','mediafusion') else 'muted')
         if problem:
             label='Decode rejected' if problem['outcome']=='decode_failure' else 'Checkpoint'
             reason=problem['reason_code'] or 'reason unavailable from current PC client'

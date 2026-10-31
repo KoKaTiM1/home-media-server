@@ -1660,6 +1660,10 @@ class Features:
                 budget.first_sweep_attempt=sweep_attempt
                 if sweep_attempt:budget.worker_deadline=min(previous_attempt_deadline or time.monotonic()+240,time.monotonic()+240)
                 sweep_outcome='deferred'
+                if remote:
+                    from verification_remote import producer_phase
+                    budget.remote_provider='none'
+                    producer_phase(self.g,key,'source preparation','none')
                 self.remember(worker_key,{'key':key,'started':time.time(),'position':checked+1,'batch':batch_number,'message':'Video sample validation running'},180)
                 attempt_started=time.time()
                 try:

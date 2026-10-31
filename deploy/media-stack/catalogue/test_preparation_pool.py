@@ -288,7 +288,9 @@ class FallbackTests(unittest.TestCase):
             self.assertEqual(app.mediafusion_streams('movie:tt0000001'),[])
     def test_healthy_primary_does_not_query_fallback(self):
         with patch.object(app,'fetch',return_value={'streams':[{**self.stream(),'title':'Example 1080p x264'}]}) as fetch:
-            self.assertEqual(len(app.stream_candidates('movie:tt0000001')),1)
+            rows=app.stream_candidates('movie:tt0000001')
+            self.assertEqual(len(rows),1)
+            self.assertEqual(rows[0]['_provider'],'torrentio')
             self.assertEqual(fetch.call_count,1)
     def test_two_provider_faults_do_not_cache_false_unavailable(self):
         import urllib.error
