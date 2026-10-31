@@ -1610,14 +1610,17 @@ class Features:
                 sweep_candidate,sweep_waiting=self.first_sweep_candidate()
                 speed_audit_reserved=False
                 with self.db() as conn:
-                    row=conn.execute("SELECT v.key FROM manual_rechecks m JOIN validation v ON v.key=m.key WHERE m.status='pending' AND v.next_check<=? AND NOT EXISTS(SELECT 1 FROM verification_claims vc WHERE vc.key=v.key AND vc.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=v.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (v.key=mw.key OR v.key LIKE mw.key||':%')) ORDER BY m.requested LIMIT 1",(time.time(),)).fetchone()
+                    row=None
                     # Give the pending V6 speed audit a reserved one-in-five
-                    # dispatch even while a large initial sweep is waiting.
+                    # dispatch even while manual rechecks or the large initial
+                    # sweep are waiting. Manual reports retain the other slots.
                     # The audit selector retains source state, hold, claim and
                     # metadata-wait guards; it does not weaken V6 proof checks.
-                    if not row and slot%5==4:
+                    if slot%5==4:
                         row=self.worker_audit(reason='speed-v6')
                         speed_audit_reserved=bool(row)
+                    if not row:
+                        row=conn.execute("SELECT v.key FROM manual_rechecks m JOIN validation v ON v.key=m.key WHERE m.status='pending' AND v.next_check<=? AND NOT EXISTS(SELECT 1 FROM verification_claims vc WHERE vc.key=v.key AND vc.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=v.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (v.key=mw.key OR v.key LIKE mw.key||':%')) ORDER BY m.requested LIMIT 1",(time.time(),)).fetchone()
                     if not row and sweep_candidate:row=(sweep_candidate[1],)
                     # Outside a waiting first sweep, pending audits precede
                     # discovery; the fifth slot may also perform a daily refresh.

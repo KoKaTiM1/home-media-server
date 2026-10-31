@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-10-31T23:18:35.814631+00:00",
+  "created_utc": "2026-10-31T23:26:41.049169+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -31,7 +31,7 @@
     "deploy/media-stack/catalogue/check_subtitle_delivery.py": "cc143d9c5ad787bcfc3e66a8b26cb48e465afb487d5d2e4e35872486bbc439f9",
     "deploy/media-stack/catalogue/check_tv_recovery.py": "52bf401d509aa7e45cbb0e5c83db15935e39fbd4842a9146ac44be7b3ab4afbc",
     "deploy/media-stack/catalogue/embedded_subtitles.py": "88cbb7199b92a5c1f5cde75d3483be1ec50d6cf470e69d0975113b1deca96d39",
-    "deploy/media-stack/catalogue/features.py": "144e4486934188e7207f311eef174720ad8cdc569fdfa410cfee609f4a78d583",
+    "deploy/media-stack/catalogue/features.py": "e4924ced9238c5df8fd4f4310e405a23e04dfe581ca0bd2da07e85527dd5a8d7",
     "deploy/media-stack/catalogue/metadata-preparation.example.json": "37da46da8c81801090d7c30458296376e5d54e2067e0988ef08416b6c4c2c0ab",
     "deploy/media-stack/catalogue/metadata_jobs.py": "1754fe90b7c20426a2afc35ed49afe16084770288bb630922d5f81471ed021dc",
     "deploy/media-stack/catalogue/playback_diagnostics.py": "4287867fefcc3061855efb6344f9d918eebd1174d0673c9e80ca759e78985f11",
@@ -42,7 +42,7 @@
     "deploy/media-stack/catalogue/test_details.py": "abdcf510dd3f0ee28bf74569f2eaecb9e3e75a73068ba2ae33ed91849da20f95",
     "deploy/media-stack/catalogue/test_durable_playback.py": "d8223b1980229b3a50652432acb1c039d3be2e0c469e28ac6862e43779a9e565",
     "deploy/media-stack/catalogue/test_embedded_subtitles.py": "1f7f92b7489e59412c5ec6da28889f4d3f41aacaf0662665d90e81add7cd9feb",
-    "deploy/media-stack/catalogue/test_features.py": "defee84e97ee0d03c508713bf3e300f10743f84a1d10835b56a33f949e04933a",
+    "deploy/media-stack/catalogue/test_features.py": "d3f00feb21156048a083f36d6c0895f92a6377f696a15f93dd35a62560d923ef",
     "deploy/media-stack/catalogue/test_feedback.py": "a6ba64b1d253e985880ef2ea3c1fd1e0ff2315201dc322f905ecd0a4a1f91ff1",
     "deploy/media-stack/catalogue/test_first_sweep.py": "d891a1b1e23887ad62e69cc997ff639ef1c0d973e90e2db90319d2c8d98268da",
     "deploy/media-stack/catalogue/test_foreground_cleanup.py": "6975a968ad02298d6e2913daf5d271ad4b4e3f1efd8f68193d718917a3069db0",

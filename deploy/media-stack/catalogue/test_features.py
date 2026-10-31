@@ -256,6 +256,39 @@ class FeatureTests(unittest.TestCase):
             a.F.warm_availability(1)
         prepare.assert_called_once_with(sweep,background=True,cancel=unittest.mock.ANY)
 
+    def test_reserved_speed_audit_slot_bypasses_due_manual_recheck(self):
+        audit='movie:tt1234567';manual='movie:tt2345678'
+        a.F.validation_result(audit,True,proof={'version':5})
+        a.F.validation_result(manual,False)
+        with a.F.db() as conn:
+            conn.execute('UPDATE validation SET next_check=0 WHERE key=?',(manual,))
+            conn.execute("INSERT INTO manual_rechecks VALUES (?,?,?,'pending')",(manual,time.time(),'fixture'))
+        with a.F.g['REL'].db() as conn:
+            conn.execute("INSERT INTO verification_audit(key,reason,scheduled,completed,result,priority) VALUES (?,?,?,?,?,?)",
+                         (audit,'speed-v6',time.time(),0,None,50))
+        a.remember('verification-v5-slot',{'slot':3},864000)
+        with patch.object(a.F,'jf',return_value=[]),patch.object(a,'prepared',return_value={}) as prepare,\
+             patch('features.time.sleep'),patch.object(a.F,'first_sweep_candidate',return_value=(None,True)):
+            a.F.warm_availability(1)
+        prepare.assert_called_once_with(audit,background=True,cancel=unittest.mock.ANY)
+
+    def test_nonreserved_slot_keeps_due_manual_recheck_priority(self):
+        audit='movie:tt1234567';manual='movie:tt2345678';sweep='movie:tt3456789'
+        a.F.validation_result(audit,True,proof={'version':5})
+        a.F.validation_result(manual,False)
+        a.F.validation_result(sweep,True,proof={'version':5})
+        with a.F.db() as conn:
+            conn.execute('UPDATE validation SET next_check=0 WHERE key=?',(manual,))
+            conn.execute("INSERT INTO manual_rechecks VALUES (?,?,?,'pending')",(manual,time.time(),'fixture'))
+        with a.F.g['REL'].db() as conn:
+            conn.execute("INSERT INTO verification_audit(key,reason,scheduled,completed,result,priority) VALUES (?,?,?,?,?,?)",
+                         (audit,'speed-v6',time.time(),0,None,50))
+        a.remember('verification-v5-slot',{'slot':4},864000)
+        with patch.object(a.F,'jf',return_value=[]),patch.object(a,'prepared',return_value={}) as prepare,\
+             patch('features.time.sleep'),patch.object(a.F,'first_sweep_candidate',return_value=((1,sweep),True)):
+            a.F.warm_availability(1)
+        prepare.assert_called_once_with(manual,background=True,cancel=unittest.mock.ANY)
+
     def test_verification_dispatch_tickets_are_unique_across_concurrent_lanes(self):
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=8) as pool:
