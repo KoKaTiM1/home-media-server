@@ -148,6 +148,18 @@ class MonitorTests(unittest.TestCase):
             self.assertIn('transport',values['Latest PC operation issue']['detail'])
             self.assertNotIn('private-signed-url',str(rows))
 
+    def test_metadata_wait_is_visible_without_counting_as_finished_verification(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);data=root/'catalogue';data.mkdir()
+            snapshot=root/'snapshot.json';snapshot.write_text(json.dumps({'time':time.time(),'summary':{
+                'total':100,'v6':1,'first_sweep_total':100,'first_sweep_attempted':10,
+                'first_sweep_passed':1,'first_sweep_failed':2,'first_sweep_deferred':7,
+                'first_sweep_remaining':90,'first_sweep_metadata_wait':3}}))
+            with patch.object(m,'context',return_value={}):rows=m.overview(data,snapshot)
+            values={r['name']:r['value'] for r in rows}
+            self.assertEqual(values['Waiting for catalogue metadata'],'3')
+            self.assertEqual(values['Initial V6 first sweep'],'10 / 100')
+
     def test_overview_uses_v6_counts_and_hides_legacy_audit_status(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);data=root/'catalogue';data.mkdir()

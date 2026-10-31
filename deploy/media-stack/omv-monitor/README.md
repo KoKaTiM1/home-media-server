@@ -83,3 +83,7 @@ a count of every click. Reports are prioritized by the ordinary source worker
 and obey its playback/navigation/provider pauses.
 
 Playback events shows the latest 200 structured foreground failure/checkpoint events for 30 days: title, stage, category and current fresh-check status. Request/network/unknown errors preserve existing proof; confirmed source/decode failures request authoritative re-verification. This administrator-only view never reads raw exception messages or stream URLs.
+
+The progress overview also reports catalogue-metadata prerequisite waits. Those
+remain in the initial-sweep remaining count until source verification runs;
+metadata arrival alone does not increase V6 passes or completed checks.

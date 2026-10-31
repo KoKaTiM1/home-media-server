@@ -23,6 +23,7 @@ class FirstSweepTests(unittest.TestCase):
         CREATE TABLE verification_audit(key TEXT PRIMARY KEY,reason TEXT,completed REAL);''')
         c.executemany("INSERT INTO validation VALUES(?,'pending',0,'{}',0)",((f'movie:tt{i:07}',) for i in range(100000)))
         c.executemany("INSERT INTO verification_sweep_attempts(sweep_id,key,started,outcome) VALUES(1,?,1,'queued')",((f'movie:tt{i:07}',) for i in range(100000)))
+        Features.metadata_dependency_schema(c)
         c.commit();c.close()
         self.f=Features({});self.f.db=self.db
     def tearDown(self):self.tmp.cleanup()
@@ -31,6 +32,18 @@ class FirstSweepTests(unittest.TestCase):
         # A full queue scan exceeds this instruction budget; a bounded read fits.
         c.set_progress_handler(lambda:1,100000)
         return c
+    def test_resumed_dependency_precedes_discovery_with_bounded_index_read(self):
+        key='movie:tt0099999'
+        with sqlite3.connect(self.path) as c:
+            c.execute("INSERT INTO verification_metadata_dependencies VALUES (1,?,? ,1,0,0,'resumed')",(key,'meta:'+key))
+        self.assertEqual(self.f.first_sweep_candidate(),((1,key),True))
+
+    def test_queued_v5_still_precedes_resumed_discovery(self):
+        with sqlite3.connect(self.path) as c:
+            c.execute("UPDATE verification_sweep_attempts SET source_version=5 WHERE key='movie:tt0000001'")
+            c.execute("INSERT INTO verification_metadata_dependencies VALUES (1,'movie:tt0099999','meta:movie:tt0099999',1,0,0,'resumed')")
+        self.assertEqual(self.f.first_sweep_candidate(),((1,'movie:tt0000001'),True))
+
     def test_large_queue_is_bounded(self):
         self.assertEqual(self.f.first_sweep_candidate(),((1,'movie:tt0000000'),True))
     def test_claims_holds_and_metadata_waits_are_skipped(self):

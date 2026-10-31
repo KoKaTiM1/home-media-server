@@ -709,3 +709,14 @@ For shows, RU means at least one episode has a ready Russian alternative;
 availability can differ between episodes. Poster URLs include the badge state,
 so artwork caches refresh when a ready alternative appears or becomes invalid.
 Badge lookup uses saved evidence only and never starts a torrent or subtitle search.
+
+### Catalogue-metadata dependency resumption
+
+A first-sweep key waiting for catalogue metadata has a distinct metadata_wait
+state and a durable dependency on its exact movie/show metadata key. It is not
+counted as a finished media check. A valid import or bounded periodic readiness
+check resumes that same attempt; ready dependencies follow the existing V5
+priority and precede fresh discovery. Holds, claims, source cooldowns, changed
+proofs and newer manual reports remain protected. Unmarked historical deferrals
+are retained rather than guessed to be metadata-only waits. No Windows package
+update is needed for this server-side scheduling change.

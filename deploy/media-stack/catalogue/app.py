@@ -545,7 +545,11 @@ def metadata_import(limit=20,key=None,seed=False):
                 conn.execute('INSERT OR REPLACE INTO cache VALUES (?,?,?)',
                              ('meta:'+kind+':'+imdb,json.dumps(meta,ensure_ascii=False),expires))
                 outcome='applied'
-            conn.execute('DELETE FROM metadata_waits WHERE key=?',(kind+':'+imdb,))
+            parent=kind+':'+imdb
+            has_preparation=bool(conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='preparation_work'").fetchone())
+            if not has_preparation or not conn.execute('SELECT 1 FROM preparation_work WHERE key=?',(parent,)).fetchone():
+                conn.execute('DELETE FROM metadata_waits WHERE key=? AND NOT EXISTS(SELECT 1 FROM verification_retry_waits WHERE key=?)',(parent,parent))
+            F.resume_metadata_dependencies(conn,'meta:'+kind+':'+imdb)
         # If interrupted between these databases, the cache expiry comparison
         # makes replay a no-op; native import/watch state is never changed here.
         jobs.imported(receipt['result_id'],outcome)

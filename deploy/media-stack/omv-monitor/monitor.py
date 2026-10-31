@@ -191,14 +191,16 @@ def counts(data=DATA,refresh=False):
             if sweep:
                 outcomes=dict(conn.execute("SELECT x.outcome,COUNT(*) FROM verification_sweep_attempts x JOIN validation v ON v.key=x.key WHERE x.sweep_id=? AND v.rowid<=(SELECT rowid_highwater FROM verification_sweeps WHERE id=?) AND x.outcome IN ('passed','failed','deferred') GROUP BY x.outcome",(sweep[0],sweep[0])).fetchall())
                 attempted=sum(outcomes.values());remaining=max(0,sweep[2]-attempted)
-                summary.update(first_sweep_total=sweep[2],first_sweep_attempted=attempted,
+                metadata_wait=conn.execute("SELECT COUNT(*) FROM verification_sweep_attempts x JOIN validation v ON v.key=x.key WHERE x.sweep_id=? AND x.outcome='metadata_wait' AND v.rowid<=(SELECT rowid_highwater FROM verification_sweeps WHERE id=?)",(sweep[0],sweep[0])).fetchone()[0]
+                summary.update(first_sweep_metadata_wait=metadata_wait,first_sweep_total=sweep[2],first_sweep_attempted=attempted,
                     first_sweep_passed=outcomes.get('passed',0),first_sweep_failed=outcomes.get('failed',0),
                     first_sweep_deferred=outcomes.get('deferred',0),first_sweep_remaining=remaining,
                     first_sweep_complete=bool(sweep[3]))
                 detail=(f"{100*attempted/sweep[2]:.1f}% attempted; {outcomes.get('passed',0):,} passed, "
                         f"{outcomes.get('failed',0):,} failed, {outcomes.get('deferred',0):,} deferred; "
-                        f"{remaining:,} untouched in the starting snapshot") if sweep[2] else 'No eligible titles in the starting snapshot'
+                        f"{remaining:,} not completed in the starting snapshot") if sweep[2] else 'No eligible titles in the starting snapshot'
                 add('Initial V6 first sweep',f'{attempted:,} / {sweep[2]:,}',detail+('; complete' if sweep[3] else ''))
+                add('Waiting for catalogue metadata',metadata_wait,'Prerequisite waits; eligible work resumes when metadata is ready, before source retries')
             add('V6 direct-audio sources',max(0,(v6[0] or 0)-(v6[1] or 0)))
             add('V6 AAC-LC conversion sources',v6[1] or 0,'Video copied; conversion samples actually decoded')
             due_audits=conn.execute("SELECT COUNT(*) FROM validation WHERE state='verified' AND checked<=?",(now-86400,)).fetchone()[0]
@@ -310,8 +312,9 @@ def overview(data=DATA,snapshot=None):
         if values.get('first_sweep_total') is not None:
             detail=(f"{100*values.get('first_sweep_attempted',0)/values['first_sweep_total']:.1f}% attempted; " if values['first_sweep_total'] else '')
             detail+=f"{values.get('first_sweep_passed',0):,} passed, {values.get('first_sweep_failed',0):,} failed, "
-            detail+=f"{values.get('first_sweep_deferred',0):,} deferred; {values.get('first_sweep_remaining',0):,} untouched"
+            detail+=f"{values.get('first_sweep_deferred',0):,} deferred; {values.get('first_sweep_remaining',0):,} not completed"
             add('Initial V6 first sweep',f"{values.get('first_sweep_attempted',0):,} / {values['first_sweep_total']:,}",detail+('; complete' if values.get('first_sweep_complete') else ''))
+            add('Waiting for catalogue metadata',f"{values.get('first_sweep_metadata_wait',0):,}",'Prerequisite waits; source verification has not finished')
         add('V6 passes in last hour',f"{values.get('v6_hour',0):,}",'Latest V6 verified state per title; not a count of decoder operations','success')
     updated=stamp(now)
     queue=data.parent/'verification-worker/queue.sqlite'
