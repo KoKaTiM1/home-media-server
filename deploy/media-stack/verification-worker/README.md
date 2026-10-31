@@ -1,6 +1,6 @@
 # Windows V6 verification workers
 
-Launcher package **0.4.3** uses the existing verifier image **0.4.2**. Verifiers
+Launcher package **0.4.4** uses verifier image **0.4.4**. Verifiers
 run with Docker `--init` to reap orphaned decoder children after cancellations.
 Start/Update automatically drains and recreates same-image containers missing
 this flag while preserving identities, config, data and backend state.
@@ -96,7 +96,7 @@ separate measurements. No raw error text or source URLs appear in these metrics.
 
 Build the worker Dockerfile with an allowlisted context containing catalogue/*.py
 and the verifier sources; exclude secrets and runtime data. package.py produces
-verification-worker-v0.4.3.zip from the worker 0.4.2 image and torrent backend 0.3.0.
+verification-worker-v0.4.4.zip from the worker 0.4.4 image and torrent backend 0.3.0.
 The archive contains exactly four CMD launchers and no enrolled data or credentials.
 On restore, install the coordinator and resource gate, provision private TLS/token
 configuration, then copy the package to Windows and run Update. The topology is
@@ -107,7 +107,7 @@ Issue #4 tracks throughput; issue #6 tracks playback and backend stability. The
 100+ distinct completed title checks/hour target requires measurement. Preserve
 all V6 quality checks when evaluating more workers or torrent backends.
 
-## Queue timing and throughput trial (0.4.2)
+## Historical queue timing and throughput trial (0.4.2)
 
 The first sweep gives a title up to four minutes of preparation/execution;
 later retries allow up to 500 seconds. Metadata preparation consumes that
@@ -133,3 +133,10 @@ The launcher default remains 8/2; an existing topology is preserved on update.
 Compare final passes/failures, checkpoints, cancellations and lock waits, then
 observe a promising configuration for an hour. Revert the JSON to 8/2 and Start
 if memory/backend stability or playback regresses. No data folders are removed.
+
+## Child execution budget (0.4.4)
+
+Metadata preparation now receives the same child deadline as probe, speed and
+sample work. Expiry produces a structured local_work_budget checkpoint with
+its current phase before the parent deadline, preserving the existing receipt
+margin. V6 proof requirements, candidate alternatives and retry policy are unchanged.

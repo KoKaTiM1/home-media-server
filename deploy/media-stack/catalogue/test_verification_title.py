@@ -31,6 +31,69 @@ class TitleTests(unittest.TestCase):
         self.payload={'schema':1,'key':KEY,'meta':self.meta,'candidates':[{'infoHash':HASH,'title':'Fixture 2026 1080p','behaviorHints':{'filename':'Fixture.2026.mp4'}}], 'aliases':[],'prior':{'state':'pending'}}
         self.q=DecodeJobs(self.root/'queue.sqlite');self.q.initialize();self.q.set('enabled',True);self.q.set('local_torrent_enabled',True);self.q.set('local_torrent_permitted',True);self.q.set('max_windows_jobs',4)
         self.q.claim('pc-new',['local-torrent-v1']);self.q.backend_health('pc-new',True)
+    def test_local_metadata_wait_returns_checkpoint_inside_child_budget(self):
+        # A healthy HTTP endpoint that never supplies torrent metadata must not
+        # hold the child until the longer app default or parent kill deadline.
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self,*args):pass
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get('Content-Length',0)))
+                data=json.dumps({'hash':HASH,'stat':1}).encode()
+                self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
+        server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+        threading.Thread(target=server.serve_forever,daemon=True).start()
+        self.addCleanup(server.server_close);self.addCleanup(server.shutdown)
+        payload=self.root/'budget-payload.json';payload.write_text(json.dumps(self.payload))
+        result=self.root/'budget-result.json';state=self.root/'budget-state'
+        child=Path(__file__).parents[1]/'verification-worker/local_verifier.py'
+        env={**os.environ,'PYTHONPATH':str(Path(__file__).parent),
+             'LOCAL_TORRSERVER_URL':f'http://127.0.0.1:{server.server_port}',
+             'LOCAL_TORRENT_STATE':str(self.root/'locks')}
+        started=time.monotonic()
+        subprocess.run([sys.executable,str(child),'--payload',str(payload),'--state',str(state),
+                        '--output',str(result),'--budget-seconds','1'],env=env,
+                       check=True,capture_output=True,timeout=3)
+        self.assertLess(time.monotonic()-started,3)
+        value=json.loads(result.read_text())
+        self.assertEqual(value['status'],'checkpoint')
+        self.assertEqual(value['diagnostic']['code'],'local_work_budget')
+        self.assertEqual(value['diagnostic']['phase'],'torrent resolution')
+        with sqlite3.connect(state/'catalogue.sqlite') as c:
+            status,proof=c.execute('SELECT state,proof FROM validation WHERE key=?',(KEY,)).fetchone()
+        self.assertNotEqual(status,'verified');self.assertFalse(proof)
+
+    def test_parent_receives_metadata_checkpoint_before_receipt_margin(self):
+        from test_verification_worker import client
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self,*args):pass
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get('Content-Length',0)))
+                data=json.dumps({'hash':HASH,'stat':1}).encode()
+                self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
+        server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+        threading.Thread(target=server.serve_forever,daemon=True).start()
+        self.addCleanup(server.server_close);self.addCleanup(server.shutdown)
+        child=Path(__file__).parents[1]/'verification-worker/local_verifier.py'
+        env={**os.environ,'PYTHONPATH':str(Path(__file__).parent),
+             'LOCAL_TORRSERVER_URL':f'http://127.0.0.1:{server.server_port}',
+             'LOCAL_TORRENT_STATE':str(self.root/'locks')}
+        original_popen=subprocess.Popen
+        def spawn(command,**kwargs):
+            command=list(command);command[0]=sys.executable;command[2]=str(child)
+            return original_popen(command,env=env,**kwargs)
+        class API:
+            def request(self,*args,**kwargs):return {'active':True}
+        task={'params':self.payload,'job_id':'fixture-budget','deadline':time.time()+32}
+        started=time.monotonic()
+        with patch.object(client,'local_torrent_available',return_value=True), \
+             patch.object(client,'Path',side_effect=lambda p:self.root/'jobs' if p=='/data/title-jobs' else Path(p)), \
+             patch.object(client.subprocess,'Popen',side_effect=spawn):
+            result=client.run_local_task(API(),'fixture-worker',task,lambda *a:None)
+        self.assertLess(time.monotonic()-started,3)
+        self.assertEqual(result['status'],'checkpoint')
+        self.assertEqual(result['diagnostic']['code'],'local_work_budget')
+        self.assertGreater(task['deadline']-time.time(),28)
+
     def test_remaining_execution_budget_accepts_fractional_elapsed_time(self):
         for seconds in (1,59,239,240,499,500):
             job=self.q.submit(KEY,'b'*64,'verify_title',self.payload,'',seconds,execution_seconds=seconds)

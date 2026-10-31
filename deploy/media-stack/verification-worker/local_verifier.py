@@ -31,6 +31,9 @@ def verify(payload,state,output,budget_seconds=470):
         tmp=progress.with_suffix('.tmp');tmp.write_text(json.dumps({'phase':name,'updated':time.time()}));tmp.replace(progress)
     a.log=lambda message:None
     deadline=time.monotonic()+max(1,min(470,int(budget_seconds)))
+    # Preparation/metadata must share the child's budget, leaving the parent
+    # its existing result-receipt margin instead of waiting for a forced kill.
+    a.BUDGET.worker_deadline=deadline
     raw_path=state/'raw-samples.json'
     try:raw=json.loads(raw_path.read_text())
     except (OSError,ValueError):raw={}
@@ -113,7 +116,9 @@ def verify(payload,state,output,budget_seconds=470):
         result={'status':'ok','data':{'selected':playback['selected'],'info':info,'proof':proof,'raw_samples':samples,'files':files}}
     except Exception as error:
         # Only bounded categories/type names cross the PC boundary.
-        if not diagnostic:record_failure(error,current_phase)
+        if time.monotonic()>=deadline:
+            record_failure(Checkpoint('Local verification budget','local_work_budget'),current_phase)
+        elif not diagnostic:record_failure(error,current_phase)
         result={'status':'checkpoint','reason':'transport','diagnostic':diagnostic,'data':{'backend':'windows-torrent'}}
     result['metrics']={'lock_wait_seconds':round(lock_wait_seconds,3),'active_seconds':round(max(0,time.monotonic()-run_started-lock_wait_seconds),3)}
     tmp=output.with_suffix('.tmp');tmp.write_text(json.dumps(result));tmp.replace(output)
