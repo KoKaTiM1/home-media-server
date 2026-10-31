@@ -114,6 +114,24 @@ class MetadataResumeTests(unittest.TestCase):
         with patch.object(app,'fetch',side_effect=AssertionError('no subscribed work')):
             self.assertFalse(app.fetch_waiting_metadata(self.jobs))
 
+    def test_malformed_provider_metadata_returns_leased_retry_not_service_failure(self):
+        self.wait()
+        with patch.object(app,'fetch',return_value={'meta':{'id':'wrong'}}),\
+             patch.object(self.jobs,'release',side_effect=AssertionError('use identity-bound receipt')):
+            self.assertFalse(app.fetch_waiting_metadata(self.jobs))
+        with self.jobs.db() as c:
+            self.assertEqual(c.execute('SELECT state FROM jobs').fetchone()[0],'retry')
+        self.assertEqual(app.metadata_import(),0);self.assertEqual(self.outcome(),'metadata_wait')
+
+    def test_main_producer_invalid_metadata_releases_lease_and_waits(self):
+        app.BUDGET.metadata_background=True
+        with patch.object(app,'fetch',return_value={'meta':{'id':'wrong'}}):
+            with self.assertRaises(app.MetadataPending):app.metadata('series','tt0000001')
+        with self.jobs.db() as c:
+            self.assertEqual(c.execute('SELECT state FROM jobs').fetchone()[0],'retry')
+        with app.F.db() as c:
+            self.assertEqual(c.execute('SELECT state,attempts FROM validation').fetchone(),('pending',0))
+
     def test_claim_and_hold_block_resume_then_poll_recovers(self):
         token=self.wait(release=False);self.submit();app.metadata_import()
         self.assertEqual(self.outcome(),'metadata_wait')

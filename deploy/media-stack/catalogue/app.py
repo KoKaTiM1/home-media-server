@@ -29,7 +29,7 @@ import uuid
 import xml.etree.ElementTree as ET
 import zipfile
 from features import Features
-from metadata_jobs import MetadataJobs, MetadataBusy, from_marker as metadata_coordinator
+from metadata_jobs import MetadataJobs, MetadataBusy, InvalidSubmission, from_marker as metadata_coordinator
 from reliability import Reliability, Checkpoint, SourceFailure, DecodeFailure, SourceStalled, SourceTooSlow, VERSION, rank, METADATA_SECONDS, WORK_SECONDS
 from embedded_subtitles import EmbeddedSubtitles
 from playback_diagnostics import PlaybackDiagnostics
@@ -509,7 +509,10 @@ def metadata(kind,imdb):
         if jobs and lease:
             result={'result_id':uuid.uuid4().hex,'source':'cinemeta','fetched_at':time.time(),
                     'status':'ok','metadata':saved}
-            ack=jobs.receive('server','server',lease,result)
+            try:ack=jobs.receive('server','server',lease,result)
+            except InvalidSubmission:
+                jobs.release(lease)
+                raise MetadataPending('Provider catalogue metadata unavailable') from None
             if ack not in ('accepted','duplicate'):
                 raise Checkpoint('Metadata lease expired; work retained for retry')
             metadata_import(limit=1,key=kind+':'+imdb)
@@ -559,7 +562,10 @@ def fetch_waiting_metadata(jobs):
             'source':'cinemeta','fetched_at':time.time(),'status':'ok','metadata':data})
         return ack in ('accepted','duplicate')
     except Exception as error:
-        jobs.release(lease,getattr(error,'code',None),worker_id=worker)
+        status=getattr(error,'code',None)
+        jobs.receive('server',worker,lease,{'result_id':uuid.uuid4().hex,
+            'source':'cinemeta','fetched_at':time.time(),'status':'retry',
+            'provider_status':status,'retry_after_seconds':900 if status==429 else 60})
         return False
     finally:BUDGET.metadata_background=previous
 
