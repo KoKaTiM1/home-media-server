@@ -627,6 +627,19 @@ def metadata_retry_category(error,stage):
         return 'upstream_http',status
     if stage=='provider_fetch' and isinstance(error,json.JSONDecodeError):return 'invalid_json',0
     if stage=='provider_envelope' and isinstance(error,(KeyError,TypeError,ValueError)):return 'invalid_envelope',0
+    if stage=='coordinator_receipt' and isinstance(error,InvalidSubmission):
+        receipt_reasons={
+            'Invalid worker identity':'receipt_worker_identity',
+            'Token is bound to another worker':'receipt_owner_mismatch',
+            'Token permits series metadata only':'receipt_scope_mismatch',
+            'Invalid result identity':'receipt_invalid_result_identity',
+            'Result identity reused with different ownership or data':'receipt_result_conflict',
+            'Invalid metadata result':'receipt_invalid_metadata',
+            'Result metadata identity mismatch':'receipt_metadata_identity_mismatch',
+            'Invalid cooldown':'receipt_invalid_cooldown',
+        }
+        reason=error.args[0] if error.args and isinstance(error.args[0],str) else ''
+        return receipt_reasons.get(reason,'invalid_receipt'),0
     if stage=='coordinator_receipt' and isinstance(error,(KeyError,TypeError,ValueError)):return 'invalid_receipt',0
     if stage=='retry_receipt':return 'retry_receipt_error',0
     if isinstance(error,(TimeoutError,socket.timeout)):

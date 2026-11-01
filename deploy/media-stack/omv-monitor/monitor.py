@@ -340,6 +340,10 @@ def overview(data=DATA,snapshot=None):
             retry=values.get('metadata_retry_24h',{})
             labels={'timeout':'timeout','network':'network','invalid_response':'invalid response','invalid_json':'invalid JSON',
                     'invalid_envelope':'invalid response envelope','invalid_receipt':'receipt rejected',
+                    'receipt_worker_identity':'receipt worker identity rejected','receipt_owner_mismatch':'receipt owner mismatch',
+                    'receipt_scope_mismatch':'receipt scope mismatch','receipt_invalid_result_identity':'invalid receipt identity',
+                    'receipt_result_conflict':'conflicting receipt','receipt_invalid_metadata':'invalid receipt metadata',
+                    'receipt_metadata_identity_mismatch':'metadata identity mismatch','receipt_invalid_cooldown':'invalid receipt cooldown',
                     'retry_receipt_error':'retry receipt error','other':'other','upstream_http':'upstream'}
             details=[]
             for key,count in sorted(retry.items()):

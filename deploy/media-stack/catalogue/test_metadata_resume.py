@@ -105,12 +105,12 @@ class MetadataResumeTests(unittest.TestCase):
         self.wait()
         from metadata_jobs import InvalidSubmission
         with patch.object(app,'fetch',return_value={'meta':fixtures.result()['metadata']}),\
-             patch.object(self.jobs,'receive',side_effect=[InvalidSubmission('private detail'), 'accepted']),\
+             patch.object(self.jobs,'receive',side_effect=[InvalidSubmission('Result metadata identity mismatch'), 'accepted']),\
              patch.object(app,'log') as log:
             self.assertFalse(app.fetch_waiting_metadata(self.jobs))
         with app.F.db() as c:diagnostic=c.execute('SELECT stage,category,error_type FROM metadata_retry_details').fetchone()
-        self.assertEqual(tuple(diagnostic),('coordinator_receipt','invalid_receipt','InvalidSubmission'))
-        self.assertNotIn('private detail',log.call_args.args[0])
+        self.assertEqual(tuple(diagnostic),('coordinator_receipt','receipt_metadata_identity_mismatch','InvalidSubmission'))
+        self.assertNotIn('Result metadata identity mismatch',log.call_args.args[0])
 
     def test_dependency_fetch_skips_hold_and_source_retry(self):
         self.wait()
