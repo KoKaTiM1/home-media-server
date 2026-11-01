@@ -225,11 +225,10 @@ class SourceProviderWait(Checkpoint):
 
 
 @contextmanager
-def source_provider_slot():
-    # Playback and foreground requests fail fast. Background remote producers
-    # wait briefly for the shared cross-process slot instead of checkpointing
-    # every lane when another worker owns it. Cooldowns remain fail-fast so
-    # fallback providers can be tried and rate limits are never bypassed.
+def serialized_provider_slot(lock_path,control_key):
+    # All source providers serialize across processes. Foreground calls fail
+    # fast; remote background lanes wait briefly rather than all checkpointing
+    # behind the same request. Cooldowns remain fail-fast for provider fallback.
     background=bool(getattr(BUDGET,'validation_background',False)
                     and getattr(BUDGET,'remote_verification',False))
     deadline=time.monotonic()
@@ -243,7 +242,7 @@ def source_provider_slot():
         if cancel and cancel():raise ClientCancelled('Client disconnected')
         time.sleep(min(.25,seconds))
     while True:
-        lock=(DATA/'source-provider.lock').open('a')
+        lock=Path(lock_path).open('a')
         try:
             try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
             except BlockingIOError:
@@ -252,7 +251,7 @@ def source_provider_slot():
                 wait=deadline-time.monotonic()
                 if wait<=0:raise SourceProviderWait('Source provider slot wait budget exhausted') from None
                 wait_slice(wait);continue
-            state=cached('source-provider-control') or {}
+            state=cached(control_key) or {}
             now=time.time()
             if state.get('cooldown',0)>now:
                 lock.close()
@@ -268,7 +267,15 @@ def source_provider_slot():
         except BaseException:
             if not lock.closed:lock.close()
             raise
-    try:
+    try:yield
+    finally:
+        fcntl.flock(lock,fcntl.LOCK_UN)
+        lock.close()
+
+
+@contextmanager
+def source_provider_slot():
+    with serialized_provider_slot(DATA/'source-provider.lock','source-provider-control'):
         try:
             yield
         except urllib.error.HTTPError as error:
@@ -283,9 +290,6 @@ def source_provider_slot():
             state=cached('source-provider-control') or {}
             state['next']=time.time()+5
             remember('source-provider-control',state,90000)
-    finally:
-        fcntl.flock(lock,fcntl.LOCK_UN)
-        lock.close()
 
 
 def fetch(url, data=None, headers=None, timeout=20, raw=False, method=None):
@@ -1170,11 +1174,7 @@ def mediafusion_streams(key):
         raise Checkpoint('Invalid fallback provider configuration')
     saved=cached('mediafusion:'+key)
     if saved is not None:return saved
-    with (DATA/'mediafusion-provider.lock').open('a') as lock:
-        try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        except BlockingIOError:raise SourceProviderWait('Source provider request already active') from None
-        control=cached('mediafusion-provider-control') or {}
-        if max(control.get('next',0),control.get('cooldown',0))>time.time():raise SourceProviderWait('Source provider request deferred')
+    with serialized_provider_slot(DATA/'mediafusion-provider.lock','mediafusion-provider-control'):
         kind,imdb,*parts=key.split(':');ident=imdb+(':'+':'.join(parts) if parts else '')
         try:
             result=fetch(base+'/stream/'+kind+'/'+ident+'.json',timeout=15)

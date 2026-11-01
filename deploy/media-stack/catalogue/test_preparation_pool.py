@@ -337,6 +337,36 @@ class FallbackTests(unittest.TestCase):
             self.assertEqual(len(rows),1)
             self.assertEqual(rows[0]['_provider'],'torrentio')
             self.assertEqual(fetch.call_count,1)
+    def test_remote_fallback_calls_queue_behind_the_shared_provider_slot(self):
+        import threading,time as wall_time
+        from contextlib import ExitStack
+        real_sleep=wall_time.sleep
+        clock=[1000.0];request_started=threading.Event();remote_waiting=threading.Event();release=threading.Event();remote_done=threading.Event();errors=[]
+        def request(url,**kwargs):
+            if 'tt0000001' in url:
+                request_started.set();release.wait(3)
+            return {'streams':[self.stream()]}
+        def sleep(seconds):
+            clock[0]+=seconds;remote_waiting.set();real_sleep(.001)
+        def first():
+            try:app.mediafusion_streams('movie:tt0000001')
+            except Exception as error:errors.append(type(error).__name__)
+        def second():
+            app.BUDGET.validation_background=True;app.BUDGET.remote_verification=True
+            try:app.mediafusion_streams('movie:tt0000002')
+            except Exception as error:errors.append(type(error).__name__)
+            finally:remote_done.set()
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(app.time,'time',side_effect=lambda:clock[0]))
+            stack.enter_context(patch.object(app.time,'sleep',side_effect=sleep))
+            stack.enter_context(patch.object(app,'fetch',side_effect=request))
+            first_thread=threading.Thread(target=first);first_thread.start();self.assertTrue(request_started.wait(2))
+            second_thread=threading.Thread(target=second);second_thread.start();self.assertTrue(remote_waiting.wait(2))
+            self.assertFalse(remote_done.is_set());release.set()
+            try:self.assertTrue(remote_done.wait(2))
+            finally:first_thread.join(3);second_thread.join(3)
+        self.assertEqual(errors,[])
+        self.assertGreaterEqual(clock[0],1015)
     def test_two_provider_faults_do_not_cache_false_unavailable(self):
         import urllib.error
         with patch.object(app,'fetch',side_effect=urllib.error.HTTPError('https://example.invalid',429,'limited',{},None)):
