@@ -45,6 +45,11 @@ def validate_task(p):
 
 def payload(g,key):
     kind,imdb,*_=key.split(':')
+    # Capture before stream_candidates can consume the fallback marker while
+    # fetching/merging MediaFusion results.
+    fallback_marker=g['cached']('mediafusion-needed:'+key) if getattr(g['BUDGET'],'validation_background',False) else None
+    rejected_hash=(fallback_marker.get('rejected_hash') if isinstance(fallback_marker,dict) else None)
+    if not isinstance(rejected_hash,str) or not re.fullmatch(r'[a-f0-9]{40}',rejected_hash):rejected_hash=None
     # A remote background proof only needs exact title identity for the local
     # verifier. Reuse rich cached metadata when present; otherwise the trusted
     # IMDb index can satisfy this prerequisite without waiting on Cinemeta.
@@ -63,6 +68,7 @@ def payload(g,key):
     candidates=[];providers=set()
     for c in g['verification_candidates'](key):
         h=c['infoHash'].lower()
+        if rejected_hash and h==rejected_hash:continue
         if g['cached']('source-excluded:'+key+':'+h):continue
         x={'infoHash':h,'title':str(c.get('title',''))[:2000],
            'behaviorHints':{'filename':str(c.get('behaviorHints',{}).get('filename',''))[:2000]},
@@ -76,6 +82,10 @@ def payload(g,key):
             x['_exact']['link']=x.get('torrentUrl') or magnet(h)
         candidates.append(x)
         if len(candidates)>=20:break
+    if fallback_marker:
+        # After a source failed V6 speed validation, try newly discovered
+        # fallback candidates before older cached primaries on background work.
+        candidates.sort(key=lambda candidate:candidate.get('provider')!='mediafusion')
     if not candidates:raise EmptyTorrentCandidates('No eligible torrent candidates')
     with g['F'].db() as db:
         r=db.execute('SELECT state,proof,reason FROM validation WHERE key=?',(key,)).fetchone()
@@ -229,8 +239,10 @@ def _execute_title(g,key,cancel,execution_seconds):
                         # background preparation. Other failures do not trigger
                         # another provider request.
                         if failure_category=='speed_rejected' and p.get('provider')=='torrentio':
+                            diagnostic=result.get('diagnostic',{})
+                            source_hash=diagnostic.get('source_hash') if isinstance(diagnostic,dict) else None
                             g['request_mediafusion_after_slow_primary'](
-                                key,{'source_provider':'torrentio'},failure_category,True)
+                                key,{'source_provider':'torrentio','hash':source_hash},failure_category,True)
                         fallback=True;break
                     try:selected,info,proof,audio,conversion=validate_evidence(g,key,p,result['data'],started)
                     except (ValueError,KeyError,TypeError,RuntimeError):

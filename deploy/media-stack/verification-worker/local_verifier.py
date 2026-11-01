@@ -10,6 +10,18 @@ import subprocess
 import time
 
 
+def failure_diagnostic(error, stage, selected=None):
+    """Return bounded diagnostics; attach a source hash only to a speed rejection."""
+    typ=type(error).__name__
+    category={'SourceTooSlow':'speed_rejected','SourceStalled':'stream_stall','DecodeFailure':'decoder','ResourceCheckpoint':'resource','TimeoutError':'torrent_timeout' if stage=='torrent resolution' else 'stream_stall'}.get(typ,'transport')
+    value={'category':category,'failure_type':typ,'phase':stage,'code':getattr(error,'code','unclassified')}
+    if category=='speed_rejected' and isinstance(selected,dict):
+        source_hash=selected.get('hash')
+        if isinstance(source_hash,str) and re.fullmatch(r'[a-f0-9]{40}',source_hash.lower()):
+            value['source_hash']=source_hash.lower()
+    return value
+
+
 def verify(payload,state,output,budget_seconds=470):
     import app as a
     from verification_title import validate_task
@@ -19,10 +31,8 @@ def verify(payload,state,output,budget_seconds=470):
     a.DATA=state;a.TORR=os.environ.get('LOCAL_TORRSERVER_URL','http://home-media-verification-torrserver:8090')
     a.torr_headers=lambda:{}
     diagnostic={};lock_wait_seconds=0.0;run_started=time.monotonic()
-    def record_failure(error,stage):
-        typ=type(error).__name__
-        category={'SourceTooSlow':'speed_rejected','SourceStalled':'stream_stall','DecodeFailure':'decoder','ResourceCheckpoint':'resource','TimeoutError':'torrent_timeout' if stage=='torrent resolution' else 'stream_stall'}.get(typ,'transport')
-        diagnostic.update(category=category,failure_type=typ,phase=stage,code=getattr(error,'code','unclassified'))
+    def record_failure(error,stage,selected=None):
+        diagnostic.update(failure_diagnostic(error,stage,selected))
     current_phase='torrent resolution'
     progress=state/'progress.json'
     def phase(name):
@@ -41,7 +51,8 @@ def verify(payload,state,output,budget_seconds=470):
         def verify(self,*args,**kwargs):
             try:return super().verify(*args,**kwargs)
             except Exception as error:
-                record_failure(error,current_phase);raise
+                selected=args[1] if len(args)>1 else kwargs.get('selected')
+                record_failure(error,current_phase,selected);raise
         def source_url(self,route,key,selected,progress=None):return a.upstream(selected)
         @contextmanager
         def lock(self,name):

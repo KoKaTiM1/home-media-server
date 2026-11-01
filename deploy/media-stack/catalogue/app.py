@@ -1462,7 +1462,9 @@ def request_mediafusion_after_slow_primary(key,selected,reason,background):
     if (not background or reason!='speed_rejected' or not isinstance(selected,dict)
         or selected.get('local') or selected.get('source_provider')!='torrentio'):
         return False
-    remember('mediafusion-needed:'+key,True,21600)
+    source_hash=selected.get('hash')
+    marker={'rejected_hash':source_hash.lower()} if isinstance(source_hash,str) and re.fullmatch(r'[a-f0-9]{40}',source_hash.lower()) else True
+    remember('mediafusion-needed:'+key,marker,21600)
     return True
 
 

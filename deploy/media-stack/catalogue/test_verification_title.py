@@ -258,13 +258,40 @@ class TitleTests(unittest.TestCase):
     def test_speed_rejected_torrentio_only_job_requests_background_fallback(self):
         p=copy.deepcopy(self.payload);p['provider']='torrentio';p['candidates'][0]['provider']='torrentio'
         a.BUDGET.remote_verification=True;a.BUDGET.worker_deadline=time.monotonic()+60
-        result={'status':'checkpoint','diagnostic':{'category':'speed_rejected'}}
+        result={'status':'checkpoint','diagnostic':{'category':'speed_rejected','source_hash':HASH}}
         with patch('verification_remote.jobs',return_value=self.q),patch('verification_title.payload',return_value=p),\
              patch.object(self.q,'poll',return_value=('result',result)),patch.object(a,'prepared') as prepared:
             self.assertTrue(execute_title(a.__dict__,KEY))
         prepared.assert_called_once()
-        self.assertTrue(a.cached('mediafusion-needed:'+KEY))
+        self.assertEqual(a.cached('mediafusion-needed:'+KEY),{'rejected_hash':HASH})
         with a.F.db() as c:self.assertIsNone(c.execute('SELECT state FROM validation WHERE key=?',(KEY,)).fetchone())
+
+    def test_fallback_retry_skips_exact_rejected_hash_and_prioritizes_mediafusion(self):
+        rejected=HASH;other='b'*40;fallback='c'*40
+        marker={'rejected_hash':rejected};a.remember('mediafusion-needed:'+KEY,marker,3600)
+        previous=getattr(a.BUDGET,'validation_background',False);a.BUDGET.validation_background=True
+        candidates=[
+            {'infoHash':rejected,'title':'Fixture 2026 1080p','_provider':'torrentio','behaviorHints':{'filename':'Fixture.2026.mp4'}},
+            {'infoHash':other,'title':'Fixture 2026 720p','_provider':'torrentio','behaviorHints':{'filename':'Fixture.2026.720p.mp4'}},
+            {'infoHash':fallback,'title':'Fixture 2026 1080p','_provider':'mediafusion','behaviorHints':{'filename':'Fixture.2026.mp4'}},
+        ]
+        try:
+            with patch.object(a,'metadata',return_value=self.meta),patch.object(a,'verification_candidates',return_value=candidates):
+                result=payload(a.__dict__,KEY)
+            self.assertEqual([c['infoHash'] for c in result['candidates']],[fallback,other])
+            self.assertEqual([c['provider'] for c in result['candidates']],['mediafusion','torrentio'])
+        finally:a.BUDGET.validation_background=previous
+
+    def test_local_speed_failure_diagnostic_carries_only_valid_source_hash(self):
+        import importlib.util
+        worker=Path(__file__).parents[1]/'verification-worker/local_verifier.py'
+        spec=importlib.util.spec_from_file_location('test_local_verifier_diagnostic',worker)
+        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        from reliability import SourceTooSlow,SourceStalled
+        self.assertEqual(module.failure_diagnostic(SourceTooSlow(), 'speed verification', {'hash':HASH}),
+                         {'category':'speed_rejected','failure_type':'SourceTooSlow','phase':'speed verification','code':'unclassified','source_hash':HASH})
+        self.assertNotIn('source_hash',module.failure_diagnostic(SourceStalled(),'video probe',{'hash':HASH}))
+        self.assertNotIn('source_hash',module.failure_diagnostic(SourceTooSlow(),'speed verification',{'hash':'secret'}))
     def test_local_failure_defers_fallback_while_debian_gate_is_paused(self):
         self.q.set('enabled',False)
         a.BUDGET.remote_verification=True;a.BUDGET.worker_deadline=time.monotonic()+60

@@ -91,6 +91,22 @@ class QueueTests(unittest.TestCase):
             row=c.execute('SELECT failure_category,failure_type,result FROM decode_jobs WHERE id=?',(job,)).fetchone()
             self.assertEqual(tuple(row),('stream_stall','SourceStalled',None))
 
+    def test_speed_rejection_hash_is_retained_only_for_submitted_torrentio_candidate(self):
+        self.q.set('local_torrent_enabled',True);self.q.set('local_torrent_permitted',True)
+        self.q.backend_health(WORKER,True,'fixture-backend')
+        source_hash='a'*40
+        params={'schema':1,'key':KEY,'meta':{},'aliases':[],
+                'candidates':[{'infoHash':source_hash,'provider':'torrentio'}],'prior':{}}
+        for claimed_hash,expected in ((source_hash,source_hash),('b'*40,None)):
+            job=self.q.submit(KEY,SID,'verify_title',params,'',120)
+            task=self.q.claim(WORKER,['local-torrent-v1'])
+            result=self.result();result.update(reason='transport',diagnostic={'category':'speed_rejected','source_hash':claimed_hash})
+            self.assertEqual(self.q.receive(WORKER,task,result),'accepted')
+            with self.q.db() as c:
+                raw=c.execute('SELECT result FROM decode_jobs WHERE id=?',(job,)).fetchone()[0]
+            diagnostic=json.loads(raw)['diagnostic']
+            self.assertEqual(diagnostic.get('source_hash'),expected)
+
     def test_lanes_above_guard_limit_are_not_queued(self):
         second='isolated-windows-2';self.q.seen(second);self.q.set('max_windows_jobs',2)
         self.submit()

@@ -1,6 +1,6 @@
 # Windows V6 verification workers
 
-Launcher package **0.4.4** uses verifier image **0.4.4**. Verifiers
+Launcher package **0.4.5** uses verifier image **0.4.5**. Verifiers
 run with Docker `--init` to reap orphaned decoder children after cancellations.
 Start/Update automatically drains and recreates same-image containers missing
 this flag while preserving identities, config, data and backend state.
@@ -104,7 +104,7 @@ separate measurements. No raw error text or source URLs appear in these metrics.
 
 Build the worker Dockerfile with an allowlisted context containing catalogue/*.py
 and the verifier sources; exclude secrets and runtime data. package.py produces
-verification-worker-v0.4.4.zip from the worker 0.4.4 image and torrent backend 0.3.0.
+verification-worker-v0.4.5.zip from the worker 0.4.5 image and torrent backend 0.3.0.
 The archive contains exactly four CMD launchers and no enrolled data or credentials.
 On restore, install the coordinator and resource gate, provision private TLS/token
 configuration, then copy the package to Windows and run Update. The topology is
@@ -141,6 +141,17 @@ The launcher default remains 8/2; an existing topology is preserved on update.
 Compare final passes/failures, checkpoints, cancellations and lock waits, then
 observe a promising configuration for an hour. Revert the JSON to 8/2 and Start
 if memory/backend stability or playback regresses. No data folders are removed.
+
+## Exact slow-source fallback (0.4.5)
+
+When a Windows V6 speed test rejects a Torrentio candidate, the worker now
+returns that candidate's hash as a diagnostic hint. Debian accepts the hint
+only if it matches a Torrentio candidate in that exact leased job. On the next
+background attempt, Debian skips only that rejected hash and tries newly
+matched MediaFusion fallback candidates before older cached primaries. The
+hint does not change playback selection, source exclusions, V6 evidence, or
+provider pacing. If an older client omits the hint, server validation remains
+unchanged and the next attempt cannot skip an exact source.
 
 ## Child execution budget (0.4.4)
 

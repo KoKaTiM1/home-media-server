@@ -230,6 +230,25 @@ class DecodeJobs:
         if not isinstance(result,dict) or not re.fullmatch('[a-f0-9]{32}',str(result.get('result_id',''))) or result.get('status') not in ('ok','checkpoint','decode_failure'):raise InvalidJob('Invalid result')
         reason=result.get('reason','')
         if reason and (reason not in REASONS or result['status']=='ok'):raise InvalidJob('Invalid result reason')
+        # A Windows client may report which exact source failed the V6 speed
+        # check. Retain that hint only when it names a Torrentio candidate in
+        # this lease's immutable submitted payload; never trust arbitrary hashes.
+        result=dict(result)
+        diagnostic=result.get('diagnostic')
+        if isinstance(diagnostic,dict) and 'source_hash' in diagnostic:
+            diagnostic=dict(diagnostic)
+            source_hash=diagnostic.get('source_hash')
+            params=task.get('params') if isinstance(task,dict) else None
+            candidates=params.get('candidates',[]) if isinstance(params,dict) else []
+            matched=(diagnostic.get('category')=='speed_rejected'
+                     and isinstance(source_hash,str) and re.fullmatch(r'[a-f0-9]{40}',source_hash)
+                     and isinstance(candidates,list)
+                     and any(isinstance(candidate,dict)
+                             and str(candidate.get('infoHash','')).lower()==source_hash
+                             and candidate.get('provider')=='torrentio'
+                             for candidate in candidates))
+            if not matched:diagnostic.pop('source_hash',None)
+            result['diagnostic']=diagnostic
         raw=json.dumps(result,sort_keys=True,separators=(',',':'),allow_nan=False)
         if len(raw.encode())>2*1024*1024:raise InvalidJob('Result too large')
         digest=hashlib.sha256(raw.encode()).hexdigest();self.seen(worker)
