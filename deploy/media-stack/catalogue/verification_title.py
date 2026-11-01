@@ -17,6 +17,8 @@ class EmptyTorrentCandidates(SourceFailure):
 
 CAPABILITY='local-torrent-v1'
 OPERATION='verify_title'
+SOURCE_DISCOVERY_WAIT_SECONDS=180
+MIN_LOCAL_EXECUTION_SECONDS=180
 
 class LocalTitleCheckpoint(Checkpoint):
     def __init__(self,category):
@@ -163,9 +165,18 @@ def _execute_title(g,key,cancel,execution_seconds):
     q=jobs(g)
     if not q or not q.setting_read('local_torrent_enabled',False) or not q.setting_read('local_torrent_permitted',False) or not q.local_workers():return False
     if not q.setting_read('local_torrent_continuous',False) and q.setting_read('local_torrent_pilot_remaining',20)<=0:return False
-    with g['request_budget'](time.monotonic()+60,cancel):p=payload(g,key)
+    # Candidate lookup also calls globally paced source providers. Mark this
+    # phase as background before discovery so it joins their bounded queue;
+    # reserve execution time for the actual local V6 decode job.
+    deadline=min(time.monotonic()+execution_seconds,getattr(g['BUDGET'],'worker_deadline',float('inf')))
+    now=time.monotonic();remaining_budget=max(1,deadline-now)
+    execution_reserve=min(MIN_LOCAL_EXECUTION_SECONDS,max(1,remaining_budget/2))
+    source_budget=60 if getattr(g['BUDGET'],'first_sweep_attempt',False) else SOURCE_DISCOVERY_WAIT_SECONDS
+    source_deadline=min(now+source_budget,deadline-execution_reserve)
+    if source_deadline<=time.monotonic():raise Checkpoint('Local source discovery budget exhausted')
+    with g['validation_attempt'](True),g['request_budget'](source_deadline,cancel):p=payload(g,key)
     producer_phase(g,key,'source preparation',p.get('provider','none'))
-    started=time.time();deadline=min(time.monotonic()+execution_seconds,getattr(g['BUDGET'],'worker_deadline',float('inf')))
+    started=time.time()
     fallback=False;job=None;consumed=False;failure_category="transport";cancel_code="controller_error"
     # Queue waiting has its own bounded window. Active execution remains capped
     # by the original remaining per-attempt budget after source preparation.

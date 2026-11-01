@@ -44,6 +44,29 @@ class TitleTests(unittest.TestCase):
         self.assertEqual(result['provider'],'mediafusion')
         self.assertEqual(result['candidates'][0]['provider'],'mediafusion')
 
+    def test_windows_candidate_discovery_uses_background_provider_queue_and_preserves_decode_budget(self):
+        previous={name:getattr(a.BUDGET,name,None) for name in ('remote_verification','first_sweep_attempt','worker_deadline')}
+        try:
+            a.BUDGET.remote_verification=True;a.BUDGET.worker_deadline=None
+            for first_sweep,expected in ((False,180),(True,60)):
+                a.BUDGET.first_sweep_attempt=first_sweep;observed={}
+                def discover(*args):
+                    observed['background']=a.BUDGET.validation_background
+                    observed['remote']=a.BUDGET.remote_verification
+                    observed['source_seconds']=a.BUDGET.deadline-time.monotonic()
+                    return self.payload
+                with patch('verification_remote.jobs',return_value=self.q),patch('verification_title.payload',side_effect=discover),patch.object(self.q,'submit',side_effect=WorkerWait):
+                    self.assertFalse(execute_title(a.__dict__,KEY))
+                self.assertTrue(observed['background']);self.assertTrue(observed['remote'])
+                self.assertGreaterEqual(observed['source_seconds'],expected-2)
+                self.assertLessEqual(observed['source_seconds'],expected+1)
+        finally:
+            for name,value in previous.items():
+                if value is None:
+                    try:delattr(a.BUDGET,name)
+                    except AttributeError:pass
+                else:setattr(a.BUDGET,name,value)
+
     def test_local_metadata_wait_returns_checkpoint_inside_child_budget(self):
         # A healthy HTTP endpoint that never supplies torrent metadata must not
         # hold the child until the longer app default or parent kill deadline.
