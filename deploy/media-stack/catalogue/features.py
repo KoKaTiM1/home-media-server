@@ -133,6 +133,11 @@ class Features:
             hour INTEGER NOT NULL,category TEXT NOT NULL,status INTEGER NOT NULL DEFAULT 0,
             attempts INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(hour,category,status))''')
         conn.execute('CREATE INDEX IF NOT EXISTS metadata_retry_counts_hour ON metadata_retry_counts(hour)')
+        conn.execute('''CREATE TABLE IF NOT EXISTS metadata_retry_details(
+            hour INTEGER NOT NULL,stage TEXT NOT NULL,category TEXT NOT NULL,error_type TEXT NOT NULL,
+            status INTEGER NOT NULL DEFAULT 0,attempts INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(hour,stage,category,error_type,status))''')
+        conn.execute('CREATE INDEX IF NOT EXISTS metadata_retry_details_hour ON metadata_retry_details(hour)')
 
     def metadata_admission_blocked(self,key,conn=None):
         config=self.g.get('metadata_pool_config',lambda:{'enabled':False})()

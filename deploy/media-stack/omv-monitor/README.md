@@ -74,7 +74,9 @@ and proof audits once. Existing verified titles stay visible pending an actual
 failed recheck; restarting the worker does not reset attempts or retry backoff.
 
 The metadata preparation view also reports sanitized metadata-fetch retries for
-the last 24 hours, grouped by category and upstream HTTP status. It excludes
+the last 24 hours, grouped by processing stage, category, allowlisted exception
+type and upstream HTTP status. The stage distinguishes provider fetch, response
+envelope parsing, coordinator receipt and retry receipt handling. It excludes
 titles, IMDb keys, URLs and exception text. Retry counts are stored in hourly
 aggregates with a seven-day retention window; they describe metadata fetches,
 not failed media verification.

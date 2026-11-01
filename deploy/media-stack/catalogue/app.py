@@ -620,11 +620,15 @@ def metadata(kind,imdb):
     return F.localize(saved)
 
 
-def metadata_retry_category(error):
+def metadata_retry_category(error,stage):
     """Return a low-cardinality reason and HTTP code without exception text."""
     if isinstance(error,urllib.error.HTTPError):
         status=error.code if type(error.code) is int and 100<=error.code<=599 else 0
         return 'upstream_http',status
+    if stage=='provider_fetch' and isinstance(error,json.JSONDecodeError):return 'invalid_json',0
+    if stage=='provider_envelope' and isinstance(error,(KeyError,TypeError,ValueError)):return 'invalid_envelope',0
+    if stage=='coordinator_receipt' and isinstance(error,(KeyError,TypeError,ValueError)):return 'invalid_receipt',0
+    if stage=='retry_receipt':return 'retry_receipt_error',0
     if isinstance(error,(TimeoutError,socket.timeout)):
         return 'timeout',0
     if isinstance(error,urllib.error.URLError):
@@ -636,19 +640,27 @@ def metadata_retry_category(error):
     return 'other',0
 
 
-def record_metadata_retry(error):
-    category,status=metadata_retry_category(error)
+def record_metadata_retry(error,stage):
+    category,status=metadata_retry_category(error,stage)
+    allowed_types={'HTTPError','URLError','TimeoutError','ConnectionError','OSError','JSONDecodeError',
+                   'KeyError','TypeError','ValueError','InvalidSubmission','MetadataBusy','OperationalError'}
+    error_type=type(error).__name__
+    if error_type not in allowed_types:error_type='Other'
     hour=int(time.time()//3600)
     try:
         with F.db() as conn:
             conn.execute('''INSERT INTO metadata_retry_counts(hour,category,status,attempts) VALUES (?,?,?,1)
                 ON CONFLICT(hour,category,status) DO UPDATE SET attempts=attempts+1''',(hour,category,status))
+            conn.execute('''INSERT INTO metadata_retry_details(hour,stage,category,error_type,status,attempts) VALUES (?,?,?,?,?,1)
+                ON CONFLICT(hour,stage,category,error_type,status) DO UPDATE SET attempts=attempts+1''',
+                (hour,stage,category,error_type,status))
             conn.execute('DELETE FROM metadata_retry_counts WHERE hour<?',(hour-167,))
+            conn.execute('DELETE FROM metadata_retry_details WHERE hour<?',(hour-167,))
     except sqlite3.Error:
         # Retry telemetry must never change the metadata retry outcome.
         pass
     detail=f' status={status}' if status else ''
-    log(f'Metadata dependency fetch retry category={category}{detail}')
+    log(f'Metadata dependency fetch retry stage={stage} category={category} type={error_type}{detail}')
 
 
 def fetch_waiting_metadata(jobs):
@@ -697,17 +709,25 @@ def fetch_waiting_metadata(jobs):
             jobs.put(provider,'preparation_burst',burst)
     previous=getattr(BUDGET,'metadata_background',False)
     BUDGET.metadata_background=True
+    stage='provider_fetch'
     try:
-        data=fetch(f'{CINEMETA}/meta/{kind}/{imdb}.json',timeout=8)['meta']
+        response=fetch(f'{CINEMETA}/meta/{kind}/{imdb}.json',timeout=8)
+        stage='provider_envelope'
+        data=response['meta']
+        stage='coordinator_receipt'
         ack=jobs.receive('server',worker,lease,{'result_id':uuid.uuid4().hex,
             'source':'cinemeta','fetched_at':time.time(),'status':'ok','metadata':data})
         return ack in ('accepted','duplicate')
     except Exception as error:
         status=getattr(error,'code',None)
-        record_metadata_retry(error)
-        jobs.receive('server',worker,lease,{'result_id':uuid.uuid4().hex,
-            'source':'cinemeta','fetched_at':time.time(),'status':'retry',
-            'provider_status':status,'retry_after_seconds':900 if status==429 else 60})
+        record_metadata_retry(error,stage)
+        try:
+            jobs.receive('server',worker,lease,{'result_id':uuid.uuid4().hex,
+                'source':'cinemeta','fetched_at':time.time(),'status':'retry',
+                'provider_status':status,'retry_after_seconds':900 if status==429 else 60})
+        except Exception as receipt_error:
+            record_metadata_retry(receipt_error,'retry_receipt')
+            raise
         return False
     finally:BUDGET.metadata_background=previous
 

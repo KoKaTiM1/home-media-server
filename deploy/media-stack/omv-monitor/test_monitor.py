@@ -161,13 +161,15 @@ class MonitorTests(unittest.TestCase):
             snapshot=root/'snapshot.json';snapshot.write_text(json.dumps({'time':time.time(),'summary':{
                 'total':100,'v6':3,'metadata_pool_online':2,'metadata_pool_fetching':1,
                 'metadata_pool_pending':400,'metadata_pool_ready':5,'metadata_admission_paused':True,
-                'metadata_retry_24h':{'timeout':3,'upstream_http 429':2}}}))
+                'metadata_retry_24h':{'provider_fetch timeout TimeoutError':3,
+                                      'provider_fetch upstream_http HTTPError 429':2}}}))
             with patch.object(m,'context',return_value={}):rows=m.overview(data,snapshot)
             values={r['name']:r['value'] for r in rows}
             self.assertEqual(values['Metadata preparation pool'],'2 online')
             self.assertEqual(values['New metadata admission'],'Paused')
             self.assertEqual(values['Metadata fetch retries (24h)'],'5')
-            self.assertIn('upstream HTTP 429: 2',next(r['detail'] for r in rows if r['name']=='Metadata fetch retries (24h)'))
+            detail=next(r['detail'] for r in rows if r['name']=='Metadata fetch retries (24h)')
+            self.assertIn('provider_fetch / upstream HTTP 429 (HTTPError): 2',detail)
             self.assertEqual(values['V6 verified sources'],'3')
 
     def test_metadata_wait_is_visible_without_counting_as_finished_verification(self):

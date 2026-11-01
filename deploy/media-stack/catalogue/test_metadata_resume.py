@@ -65,10 +65,10 @@ class MetadataResumeTests(unittest.TestCase):
         with self.jobs.db() as c:
             state,due=c.execute('SELECT state,due FROM jobs WHERE job_id=?',('series:tt0000001',)).fetchone()
         self.assertEqual(state,'retry');self.assertGreater(due,time.time())
-        with app.F.db() as c:diagnostic=c.execute('SELECT category,status,attempts FROM metadata_retry_counts').fetchone()
-        self.assertEqual(tuple(diagnostic),('timeout',0,1))
+        with app.F.db() as c:diagnostic=c.execute('SELECT stage,category,error_type,status,attempts FROM metadata_retry_details').fetchone()
+        self.assertEqual(tuple(diagnostic),('provider_fetch','timeout','TimeoutError',0,1))
         message=log.call_args.args[0]
-        self.assertIn('category=timeout',message);self.assertNotIn('secret-url-and-detail',message)
+        self.assertIn('stage=provider_fetch category=timeout type=TimeoutError',message);self.assertNotIn('secret-url-and-detail',message)
         with patch.object(app,'fetch',side_effect=AssertionError('must back off')):
             self.assertFalse(app.fetch_waiting_metadata(self.jobs))
         self.assertEqual(self.outcome(),'metadata_wait')
@@ -78,11 +78,39 @@ class MetadataResumeTests(unittest.TestCase):
         error=urllib.error.HTTPError('https://private.invalid/tt0000001',429,'rate limited',None,None)
         with patch.object(app,'fetch',side_effect=error),patch.object(app,'log') as log:
             self.assertFalse(app.fetch_waiting_metadata(self.jobs))
-        with app.F.db() as c:diagnostic=c.execute('SELECT category,status,attempts FROM metadata_retry_counts').fetchone()
-        self.assertEqual(tuple(diagnostic),('upstream_http',429,1))
+        with app.F.db() as c:diagnostic=c.execute('SELECT stage,category,error_type,status,attempts FROM metadata_retry_details').fetchone()
+        self.assertEqual(tuple(diagnostic),('provider_fetch','upstream_http','HTTPError',429,1))
         message=log.call_args.args[0]
-        self.assertIn('category=upstream_http status=429',message)
+        self.assertIn('stage=provider_fetch category=upstream_http type=HTTPError status=429',message)
         self.assertNotIn('private.invalid',message);self.assertNotIn('tt0000001',message)
+
+    def test_dependency_fetch_invalid_json_records_safe_stage_and_type(self):
+        self.wait()
+        error=json.JSONDecodeError('secret', 'private response body', 0)
+        with patch.object(app,'fetch',side_effect=error),patch.object(app,'log') as log:
+            self.assertFalse(app.fetch_waiting_metadata(self.jobs))
+        with app.F.db() as c:diagnostic=c.execute('SELECT stage,category,error_type FROM metadata_retry_details').fetchone()
+        self.assertEqual(tuple(diagnostic),('provider_fetch','invalid_json','JSONDecodeError'))
+        self.assertNotIn('private response body',log.call_args.args[0])
+
+    def test_dependency_fetch_invalid_envelope_records_missing_meta_without_body(self):
+        self.wait()
+        with patch.object(app,'fetch',return_value={'error':'private body'}),patch.object(app,'log') as log:
+            self.assertFalse(app.fetch_waiting_metadata(self.jobs))
+        with app.F.db() as c:diagnostic=c.execute('SELECT stage,category,error_type FROM metadata_retry_details').fetchone()
+        self.assertEqual(tuple(diagnostic),('provider_envelope','invalid_envelope','KeyError'))
+        self.assertNotIn('private body',log.call_args.args[0])
+
+    def test_dependency_receipt_rejection_is_distinct_from_provider_error(self):
+        self.wait()
+        from metadata_jobs import InvalidSubmission
+        with patch.object(app,'fetch',return_value={'meta':fixtures.result()['metadata']}),\
+             patch.object(self.jobs,'receive',side_effect=[InvalidSubmission('private detail'), 'accepted']),\
+             patch.object(app,'log') as log:
+            self.assertFalse(app.fetch_waiting_metadata(self.jobs))
+        with app.F.db() as c:diagnostic=c.execute('SELECT stage,category,error_type FROM metadata_retry_details').fetchone()
+        self.assertEqual(tuple(diagnostic),('coordinator_receipt','invalid_receipt','InvalidSubmission'))
+        self.assertNotIn('private detail',log.call_args.args[0])
 
     def test_dependency_fetch_skips_hold_and_source_retry(self):
         self.wait()
