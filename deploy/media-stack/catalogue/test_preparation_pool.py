@@ -387,3 +387,35 @@ class FallbackTests(unittest.TestCase):
         with patch.object(app,'fetch',side_effect=ValueError('Malformed upstream JSON')):
             with self.assertRaises(app.Checkpoint):app.stream_candidates('movie:tt0000001')
         self.assertIsNone(app.cached('source-status:movie:tt0000001'))
+
+class SourceDiagnosticsTests(unittest.TestCase):
+    def test_filter_diagnostics_match_the_existing_candidate_decisions(self):
+        accepted={'infoHash':'a'*40,'title':'Example 1080p x264'}
+        rows=[accepted,{'infoHash':'bad','title':'Example 1080p'},
+              {'infoHash':'b'*40,'title':'Example 1080p HEVC'},
+              {'infoHash':'c'*40,'title':'Example 1080p CAM'},
+              {'infoHash':'d'*40,'title':'Example 480p'},
+              {'infoHash':'e'*40,'title':'Example 720p','behaviorHints':{'filename':'Example.iso'}},
+              {**accepted,'name':'duplicate'}]
+        response={'streams':rows}
+        regular=app.filtered_streams(response)
+        diagnosed,stats=app.filter_streams_with_diagnostics(response)
+        self.assertEqual(diagnosed,regular)
+        self.assertEqual(stats,{'provider_rows':7,'invalid_infohash':1,'unsupported_release':1,
+            'unsupported_codec':1,'unsupported_resolution':1,'unsupported_container':1,
+            'duplicate_infohash':1,'compatible':1})
+
+    def test_source_event_contains_only_safe_low_cardinality_fields(self):
+        import urllib.error
+        with patch.object(app,'log') as logger:
+            app.source_provider_event('torrentio','error',error=urllib.error.HTTPError(
+                'https://private.example/tt0000001','429','limited',{},None))
+        event=logger.call_args.args[0]
+        self.assertIn('"error":"http_429"',event)
+        self.assertNotIn('private.example',event)
+        self.assertNotIn('tt0000001',event)
+
+    def test_source_diagnostic_logging_failure_does_not_interrupt_lookup(self):
+        with patch.object(app,'log',side_effect=OSError('logger unavailable')):
+            app.source_provider_event('mediafusion','empty',provider_rows=2,
+                                      stats={'compatible':0})

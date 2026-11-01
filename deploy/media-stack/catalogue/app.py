@@ -1240,16 +1240,41 @@ def mediafusion_streams(key):
 
 
 def filtered_streams(response):
+    return _filter_streams(response)
+
+
+def filter_streams_with_diagnostics(response):
+    """Apply the unchanged compatibility filter and return safe reason counts."""
+    stats={}
+    candidates=_filter_streams(response,stats)
+    return candidates,stats
+
+
+def _filter_streams(response,stats=None):
+    streams=response.get('streams',[])
+    if stats is not None:
+        stats.update({'provider_rows':len(streams),'invalid_infohash':0,'unsupported_release':0,
+                      'unsupported_codec':0,'unsupported_resolution':0,'unsupported_container':0,
+                      'duplicate_infohash':0,'compatible':0})
     candidates=[]
-    for stream in response.get('streams',[]):
+    for stream in streams:
         infohash=stream.get('infoHash','')
-        if not re.fullmatch('[a-fA-F0-9]{40}',infohash): continue
+        if not re.fullmatch('[a-fA-F0-9]{40}',infohash):
+            if stats is not None:stats['invalid_infohash']+=1
+            continue
         title=stream.get('title','')+' '+stream.get('name','')
-        if re.search(r'2160|4K|CAM\b|\bTS\b|HDCAM|TELESYNC|AV1|x265|HEVC|H\.265',title,re.I): continue
-        if not re.search('1080|720',title): continue
+        if re.search(r'2160|4K|CAM\b|\bTS\b|HDCAM|TELESYNC|AV1|x265|HEVC|H\.265',title,re.I):
+            if stats is not None:
+                stats['unsupported_codec' if re.search(r'AV1|x265|HEVC|H\.265',title,re.I) else 'unsupported_release']+=1
+            continue
+        if not re.search('1080|720',title,re.I):
+            if stats is not None:stats['unsupported_resolution']+=1
+            continue
         candidate=dict(stream)
         hinted_filename=stream.get('behaviorHints',{}).get('filename','')
-        if Path(hinted_filename).suffix.lower() in ('.iso','.rar','.zip'): continue
+        if Path(hinted_filename).suffix.lower() in ('.iso','.rar','.zip'):
+            if stats is not None:stats['unsupported_container']+=1
+            continue
         seeds=re.search(r'(?:👤|seeders?[: ]*)\s*(\d+)',title,re.I)
         # Counts are hints; even a reported zero can be stale.
         candidate['_score']=(2000 if '1080' in title else 1000)+(500 if re.search('x264|h[ .]?264',title,re.I) else 0)+(200 if 'AAC' in title.upper() else 0)+min(int(seeds[1]) if seeds else 0,3000)*3
@@ -1257,9 +1282,41 @@ def filtered_streams(response):
     seen=set();unique=[]
     for row in candidates:
         h=row['infoHash'].lower()
-        if h in seen:continue
+        if h in seen:
+            if stats is not None:stats['duplicate_infohash']+=1
+            continue
         seen.add(h);row['infoHash']=h;unique.append(row)
+    if stats is not None:stats['compatible']=len(unique)
     return unique
+
+
+def source_provider_error_category(error):
+    """Stable provider-failure label; never expose URL, title, or exception text."""
+    if isinstance(error,SourceProviderWait):
+        return 'wait_'+(error.reason if error.reason in ('busy','queue_timeout','cooldown','pacing') else 'other')
+    if isinstance(error,urllib.error.HTTPError):
+        try:code=int(error.code)
+        except (TypeError,ValueError):code=0
+        return 'http_'+str(code) if 100<=code<=599 else 'http_other'
+    if isinstance(error,(TimeoutError,socket.timeout)):return 'timeout'
+    if isinstance(error,urllib.error.URLError):return 'network'
+    if isinstance(error,ValueError):return 'invalid_response'
+    if isinstance(error,Checkpoint):return 'checkpoint'
+    return 'other'
+
+
+def source_provider_event(provider,outcome,cache='miss',provider_rows=None,stats=None,error=None,primary_cache=None):
+    """Emit low-cardinality lookup telemetry without title/source identifiers."""
+    event={'provider':provider,'outcome':outcome,'cache':cache}
+    if provider_rows is not None:event['provider_rows']=max(0,int(provider_rows))
+    if stats is not None:
+        for name in ('invalid_infohash','unsupported_release','unsupported_codec','unsupported_resolution',
+                     'unsupported_container','duplicate_infohash','compatible'):
+            event[name]=int(stats.get(name,0))
+    if error is not None:event['error']=source_provider_error_category(error)
+    if primary_cache is not None:event['primary_cache']=primary_cache
+    try:log('Source discovery '+json.dumps(event,sort_keys=True,separators=(',',':')))
+    except Exception:pass # Diagnostics must never change source selection.
 
 
 def stream_candidates(key):
@@ -1271,18 +1328,30 @@ def stream_candidates(key):
         'behaviorHints':{'filename':'Big Buck Bunny.mp4'},'_score':999999,'_provider':'other'}
     saved=cached('streams:'+key)
     if saved==[]:
-        fallback=mediafusion_streams(key)
+        fallback_cache='hit' if cached('mediafusion:'+key) is not None else 'miss'
+        try:fallback=mediafusion_streams(key)
+        except (Checkpoint,urllib.error.URLError,TimeoutError,ValueError) as error:
+            source_provider_event('mediafusion','error',fallback_cache,error=error,primary_cache='negative')
+            raise
         if fallback is not None:
-            choices=filtered_streams({'streams':fallback})
+            choices,stats=filter_streams_with_diagnostics({'streams':fallback})
+            source_provider_event('mediafusion','compatible' if choices else 'empty',fallback_cache,len(fallback),stats,
+                                  primary_cache='negative')
             if choices:
                 saved=remember('streams:'+key,choices[:20],1800)
                 if not getattr(BUDGET,'speculative',False):
                     remember('source-status:'+key,{'state':'listed','checked_at':time.time()},21600)
+        else:
+            source_provider_event('mediafusion','disabled',fallback_cache,primary_cache='negative')
     if saved is not None:
         # Rows cached before provider attribution were only produced by the
         # primary Torrentio path; preserve explicit MediaFusion labels.
         for row in saved:
             if isinstance(row,dict):row.setdefault('_provider','torrentio')
+        if saved:
+            providers=sorted({row.get('_provider','torrentio') for row in saved if isinstance(row,dict)})
+            providers=[p if p in ('torrentio','mediafusion','other') else 'other' for p in providers]
+            source_provider_event('+'.join(sorted(set(providers))) or 'unknown','compatible','hit',len(saved))
         if not getattr(BUDGET,'speculative',False) and not cached('source-status:'+key):
             remember('source-status:'+key,{'state':'listed' if saved else 'unavailable','checked_at':time.time()},21600)
         if key=='movie:tt1254207' and not cached('open-film-failed') and not any(s['infoHash']==open_film['infoHash'] for s in saved):
@@ -1294,13 +1363,23 @@ def stream_candidates(key):
     try:
         response=fetch(f'{PROVIDER}/stream/{kind}/{ident}.json',timeout=15)
         if not isinstance(response,dict) or not isinstance(response.get('streams'),list):raise ValueError('Invalid source response')
+        candidates,stats=filter_streams_with_diagnostics(response)
+        source_provider_event('torrentio','compatible' if candidates else 'empty','miss',len(response['streams']),stats)
     except (SourceProviderWait,urllib.error.URLError,TimeoutError,ValueError) as error:
-        primary_error=error;response={'streams':[]}
-    candidates=filtered_streams(response)
+        primary_error=error;response={'streams':[]};candidates=[]
+        source_provider_event('torrentio','error','miss',error=error)
     for candidate in candidates:candidate['_provider']='torrentio'
     if not candidates:
-        fallback=mediafusion_streams(key)
-        if fallback is not None:candidates=filtered_streams({'streams':fallback})
+        fallback_cache='hit' if cached('mediafusion:'+key) is not None else 'miss'
+        try:fallback=mediafusion_streams(key)
+        except (Checkpoint,urllib.error.URLError,TimeoutError,ValueError) as error:
+            source_provider_event('mediafusion','error',fallback_cache,error=error)
+            raise
+        if fallback is not None:
+            candidates,fallback_stats=filter_streams_with_diagnostics({'streams':fallback})
+            source_provider_event('mediafusion','compatible' if candidates else 'empty',fallback_cache,len(fallback),fallback_stats)
+        else:
+            source_provider_event('mediafusion','disabled',fallback_cache)
         if not candidates and primary_error:raise Checkpoint('Source providers awaiting recovery') from None
     candidates.sort(key=rank,reverse=True)
     if key=='movie:tt1254207' and not cached('open-film-failed'): candidates.insert(0,open_film)
