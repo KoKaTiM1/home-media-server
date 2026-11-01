@@ -1403,6 +1403,43 @@ def source_provider_event(provider,outcome,cache='miss',provider_rows=None,stats
     except Exception:pass # Diagnostics must never change source selection.
 
 
+def request_mediafusion_after_slow_primary(key,selected,reason,background):
+    """Queue a fallback lookup only after background V6 rejects Torrentio speed."""
+    if (not background or reason!='speed_rejected' or not isinstance(selected,dict)
+        or selected.get('local') or selected.get('source_provider')!='torrentio'):
+        return False
+    remember('mediafusion-needed:'+key,True,21600)
+    return True
+
+
+def add_mediafusion_after_slow_primary(key,saved):
+    """Merge paced fallback candidates after a proven slow primary source."""
+    marker='mediafusion-needed:'+key
+    if not getattr(BUDGET,'validation_background',False) or not cached(marker):return saved
+    fallback_cache='hit' if cached('mediafusion:'+key) is not None else 'miss'
+    try:fallback=mediafusion_streams(key)
+    except (Checkpoint,urllib.error.URLError,TimeoutError,ValueError) as error:
+        source_provider_event('mediafusion','error',fallback_cache,error=error,primary_cache='speed_rejected')
+        raise
+    if fallback is None:
+        source_provider_event('mediafusion','disabled',fallback_cache,primary_cache='speed_rejected')
+        remember(marker,False,0)
+        return saved
+    candidates,stats=filter_streams_with_diagnostics({'streams':fallback})
+    source_provider_event('mediafusion','compatible' if candidates else 'empty',fallback_cache,len(fallback),stats,
+                          primary_cache='speed_rejected')
+    seen={str(row.get('infoHash','')).lower() for row in saved if isinstance(row,dict)}
+    combined=list(saved)
+    for candidate in candidates:
+        candidate['_provider']='mediafusion'
+        infohash=candidate['infoHash'].lower()
+        if infohash not in seen:
+            seen.add(infohash);combined.append(candidate)
+    combined.sort(key=rank,reverse=True)
+    remember(marker,False,0)
+    return remember('streams:'+key,combined,1800)
+
+
 def stream_candidates(key):
     # Stable, publisher-distributed open-film source for setup/playback checks.
     # Preserve HTTP web seeds by adding its actual .torrent rather than a magnet.
@@ -1432,6 +1469,7 @@ def stream_candidates(key):
         # primary Torrentio path; preserve explicit MediaFusion labels.
         for row in saved:
             if isinstance(row,dict):row.setdefault('_provider','torrentio')
+        saved=add_mediafusion_after_slow_primary(key,saved)
         if saved:
             providers=sorted({row.get('_provider','torrentio') for row in saved if isinstance(row,dict)})
             providers=[p if p in ('torrentio','mediafusion','other') else 'other' for p in providers]
@@ -2054,6 +2092,8 @@ def prepare_locked(key,background,audio_index,deadline):
             remaining(1)
             playback_event(key,'source_rejected',time.monotonic(),'failed',error)
             if not isinstance(error,SourceFailure):raise
+            request_mediafusion_after_slow_primary(
+                key,selected,'speed_rejected' if isinstance(error,SourceTooSlow) else None,background)
             verified=None
             REL.exclude(key,selected,21600 if isinstance(error,SourceTooSlow) else 900)
             remember('source-excluded:'+key+':'+selected['hash'],True,21600 if isinstance(error,SourceTooSlow) else 900)

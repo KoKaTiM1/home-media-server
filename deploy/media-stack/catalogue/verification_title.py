@@ -224,6 +224,13 @@ def _execute_title(g,key,cancel,execution_seconds):
                         diagnostic=result.get('diagnostic',{})
                         failure_category=diagnostic.get('category','transport') if isinstance(diagnostic,dict) else 'transport'
                         if result.get('reason')=='interrupted':raise Checkpoint('Verification interrupted')
+                        # A speed-rejected Torrentio-only list may benefit from
+                        # the existing paced fallback on the server's next
+                        # background preparation. Other failures do not trigger
+                        # another provider request.
+                        if failure_category=='speed_rejected' and p.get('provider')=='torrentio':
+                            g['request_mediafusion_after_slow_primary'](
+                                key,{'source_provider':'torrentio'},failure_category,True)
                         fallback=True;break
                     try:selected,info,proof,audio,conversion=validate_evidence(g,key,p,result['data'],started)
                     except (ValueError,KeyError,TypeError,RuntimeError):

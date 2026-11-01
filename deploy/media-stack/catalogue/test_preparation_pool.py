@@ -452,6 +452,48 @@ class FallbackTests(unittest.TestCase):
             self.assertEqual(len(rows),1)
             self.assertEqual(rows[0]['_provider'],'torrentio')
             self.assertEqual(fetch.call_count,1)
+    def test_speed_rejected_primary_adds_paced_fallback_only_on_background_retry(self):
+        key='movie:tt0000001';primary={**self.stream(),'_provider':'torrentio'}
+        fallback=[{**self.stream('BT4G'),'_provider':'mediafusion'},
+                  {**self.stream('BT4G'),'infoHash':'b'*40,'_provider':'mediafusion'}]
+        app.remember('streams:'+key,[primary],1800)
+        app.remember('mediafusion-needed:'+key,True,21600)
+        previous=getattr(app.BUDGET,'validation_background',False)
+        app.BUDGET.validation_background=True
+        try:
+            with patch.object(app,'mediafusion_streams',return_value=fallback) as lookup,\
+                 patch.object(app,'source_provider_event'):
+                rows=app.stream_candidates(key)
+            self.assertEqual({r['_provider'] for r in rows},{'torrentio','mediafusion'})
+            self.assertEqual(len(rows),2) # Duplicate hashes are deduplicated.
+            lookup.assert_called_once_with(key)
+            self.assertIsNone(app.cached('mediafusion-needed:'+key))
+            with patch.object(app,'mediafusion_streams',side_effect=AssertionError('fallback repeated')):
+                app.stream_candidates(key)
+        finally:app.BUDGET.validation_background=previous
+    def test_slow_source_marker_does_not_change_foreground_source_listing(self):
+        key='movie:tt0000001';primary={**self.stream(),'_provider':'torrentio'}
+        app.remember('streams:'+key,[primary],1800)
+        app.remember('mediafusion-needed:'+key,True,21600)
+        previous=getattr(app.BUDGET,'validation_background',False)
+        app.BUDGET.validation_background=False
+        try:
+            with patch.object(app,'mediafusion_streams',side_effect=AssertionError('foreground lookup')):
+                rows=app.stream_candidates(key)
+            self.assertEqual([r['_provider'] for r in rows],['torrentio'])
+            self.assertTrue(app.cached('mediafusion-needed:'+key))
+        finally:app.BUDGET.validation_background=previous
+    def test_fallback_queue_timeout_retains_retry_marker(self):
+        key='movie:tt0000001';primary={**self.stream(),'_provider':'torrentio'}
+        app.remember('streams:'+key,[primary],1800)
+        app.remember('mediafusion-needed:'+key,True,21600)
+        previous=getattr(app.BUDGET,'validation_background',False)
+        app.BUDGET.validation_background=True
+        try:
+            with patch.object(app,'mediafusion_streams',side_effect=app.SourceProviderWait('queued',reason='queue_timeout')):
+                with self.assertRaises(app.SourceProviderWait):app.stream_candidates(key)
+            self.assertTrue(app.cached('mediafusion-needed:'+key))
+        finally:app.BUDGET.validation_background=previous
     def test_remote_fallback_calls_queue_behind_the_shared_provider_slot(self):
         import threading,time as wall_time
         from contextlib import ExitStack

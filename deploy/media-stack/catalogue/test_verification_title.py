@@ -248,11 +248,22 @@ class TitleTests(unittest.TestCase):
         with patch('verification_remote.jobs',return_value=self.q),patch('verification_title.payload',return_value=self.payload),patch.object(self.q,'poll',side_effect=poll),patch.object(a,'prepared',side_effect=lambda *args,**kw:calls.append(a.BUDGET.remote_verification)):
             self.assertTrue(execute_title(a.__dict__,KEY))
         self.assertEqual(calls,[False]);self.assertTrue(a.BUDGET.remote_verification)
+        self.assertIsNone(a.cached('mediafusion-needed:'+KEY))
         with self.q.db() as c:
             row=c.execute('SELECT deadline-created,execution_seconds FROM decode_jobs').fetchone()
             self.assertEqual(row[0],240)
             self.assertGreater(row[1],0)
             self.assertLessEqual(row[1],60)
+
+    def test_speed_rejected_torrentio_only_job_requests_background_fallback(self):
+        p=copy.deepcopy(self.payload);p['provider']='torrentio';p['candidates'][0]['provider']='torrentio'
+        a.BUDGET.remote_verification=True;a.BUDGET.worker_deadline=time.monotonic()+60
+        result={'status':'checkpoint','diagnostic':{'category':'speed_rejected'}}
+        with patch('verification_remote.jobs',return_value=self.q),patch('verification_title.payload',return_value=p),\
+             patch.object(self.q,'poll',return_value=('result',result)),patch.object(a,'prepared') as prepared:
+            self.assertTrue(execute_title(a.__dict__,KEY))
+        prepared.assert_called_once()
+        self.assertTrue(a.cached('mediafusion-needed:'+KEY))
         with a.F.db() as c:self.assertIsNone(c.execute('SELECT state FROM validation WHERE key=?',(KEY,)).fetchone())
     def test_local_failure_defers_fallback_while_debian_gate_is_paused(self):
         self.q.set('enabled',False)
