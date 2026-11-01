@@ -298,7 +298,7 @@ class TitleTests(unittest.TestCase):
             self.assertEqual({c['infoHash'] for c in result},{primary,fallback})
             self.assertEqual([c['_provider'] for c in result],['mediafusion','torrentio'])
             fetch.assert_called_once()
-            mediafusion.assert_called_once_with(KEY)
+            mediafusion.assert_called_once_with(KEY,priority=1)
             self.assertIsNone(a.cached('mediafusion-needed:'+KEY))
         finally:a.BUDGET.validation_background=previous
 

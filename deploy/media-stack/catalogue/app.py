@@ -253,7 +253,7 @@ class SourceProviderWait(Checkpoint):
 
 
 @contextmanager
-def serialized_provider_slot(lock_path,control_key):
+def serialized_provider_slot(lock_path,control_key,priority=0):
     # All source providers serialize across processes. Foreground calls fail
     # fast; background callers take a filesystem ticket so the 16 producer
     # lanes cannot repeatedly race one another for the next provider slot.
@@ -262,8 +262,9 @@ def serialized_provider_slot(lock_path,control_key):
     deadline=time.monotonic()
     if background:
         # There are up to 16 producer lanes. Provider calls remain serialized
-        # and paced (15s fallback/5s primary); FIFO admission prevents later
-        # lanes from repeatedly overtaking an older request.
+        # and paced (15s fallback/5s primary). A speed-rejected source gets a
+        # priority ticket so its alternative lookup is not trapped behind
+        # ordinary empty-result lookups; FIFO is retained within each class.
         deadline+=BACKGROUND_PROVIDER_SLOT_WAIT
         for name in ('worker_deadline','deadline'):
             limit=getattr(BUDGET,name,None)
@@ -276,7 +277,10 @@ def serialized_provider_slot(lock_path,control_key):
             guard=Path(str(queue_dir)+'.guard').open('a')
             try:
                 fcntl.flock(guard,fcntl.LOCK_EX)
-                ticket=queue_dir/(f'{time.time_ns():020d}-{uuid.uuid4().hex}.ticket')
+                stamp=f'{time.time_ns():020d}'
+                ticket_name=(f'p1-{stamp}-{uuid.uuid4().hex}.ticket' if priority>0
+                             else f'{stamp}-{uuid.uuid4().hex}.ticket')
+                ticket=queue_dir/ticket_name
                 ticket_fd=os.open(ticket,os.O_CREAT|os.O_EXCL|os.O_RDWR,0o660)
                 os.write(ticket_fd,b'locked-v1')
                 # The descriptor lock marks ownership. The queue guard makes
@@ -326,7 +330,21 @@ def serialized_provider_slot(lock_path,control_key):
                 except OSError:entries.append(entry)
                 finally:
                     if fd is not None:os.close(fd)
-            return bool(entries) and min(entries,key=lambda item:item.name)==ticket
+            priority_state=queue_dir/'priority-served'
+            try:priority_served=priority_state.read_text().strip()=='1'
+            except OSError:priority_served=False
+            has_priority=any(entry.name.startswith('p1-') for entry in entries)
+            has_normal=any(not entry.name.startswith('p1-') for entry in entries)
+            def queue_order(entry):
+                name=entry.name
+                if name.startswith('p1-'):
+                    group=1 if priority_served and has_normal else 0
+                    try:return (group,int(name[3:23]),name)
+                    except ValueError:return (group,0,name)
+                group=0 if has_priority and has_normal and priority_served else 1
+                try:return (group,int(name.split('-',1)[0]),name)
+                except ValueError:return (group,entry.stat().st_mtime_ns,name)
+            return bool(entries) and min(entries,key=queue_order)==ticket
         except OSError:return True
         finally:
             if guard is not None:
@@ -369,6 +387,17 @@ def serialized_provider_slot(lock_path,control_key):
                 raise
         try:yield
         finally:
+            if ticket is not None:
+                # Let a speed-rejected-source fallback jump ahead once, then
+                # give the oldest ordinary fallback its turn if one is queued.
+                # This keeps urgent alternatives responsive without allowing
+                # a continuing priority backlog to starve ordinary lookups.
+                try:
+                    fairness=queue_dir/'priority-served'
+                    temporary=queue_dir/f'.priority-served-{os.getpid()}-{uuid.uuid4().hex}.tmp'
+                    temporary.write_text('1' if priority>0 else '0')
+                    os.replace(temporary,fairness)
+                except OSError:pass
             fcntl.flock(lock,fcntl.LOCK_UN)
             lock.close()
     finally:
@@ -1312,7 +1341,7 @@ def sync(movie_limit=1000,show_limit=200):
     jf('/Library/Refresh',{},method='POST')
 
 
-def mediafusion_streams(key):
+def mediafusion_streams(key,priority=0):
     marker=DATA/'source-providers.json'
     if not marker.exists():return None
     cfg=json.loads(marker.read_text());base=cfg.get('mediafusion_url','').rstrip('/')
@@ -1322,7 +1351,7 @@ def mediafusion_streams(key):
         raise Checkpoint('Invalid fallback provider configuration')
     saved=cached('mediafusion:'+key)
     if saved is not None:return saved
-    with serialized_provider_slot(DATA/'mediafusion-provider.lock','mediafusion-provider-control'):
+    with serialized_provider_slot(DATA/'mediafusion-provider.lock','mediafusion-provider-control',priority=priority):
         kind,imdb,*parts=key.split(':');ident=imdb+(':'+':'.join(parts) if parts else '')
         try:
             result=fetch(base+'/stream/'+kind+'/'+ident+'.json',timeout=15)
@@ -1473,7 +1502,7 @@ def add_mediafusion_after_slow_primary(key,saved):
     marker='mediafusion-needed:'+key
     if not getattr(BUDGET,'validation_background',False) or not cached(marker):return saved
     fallback_cache='hit' if cached('mediafusion:'+key) is not None else 'miss'
-    try:fallback=mediafusion_streams(key)
+    try:fallback=mediafusion_streams(key,priority=1)
     except (Checkpoint,urllib.error.URLError,TimeoutError,ValueError) as error:
         source_provider_event('mediafusion','error',fallback_cache,error=error,primary_cache='speed_rejected')
         raise

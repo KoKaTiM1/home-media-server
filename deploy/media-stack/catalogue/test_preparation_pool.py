@@ -330,6 +330,84 @@ class SourcePacingTests(unittest.TestCase):
         self.assertEqual(order,['first','second'])
         self.assertEqual(errors,[])
         self.assertEqual(list(queue_dir.glob('*.ticket')),[])
+    def test_speed_rejected_fallback_overtakes_normal_waiters_but_preserves_the_shared_slot(self):
+        import threading
+        lock_path=app.DATA/'priority-provider.lock';queue_dir=app.DATA/'priority-provider.lock.waiters'
+        held=threading.Event();release_owner=threading.Event();normal_entered=threading.Event();priority_entered=threading.Event()
+        order=[];errors=[]
+        def owner():
+            try:
+                with app.serialized_provider_slot(lock_path,'priority-provider-control'):
+                    held.set();release_owner.wait(5)
+            except Exception as error:errors.append(type(error).__name__)
+        def waiter(label,entered,priority=0):
+            app.BUDGET.validation_background=True
+            try:
+                with app.serialized_provider_slot(lock_path,'priority-provider-control',priority=priority):
+                    order.append(label);entered.set()
+            except Exception as error:errors.append(type(error).__name__)
+        owner_thread=threading.Thread(target=owner);owner_thread.start()
+        self.assertTrue(held.wait(2))
+        try:
+            normal=threading.Thread(target=waiter,args=('normal',normal_entered));normal.start()
+            deadline=time.monotonic()+2
+            while len(list(queue_dir.glob('*.ticket')))<1 and time.monotonic()<deadline:time.sleep(.01)
+            self.assertEqual(len(list(queue_dir.glob('*.ticket'))),1)
+            priority=threading.Thread(target=waiter,args=('speed-retry',priority_entered,1));priority.start()
+            deadline=time.monotonic()+2
+            while len(list(queue_dir.glob('*.ticket')))<2 and time.monotonic()<deadline:time.sleep(.01)
+            self.assertEqual(len(list(queue_dir.glob('*.ticket'))),2)
+            release_owner.set()
+            self.assertTrue(priority_entered.wait(2))
+            self.assertTrue(normal_entered.wait(2))
+            normal.join(2);priority.join(2)
+        finally:
+            release_owner.set();owner_thread.join(2)
+        self.assertEqual(order,['speed-retry','normal'])
+        self.assertEqual(errors,[])
+        self.assertEqual(list(queue_dir.glob('*.ticket')),[])
+    def test_speed_fallback_priority_alternates_with_waiting_normal_requests(self):
+        import threading
+        lock_path=app.DATA/'fair-priority-provider.lock';queue_dir=app.DATA/'fair-priority-provider.lock.waiters'
+        held=threading.Event();release_owner=threading.Event();release_priority=threading.Event()
+        normal_entered=threading.Event();priority_one_entered=threading.Event();priority_two_entered=threading.Event()
+        order=[];errors=[]
+        def owner():
+            try:
+                with app.serialized_provider_slot(lock_path,'fair-priority-provider-control'):
+                    held.set();release_owner.wait(5)
+            except Exception as error:errors.append(type(error).__name__)
+        def waiter(label,entered,priority=0,release=None):
+            app.BUDGET.validation_background=True
+            try:
+                with app.serialized_provider_slot(lock_path,'fair-priority-provider-control',priority=priority):
+                    order.append(label);entered.set()
+                    if release is not None:release.wait(5)
+            except Exception as error:errors.append(type(error).__name__)
+        owner_thread=threading.Thread(target=owner);owner_thread.start()
+        self.assertTrue(held.wait(2))
+        threads=[]
+        try:
+            for args in (('normal',normal_entered,0,None),('speed-retry-1',priority_one_entered,1,release_priority),
+                         ('speed-retry-2',priority_two_entered,1,None)):
+                thread=threading.Thread(target=waiter,args=args);thread.start();threads.append(thread)
+                deadline=time.monotonic()+2
+                while len(list(queue_dir.glob('*.ticket')))<len(threads) and time.monotonic()<deadline:time.sleep(.01)
+                self.assertEqual(len(list(queue_dir.glob('*.ticket'))),len(threads))
+            release_owner.set()
+            self.assertTrue(priority_one_entered.wait(2))
+            self.assertFalse(normal_entered.is_set())
+            self.assertFalse(priority_two_entered.is_set())
+            release_priority.set()
+            self.assertTrue(normal_entered.wait(2))
+            self.assertTrue(priority_two_entered.wait(2))
+            for thread in threads:thread.join(2)
+        finally:
+            release_owner.set();release_priority.set();owner_thread.join(2)
+            for thread in threads:thread.join(2)
+        self.assertEqual(order,['speed-retry-1','normal','speed-retry-2'])
+        self.assertEqual(errors,[])
+        self.assertEqual(list(queue_dir.glob('*.ticket')),[])
     def test_background_provider_queue_reaps_ticket_left_by_dead_owner(self):
         import os
         lock_path=app.DATA/'orphan-provider.lock';queue_dir=app.DATA/'orphan-provider.lock.waiters'
@@ -491,7 +569,7 @@ class FallbackTests(unittest.TestCase):
                 rows=app.stream_candidates(key)
             self.assertEqual({r['_provider'] for r in rows},{'torrentio','mediafusion'})
             self.assertEqual(len(rows),2) # Duplicate hashes are deduplicated.
-            lookup.assert_called_once_with(key)
+            lookup.assert_called_once_with(key,priority=1)
             self.assertIsNone(app.cached('mediafusion-needed:'+key))
             with patch.object(app,'mediafusion_streams',side_effect=AssertionError('fallback repeated')):
                 app.stream_candidates(key)
