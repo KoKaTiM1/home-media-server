@@ -1700,7 +1700,11 @@ class Features:
                 previous_attempt_deadline=getattr(budget,'worker_deadline',None)
                 budget.preparation_key=key
                 budget.first_sweep_attempt=sweep_attempt
-                if sweep_attempt:budget.worker_deadline=min(previous_attempt_deadline or time.monotonic()+240,time.monotonic()+240)
+                # Keep this outer coordinator deadline aligned with the
+                # Windows verifier's 420s first-sweep budget. A 240s clamp
+                # here silently reduced the verifier's 240s provider-wait
+                # window to about 60s after reserving 180s for V6 decoding.
+                if sweep_attempt:budget.worker_deadline=min(previous_attempt_deadline or time.monotonic()+420,time.monotonic()+420)
                 sweep_outcome='deferred'
                 if remote:
                     from verification_remote import producer_phase

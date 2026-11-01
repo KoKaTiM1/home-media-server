@@ -107,6 +107,39 @@ class PoolTests(unittest.TestCase):
         app.remember('meta:series:tt0000001',fixtures.result()['metadata'],300)
         self.assertEqual(app.F.first_sweep_candidate()[0][1],KEY)
 
+    def test_remote_first_sweep_preserves_420_second_v6_budget(self):
+        from unittest.mock import Mock
+        from contextlib import ExitStack
+        app.F.start_verification_sweep()
+        queue=Mock()
+        queue.status.return_value={'windows_slots_online':1,'windows_capacity':8,
+                                   'windows_queue_capacity':8,'totals':{'windows_batches_started':0}}
+        queue.setting_read.side_effect=lambda name,default=None: True if name=='local_torrent_enabled' else default
+        queue.local_workers.return_value=1
+        observed={}
+        def execute(*args,**kwargs):
+            observed['remaining_seconds']=app.BUDGET.worker_deadline-time.monotonic()
+            observed['first_sweep']=app.BUDGET.first_sweep_attempt
+            return True
+        with ExitStack() as stack:
+            stack.enter_context(patch('verification_remote.ready',return_value=True))
+            stack.enter_context(patch('verification_remote.jobs',return_value=queue))
+            stack.enter_context(patch('verification_remote.producer_phase'))
+            stack.enter_context(patch('verification_title.execute_title',side_effect=execute))
+            stack.enter_context(patch.object(app.F,'seed_validation'))
+            stack.enter_context(patch.object(app.REL,'schedule'))
+            stack.enter_context(patch.object(app.F,'repair_cached_series'))
+            stack.enter_context(patch.object(app.F,'next_verification_slot',return_value=1))
+            stack.enter_context(patch.object(app.F,'first_sweep_candidate',return_value=((1,KEY),True)))
+            stack.enter_context(patch.object(app.F,'metadata_admission_blocked',return_value=False))
+            stack.enter_context(patch.object(app.F,'foreground_busy',return_value=False))
+            stack.enter_context(patch.object(app.F,'jf',return_value=[]))
+            stack.enter_context(patch.object(app,'metadata',return_value={'videos':[]}))
+            app.F.warm_availability(limit=1,remote=True,slot=1)
+        self.assertTrue(observed['first_sweep'])
+        self.assertGreaterEqual(observed['remaining_seconds'],419)
+        self.assertLessEqual(observed['remaining_seconds'],420)
+
     def test_slot_disabled_by_configuration_never_fetches(self):
         with patch.object(app,'fetch_waiting_metadata',side_effect=AssertionError('extra slot')):
             app.metadata_prepare(3)
