@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-11-01T07:41:12.497493+00:00",
+  "created_utc": "2026-11-01T08:10:40.461383+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -18,7 +18,7 @@
     "deploy/media-stack/README.md": "0562a802954db8056d28f204d12d62d757f605e1e9f79f428bcffd50345c56d1",
     "deploy/media-stack/catalogue/Dockerfile": "ce04557b530984de2b95ed30eb584ae460c2d9bd75067b3f5d19f6afba0ac730",
     "deploy/media-stack/catalogue/README.md": "8ebd0775f3b320ae48602a2b0c6ca8cbd9980d64131036c6e82c0d52e331bbe7",
-    "deploy/media-stack/catalogue/app.py": "7f1ffd98e7d879c66ffda8db7e677592455fff393aef953be00f507010c464a5",
+    "deploy/media-stack/catalogue/app.py": "9cc3aeaedc6f66e500e1f1363299531bb81666178193bb8b48fb460c23a8dcf7",
     "deploy/media-stack/catalogue/bootstrap.py": "002cb58a203f36b9ee66d83900cf939a273e73e75637dfd8b342a67b48edfad9",
     "deploy/media-stack/catalogue/check_audio_conversion.py": "669463dd9be988b0becf34db0014739e559e2f1fa6c350be11d5dd4a81c4a899",
     "deploy/media-stack/catalogue/check_audio_subtitles.py": "f89e81cd25fa7767dddef438e63e8155a92e8689e5aeeaf5e27af306ed4eb02f",
@@ -51,7 +51,7 @@
     "deploy/media-stack/catalogue/test_metadata_resume.py": "42a658c8dc0f8cd165bb3148d76dcf71e275bd7460a0c451d7b4d04a328917d6",
     "deploy/media-stack/catalogue/test_multi_subtitles.py": "5a0d8e7c6d0fdd99e00448ab6f7f8612c986db2280078ec7ea47584861791366",
     "deploy/media-stack/catalogue/test_playback_deadlines.py": "82dfa592a697d2eabde631908bb7acdbb4701b3afc04cbf46b2b2bc63f169613",
-    "deploy/media-stack/catalogue/test_preparation_pool.py": "de1a9290d53d9feaaf15c24f1175db476ea650f5f46b42d4605e8d869be3d5ad",
+    "deploy/media-stack/catalogue/test_preparation_pool.py": "907a5af3a460739f582d903d4b159eda981ab1778df0658cb12a540ba7c380bf",
     "deploy/media-stack/catalogue/test_recheck.py": "dbf72ed5627f444ac83152df11ddf3b389531a6a882058e9fcf834251dac64f1",
     "deploy/media-stack/catalogue/test_reliability.py": "61327d2462991ac4accfb2520c43924e1c2dabbe517a614bb6466204821f051b",
     "deploy/media-stack/catalogue/test_russian_audio.py": "708f3a496191b77d615df79ace9650bb7372fc62267f983bc538bd9e3cad0774",

@@ -446,6 +446,24 @@ class FallbackTests(unittest.TestCase):
     def test_torrentio_derived_and_unknown_origin_are_excluded(self):
         with patch.object(app,'fetch',return_value={'streams':[self.stream('Torrentio'),{**self.stream(),'description':'unknown'}]}):
             self.assertEqual(app.mediafusion_streams('movie:tt0000001'),[])
+    def test_mediafusion_raw_origin_telemetry_is_aggregate_and_private(self):
+        rows=[self.stream('Torrentio'),self.stream('BT4G'),self.stream('Other tracker'),
+              {**self.stream(),'description':'no origin marker'},None,
+              {**self.stream(),'description':'x264 AAC\n🔗   '}]
+        counts=app.mediafusion_origin_counts(rows)
+        self.assertEqual(counts,{'raw_rows':6,'malformed_rows':1,'torrentio_origin_rows':1,
+            'named_origin_rows':2,'missing_or_unknown_origin_rows':2})
+        with patch.object(app,'log') as logger:
+            app.source_provider_event('mediafusion','empty',provider_rows=0,raw_stats=counts)
+        event=logger.call_args.args[0]
+        self.assertIn('"raw_rows":6',event)
+        self.assertIn('"raw_torrentio_origin_rows":1',event)
+        self.assertIn('"raw_named_origin_rows":2',event)
+        self.assertIn('"raw_missing_or_unknown_origin_rows":2',event)
+        self.assertIn('"raw_malformed_rows":1',event)
+        self.assertNotIn('BT4G',event)
+        self.assertNotIn('Torrentio',event)
+        self.assertNotIn('tt0000001',event)
     def test_healthy_primary_does_not_query_fallback(self):
         with patch.object(app,'fetch',return_value={'streams':[{**self.stream(),'title':'Example 1080p x264'}]}) as fetch:
             rows=app.stream_candidates('movie:tt0000001')

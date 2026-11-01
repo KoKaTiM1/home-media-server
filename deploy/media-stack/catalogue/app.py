@@ -1301,6 +1301,8 @@ def mediafusion_streams(key):
         try:
             result=fetch(base+'/stream/'+kind+'/'+ident+'.json',timeout=15)
             if not isinstance(result,dict) or not isinstance(result.get('streams'),list):raise Checkpoint('Invalid fallback source response')
+            raw_stats=mediafusion_origin_counts(result['streams'])
+            remember('mediafusion-raw-counts:'+key,raw_stats,1800)
             rows=[]
             for row in result['streams']:
                 if not isinstance(row,dict):continue
@@ -1323,6 +1325,23 @@ def mediafusion_streams(key):
             raise Checkpoint('Fallback source provider unavailable') from None
 
 
+def mediafusion_origin_counts(streams):
+    """Return privacy-safe aggregate counts before fallback origin filtering."""
+    counts={'raw_rows':len(streams),'malformed_rows':0,'torrentio_origin_rows':0,
+            'named_origin_rows':0,'missing_or_unknown_origin_rows':0}
+    for row in streams:
+        if not isinstance(row,dict):
+            counts['malformed_rows']+=1
+            continue
+        description=str(row.get('description') or row.get('title') or '')
+        origin=re.search(r'🔗\s*([^\n]+)',description)
+        if not origin or not origin[1].strip():
+            counts['missing_or_unknown_origin_rows']+=1
+        elif 'torrentio' in origin[1].casefold():
+            counts['torrentio_origin_rows']+=1
+        else:
+            counts['named_origin_rows']+=1
+    return counts
 def filtered_streams(response):
     return _filter_streams(response)
 
@@ -1389,7 +1408,7 @@ def source_provider_error_category(error):
     return 'other'
 
 
-def source_provider_event(provider,outcome,cache='miss',provider_rows=None,stats=None,error=None,primary_cache=None):
+def source_provider_event(provider,outcome,cache='miss',provider_rows=None,stats=None,error=None,primary_cache=None,raw_stats=None):
     """Emit low-cardinality lookup telemetry without title/source identifiers."""
     event={'provider':provider,'outcome':outcome,'cache':cache}
     if provider_rows is not None:event['provider_rows']=max(0,int(provider_rows))
@@ -1397,6 +1416,9 @@ def source_provider_event(provider,outcome,cache='miss',provider_rows=None,stats
         for name in ('invalid_infohash','unsupported_release','unsupported_codec','unsupported_resolution',
                      'unsupported_container','duplicate_infohash','compatible'):
             event[name]=int(stats.get(name,0))
+    if raw_stats is not None:
+        for name in ('raw_rows','malformed_rows','torrentio_origin_rows','named_origin_rows','missing_or_unknown_origin_rows'):
+            event['raw_'+name if name!='raw_rows' else name]=max(0,int(raw_stats.get(name,0)))
     if error is not None:event['error']=source_provider_error_category(error)
     if primary_cache is not None:event['primary_cache']=primary_cache
     try:log('Source discovery '+json.dumps(event,sort_keys=True,separators=(',',':')))
@@ -1427,7 +1449,7 @@ def add_mediafusion_after_slow_primary(key,saved):
         return saved
     candidates,stats=filter_streams_with_diagnostics({'streams':fallback})
     source_provider_event('mediafusion','compatible' if candidates else 'empty',fallback_cache,len(fallback),stats,
-                          primary_cache='speed_rejected')
+                          primary_cache='speed_rejected',raw_stats=cached('mediafusion-raw-counts:'+key))
     seen={str(row.get('infoHash','')).lower() for row in saved if isinstance(row,dict)}
     combined=list(saved)
     for candidate in candidates:
@@ -1457,7 +1479,7 @@ def stream_candidates(key):
         if fallback is not None:
             choices,stats=filter_streams_with_diagnostics({'streams':fallback})
             source_provider_event('mediafusion','compatible' if choices else 'empty',fallback_cache,len(fallback),stats,
-                                  primary_cache='negative')
+                                  primary_cache='negative',raw_stats=cached('mediafusion-raw-counts:'+key))
             if choices:
                 saved=remember('streams:'+key,choices[:20],1800)
                 if not getattr(BUDGET,'speculative',False):
@@ -1505,7 +1527,8 @@ def stream_candidates(key):
             raise
         if fallback is not None:
             candidates,fallback_stats=filter_streams_with_diagnostics({'streams':fallback})
-            source_provider_event('mediafusion','compatible' if candidates else 'empty',fallback_cache,len(fallback),fallback_stats)
+            source_provider_event('mediafusion','compatible' if candidates else 'empty',fallback_cache,len(fallback),fallback_stats,
+                                  raw_stats=cached('mediafusion-raw-counts:'+key))
         else:
             source_provider_event('mediafusion','disabled',fallback_cache)
         if not candidates and primary_error:raise Checkpoint('Source providers awaiting recovery') from None
