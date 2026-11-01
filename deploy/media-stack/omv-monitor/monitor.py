@@ -198,6 +198,11 @@ def counts(data=DATA,refresh=False):
             empty=conn.execute("SELECT count(*) FROM validation WHERE reason IN ('EmptyTorrentCandidates','Source preparation failed (EmptyTorrentCandidates)')").fetchone()[0]
             add('Empty torrent candidate listings',empty,'No eligible source was available for dispatch; separate from failed media decoding')
             summary.update(empty_torrent_listings=empty,metadata_pool_online=online,metadata_pool_fetching=active,metadata_pool_pending=pending,metadata_pool_ready=ready,metadata_admission_paused=bool(paused and paused[0]))
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='metadata_retry_counts'").fetchone():
+                hour=int(time.time()//3600)-23
+                summary['metadata_retry_24h']={
+                    (category+' '+str(status) if status else category):count
+                    for category,status,count in conn.execute('SELECT category,status,SUM(attempts) FROM metadata_retry_counts WHERE hour>=? GROUP BY category,status ORDER BY category,status',(hour,))}
             add('Metadata preparation pool',online,f'{active} fetching; {pending} outstanding parents; {ready} resumed titles')
             add('New metadata admission','Paused' if paused and paused[0] else 'Open','Existing catalogue and waiting work are retained; ready titles continue')
         if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='verification_sweeps'").fetchone():
@@ -332,6 +337,16 @@ def overview(data=DATA,snapshot=None):
         if 'metadata_pool_online' in values:
             add('Metadata preparation pool',str(values['metadata_pool_online'])+' online',str(values.get('metadata_pool_fetching',0))+' fetching; '+str(values.get('metadata_pool_pending',0))+' outstanding parents; '+str(values.get('metadata_pool_ready',0))+' resumed titles')
             add('New metadata admission','Paused' if values.get('metadata_admission_paused') else 'Open','Existing catalogue is retained; cached and resumed work continues')
+            retry=values.get('metadata_retry_24h',{})
+            labels={'timeout':'timeout','network':'network','invalid_response':'invalid response','other':'other','upstream_http':'upstream HTTP'}
+            details=[]
+            for key,count in sorted(retry.items()):
+                category,_,status=key.partition(' ')
+                label=labels.get(category,'other')
+                if status:label+=' '+status
+                details.append(f'{label}: {count:,}')
+            add('Metadata fetch retries (24h)',sum(retry.values()),'; '.join(details) if details else 'No recorded metadata fetch retries',
+                'error' if retry else 'muted')
         add('V6 passes in last hour',f"{values.get('v6_hour',0):,}",'Latest V6 verified state per title; not a count of decoder operations','success')
     updated=stamp(now)
     queue=data.parent/'verification-worker/queue.sqlite'

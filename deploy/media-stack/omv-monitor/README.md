@@ -72,6 +72,12 @@ these catalogue sources. The owner confirmed converted playback on Chromecast.
 The durable **audio-policy-resync-v2** marker schedules older failed entries
 and proof audits once. Existing verified titles stay visible pending an actual
 failed recheck; restarting the worker does not reset attempts or retry backoff.
+
+The metadata preparation view also reports sanitized metadata-fetch retries for
+the last 24 hours, grouped by category and upstream HTTP status. It excludes
+titles, IMDb keys, URLs and exception text. Retry counts are stored in hourly
+aggregates with a seven-day retention window; they describe metadata fetches,
+not failed media verification.
 The private AAC TV-test result supplies reported test status; dashboard counters
 alone cannot establish that a physical client plays every source correctly.
 

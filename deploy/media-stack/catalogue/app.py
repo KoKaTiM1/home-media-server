@@ -620,6 +620,37 @@ def metadata(kind,imdb):
     return F.localize(saved)
 
 
+def metadata_retry_category(error):
+    """Return a low-cardinality reason and HTTP code without exception text."""
+    if isinstance(error,urllib.error.HTTPError):
+        status=error.code if type(error.code) is int and 100<=error.code<=599 else 0
+        return 'upstream_http',status
+    if isinstance(error,(TimeoutError,socket.timeout)):
+        return 'timeout',0
+    if isinstance(error,urllib.error.URLError):
+        return ('timeout',0) if isinstance(error.reason,(TimeoutError,socket.timeout)) else ('network',0)
+    if isinstance(error,OSError):
+        return 'network',0
+    if isinstance(error,(ValueError,TypeError,KeyError)):
+        return 'invalid_response',0
+    return 'other',0
+
+
+def record_metadata_retry(error):
+    category,status=metadata_retry_category(error)
+    hour=int(time.time()//3600)
+    try:
+        with F.db() as conn:
+            conn.execute('''INSERT INTO metadata_retry_counts(hour,category,status,attempts) VALUES (?,?,?,1)
+                ON CONFLICT(hour,category,status) DO UPDATE SET attempts=attempts+1''',(hour,category,status))
+            conn.execute('DELETE FROM metadata_retry_counts WHERE hour<?',(hour-167,))
+    except sqlite3.Error:
+        # Retry telemetry must never change the metadata retry outcome.
+        pass
+    detail=f' status={status}' if status else ''
+    log(f'Metadata dependency fetch retry category={category}{detail}')
+
+
 def fetch_waiting_metadata(jobs):
     """One prerequisite, with ordinary provider/lease fences."""
     now=time.time()
@@ -673,6 +704,7 @@ def fetch_waiting_metadata(jobs):
         return ack in ('accepted','duplicate')
     except Exception as error:
         status=getattr(error,'code',None)
+        record_metadata_retry(error)
         jobs.receive('server',worker,lease,{'result_id':uuid.uuid4().hex,
             'source':'cinemeta','fetched_at':time.time(),'status':'retry',
             'provider_status':status,'retry_after_seconds':900 if status==429 else 60})

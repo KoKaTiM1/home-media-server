@@ -1,5 +1,5 @@
 """Catalogue prerequisites resume untouched V6 work, never source retries."""
-import json,time,unittest
+import json,time,unittest,urllib.error
 from unittest.mock import patch
 import test_metadata_lan as fixtures
 app=fixtures.app
@@ -60,14 +60,29 @@ class MetadataResumeTests(unittest.TestCase):
 
     def test_dependency_fetch_failure_releases_own_lease_and_rotates(self):
         self.wait()
-        with patch.object(app,'fetch',side_effect=TimeoutError):
+        with patch.object(app,'fetch',side_effect=TimeoutError('secret-url-and-detail')),patch.object(app,'log') as log:
             self.assertFalse(app.fetch_waiting_metadata(self.jobs))
         with self.jobs.db() as c:
             state,due=c.execute('SELECT state,due FROM jobs WHERE job_id=?',('series:tt0000001',)).fetchone()
         self.assertEqual(state,'retry');self.assertGreater(due,time.time())
+        with app.F.db() as c:diagnostic=c.execute('SELECT category,status,attempts FROM metadata_retry_counts').fetchone()
+        self.assertEqual(tuple(diagnostic),('timeout',0,1))
+        message=log.call_args.args[0]
+        self.assertIn('category=timeout',message);self.assertNotIn('secret-url-and-detail',message)
         with patch.object(app,'fetch',side_effect=AssertionError('must back off')):
             self.assertFalse(app.fetch_waiting_metadata(self.jobs))
         self.assertEqual(self.outcome(),'metadata_wait')
+
+    def test_dependency_fetch_http_retry_records_only_category_and_status(self):
+        self.wait()
+        error=urllib.error.HTTPError('https://private.invalid/tt0000001',429,'rate limited',None,None)
+        with patch.object(app,'fetch',side_effect=error),patch.object(app,'log') as log:
+            self.assertFalse(app.fetch_waiting_metadata(self.jobs))
+        with app.F.db() as c:diagnostic=c.execute('SELECT category,status,attempts FROM metadata_retry_counts').fetchone()
+        self.assertEqual(tuple(diagnostic),('upstream_http',429,1))
+        message=log.call_args.args[0]
+        self.assertIn('category=upstream_http status=429',message)
+        self.assertNotIn('private.invalid',message);self.assertNotIn('tt0000001',message)
 
     def test_dependency_fetch_skips_hold_and_source_retry(self):
         self.wait()

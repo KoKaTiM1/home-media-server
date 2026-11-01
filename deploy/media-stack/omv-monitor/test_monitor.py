@@ -160,11 +160,14 @@ class MonitorTests(unittest.TestCase):
             root=Path(directory);data=root/'catalogue';data.mkdir()
             snapshot=root/'snapshot.json';snapshot.write_text(json.dumps({'time':time.time(),'summary':{
                 'total':100,'v6':3,'metadata_pool_online':2,'metadata_pool_fetching':1,
-                'metadata_pool_pending':400,'metadata_pool_ready':5,'metadata_admission_paused':True}}))
+                'metadata_pool_pending':400,'metadata_pool_ready':5,'metadata_admission_paused':True,
+                'metadata_retry_24h':{'timeout':3,'upstream_http 429':2}}}))
             with patch.object(m,'context',return_value={}):rows=m.overview(data,snapshot)
             values={r['name']:r['value'] for r in rows}
             self.assertEqual(values['Metadata preparation pool'],'2 online')
             self.assertEqual(values['New metadata admission'],'Paused')
+            self.assertEqual(values['Metadata fetch retries (24h)'],'5')
+            self.assertIn('upstream HTTP 429: 2',next(r['detail'] for r in rows if r['name']=='Metadata fetch retries (24h)'))
             self.assertEqual(values['V6 verified sources'],'3')
 
     def test_metadata_wait_is_visible_without_counting_as_finished_verification(self):

@@ -129,6 +129,10 @@ class Features:
         conn.execute('CREATE INDEX IF NOT EXISTS metadata_preparation_parent ON metadata_preparation_requests(metadata_key)')
         conn.execute('CREATE TABLE IF NOT EXISTS metadata_preparation_control(key TEXT PRIMARY KEY,value REAL NOT NULL)')
         conn.execute('CREATE TABLE IF NOT EXISTS metadata_preparation_workers(slot INTEGER PRIMARY KEY,heartbeat REAL NOT NULL,phase TEXT NOT NULL)')
+        conn.execute('''CREATE TABLE IF NOT EXISTS metadata_retry_counts(
+            hour INTEGER NOT NULL,category TEXT NOT NULL,status INTEGER NOT NULL DEFAULT 0,
+            attempts INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(hour,category,status))''')
+        conn.execute('CREATE INDEX IF NOT EXISTS metadata_retry_counts_hour ON metadata_retry_counts(hour)')
 
     def metadata_admission_blocked(self,key,conn=None):
         config=self.g.get('metadata_pool_config',lambda:{'enabled':False})()
