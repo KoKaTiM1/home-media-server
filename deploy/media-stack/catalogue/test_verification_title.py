@@ -82,18 +82,25 @@ class TitleTests(unittest.TestCase):
         previous={name:getattr(a.BUDGET,name,None) for name in ('remote_verification','first_sweep_attempt','worker_deadline')}
         try:
             a.BUDGET.remote_verification=True;a.BUDGET.worker_deadline=None
-            for first_sweep,expected in ((False,180),(True,60)):
+            for first_sweep,expected in ((False,180),(True,120)):
                 a.BUDGET.first_sweep_attempt=first_sweep;observed={}
                 def discover(*args):
                     observed['background']=a.BUDGET.validation_background
                     observed['remote']=a.BUDGET.remote_verification
                     observed['source_seconds']=a.BUDGET.deadline-time.monotonic()
                     return self.payload
-                with patch('verification_remote.jobs',return_value=self.q),patch('verification_title.payload',side_effect=discover),patch.object(self.q,'submit',side_effect=WorkerWait):
+                submitted={}
+                def wait_for_worker(*args,**kwargs):
+                    submitted['execution_seconds']=kwargs.get('execution_seconds')
+                    raise WorkerWait()
+                with patch('verification_remote.jobs',return_value=self.q),patch('verification_title.payload',side_effect=discover),patch.object(self.q,'submit',side_effect=wait_for_worker):
                     self.assertFalse(execute_title(a.__dict__,KEY))
                 self.assertTrue(observed['background']);self.assertTrue(observed['remote'])
                 self.assertGreaterEqual(observed['source_seconds'],expected-2)
                 self.assertLessEqual(observed['source_seconds'],expected+1)
+                if first_sweep:
+                    self.assertGreaterEqual(submitted['execution_seconds'],180)
+                    self.assertLessEqual(submitted['execution_seconds'],300)
         finally:
             for name,value in previous.items():
                 if value is None:
