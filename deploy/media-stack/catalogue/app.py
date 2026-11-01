@@ -809,10 +809,11 @@ def fetch_waiting_metadata(jobs):
     except Exception as error:
         status=getattr(error,'code',None)
         record_metadata_retry(error,stage)
+        retry_delay=3600 if isinstance(error,MetadataResponseShapeError) else (900 if status==429 else 300)
         try:
             jobs.receive('server',worker,lease,{'result_id':uuid.uuid4().hex,
                 'source':'cinemeta','fetched_at':time.time(),'status':'retry',
-                'provider_status':status,'retry_after_seconds':900 if status==429 else 60})
+                'provider_status':status,'retry_after_seconds':retry_delay})
         except Exception as receipt_error:
             record_metadata_retry(receipt_error,'retry_receipt')
             raise

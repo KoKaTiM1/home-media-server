@@ -217,7 +217,13 @@ class MetadataJobs:
                 due, state = fetched + TTL, 'done'
             else:
                 meta = None
-                due, state = now + (86400 if result['status'] == 'not_found' else 300), 'retry'
+                if result['status'] == 'not_found':
+                    due, state = now + 86400, 'retry'
+                else:
+                    delay = result.get('retry_after_seconds', 300)
+                    if type(delay) is not int:
+                        raise InvalidSubmission('Invalid retry delay')
+                    due, state = now + max(300, min(delay, 86400)), 'retry'
             status = result.get('provider_status')
             if status == 429 or status == 503:
                 delay = result.get('retry_after_seconds', 60)

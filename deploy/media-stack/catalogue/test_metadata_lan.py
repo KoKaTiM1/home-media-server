@@ -89,6 +89,18 @@ class JobsTests(unittest.TestCase):
         self.assertEqual(self.jobs.pending_imports(),[])
         self.assertGreater(self.jobs.status()['provider_after'],time.time()+590)
 
+    def test_retry_receipt_honors_bounded_retry_after_for_bad_provider_shape(self):
+        task=self.lease();r=result(status='retry',metadata=None,retry_after_seconds=3600)
+        self.jobs.receive('windows','windows-test',task,r)
+        with self.jobs.db() as conn:due=conn.execute('SELECT due FROM jobs WHERE job_id=?',(task['job_id'],)).fetchone()[0]
+        self.assertGreaterEqual(due-time.time(),3598);self.assertLessEqual(due-time.time(),3600)
+
+    def test_retry_receipt_caps_external_delay(self):
+        task=self.lease();r=result(status='retry',metadata=None,retry_after_seconds=999999)
+        self.jobs.receive('windows','windows-test',task,r)
+        with self.jobs.db() as conn:due=conn.execute('SELECT due FROM jobs WHERE job_id=?',(task['job_id'],)).fetchone()[0]
+        self.assertGreaterEqual(due-time.time(),86398);self.assertLessEqual(due-time.time(),86400)
+
     def test_server_fallback_after_windows_offline(self):
         self.jobs.seen()
         self.assertIsNone(self.jobs.claim('server','server','series','tt0000001'))
