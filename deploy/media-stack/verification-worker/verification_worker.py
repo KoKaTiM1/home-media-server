@@ -58,7 +58,7 @@ def archive_stale_result(folder,task,result):
 class API:
     def __init__(self,config):
         self.origin=urlsplit(config['server_url']);self.token=config['token'];self.pin=config['tls_sha256'].replace(':','').lower()
-        self.origins=[self.origin]
+        self.origins=[self.origin];self.preferred_origin=0;self.last_endpoint=None
         fallback=config.get('fallback_server_urls',[])
         if not isinstance(fallback,list) or any(not isinstance(value,str) for value in fallback):raise ValueError('Invalid fallback origins')
         for value in fallback:
@@ -69,22 +69,28 @@ class API:
         if not re.fullmatch('[a-f0-9]{64}',self.pin) or not re.fullmatch('[A-Za-z0-9_-]{32,256}',self.token):raise ValueError('Invalid worker connection')
     def connection(self):
         ctx=ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT);ctx.check_hostname=False;ctx.verify_mode=ssl.CERT_NONE;ctx.minimum_version=ssl.TLSVersion.TLSv1_2
-        for number,origin in enumerate(self.origins):
+        order=[self.preferred_origin]+[n for n in range(len(self.origins)) if n!=self.preferred_origin]
+        for number in order:
+            origin=self.origins[number]
             c=http.client.HTTPSConnection(origin.hostname,origin.port or 443,timeout=5,context=ctx)
             try:
                 c.connect()
                 if not hmac.compare_digest(hashlib.sha256(c.sock.getpeercert(binary_form=True)).hexdigest(),self.pin):
                     c.close();continue
                 c.sock.settimeout(60)
+                self.preferred_origin=number
+                c.worker_origin_index=number
                 c.worker_endpoint='primary' if number==0 else 'fallback-'+str(number)
+                self.last_endpoint=c.worker_endpoint
                 return c
             except (OSError,ssl.SSLError):
                 c.close()
+        self.last_endpoint=None
         raise TransportWait('connection_unavailable')
     def request(self,path,body=None):
         c=self.connection()
         try:
-            data=json.dumps({'protocol':PROTOCOL,'client_version':'0.4.8',**body},allow_nan=False).encode() if body is not None else None
+            data=json.dumps({'protocol':PROTOCOL,'client_version':'0.4.9',**body},allow_nan=False).encode() if body is not None else None
             c.request('POST' if body is not None else 'GET',PREFIX+path,data,{'Authorization':'Bearer '+self.token,'Content-Type':'application/json'})
             response=c.getresponse();raw=response.read(2*1024*1024+1)
             endpoint=getattr(c,'worker_endpoint','unknown')
@@ -94,6 +100,9 @@ class API:
             if value.get('protocol')!=PROTOCOL:raise TransportWait('protocol_mismatch')
             return value
         except (OSError,http.client.HTTPException) as error:
+            index=getattr(c,'worker_origin_index',None)
+            if type(index) is int:self.preferred_origin=(index+1)%len(self.origins)
+            self.last_endpoint=None
             code='request_timeout' if isinstance(error,TimeoutError) else 'request_transport'
             raise TransportWait(code+' endpoint='+getattr(c,'worker_endpoint','unknown')) from None
         except (ValueError,TypeError):
@@ -288,6 +297,9 @@ def main():
         summary={'role':'actual-media-verification','completed_operations':get('completed',0),'last_update':time.time()}
         progress_log=ProgressLog(lambda message:LOG.info('%s',message))
         def status(message):
+            endpoint=api.last_endpoint or 'unavailable'
+            if summary.get('coordinator_endpoint')!=endpoint:LOG.info('Coordinator path %s',endpoint)
+            summary['coordinator_endpoint']=endpoint
             if message in PHASES:
                 message+=f" | {summary.get('title_key','')} | worker acknowledged operations: {summary['completed_operations']}"
             summary.update(message=message,last_update=time.time())

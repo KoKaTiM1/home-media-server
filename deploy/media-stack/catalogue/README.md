@@ -658,7 +658,7 @@ background audits refresh speed evidence without redecoding unchanged torrents.
 Local files retain their decode checks and bypass torrent-speed requirements.
 Speed evidence describes the machine and network path that measured it, not
 future peer availability or the client Wi-Fi path. Current Windows package
-Worker package 0.4.8 adds allowlisted FFmpeg failure codes and a one-lane
+Worker package 0.4.9 adds allowlisted FFmpeg failure codes and a one-lane
 upgrade/rollback path; it retains the 0.4.5 slow-source fallback and does not
 change any V6 acceptance rule. Version 0.4.5 can perform the complete V6 check
 with a private local TorrServer before Debian retrieves torrent metadata.

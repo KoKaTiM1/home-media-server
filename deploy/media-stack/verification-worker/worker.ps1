@@ -1,7 +1,7 @@
 param([ValidateSet('Update','UpdateLane','RollbackLane','Start','Logs','Stop','Status')][string]$Action='Status',[int]$Lane=0)
 $ErrorActionPreference='Stop'
 $Root=$PSScriptRoot
-$Image='home-media-verification-worker:0.4.8'
+$Image='home-media-verification-worker:0.4.9'
 $TorrentImage='home-media-verification-torrserver:0.3.0'
 $Network='home-media-verification'
 function Invoke-DockerExecutable {
