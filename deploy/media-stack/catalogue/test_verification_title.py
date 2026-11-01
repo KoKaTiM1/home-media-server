@@ -44,6 +44,40 @@ class TitleTests(unittest.TestCase):
         self.assertEqual(result['provider'],'mediafusion')
         self.assertEqual(result['candidates'][0]['provider'],'mediafusion')
 
+    def test_background_windows_payload_uses_exact_local_imdb_identity_before_cinemeta(self):
+        index=a.DATA/'imdb/catalogue.sqlite';index.parent.mkdir(parents=True)
+        with sqlite3.connect(index) as conn:
+            conn.execute('CREATE TABLE titles(imdb TEXT,kind TEXT,name TEXT,original TEXT,year INTEGER)')
+            conn.execute('INSERT INTO titles VALUES (?,?,?,?,?)',('tt0000001','movie','Fixture','Fixture Original',2026))
+        previous=getattr(a.BUDGET,'validation_background',False)
+        a.BUDGET.validation_background=True
+        try:
+            candidate={'infoHash':HASH,'title':'Fixture 2026 1080p',
+                       'behaviorHints':{'filename':'Fixture.2026.mp4'}}
+            with (patch.object(a,'cached',return_value=None),
+                  patch.object(a,'metadata',side_effect=AssertionError('Cinemeta should not block local proof')),
+                  patch.object(a,'verification_candidates',return_value=[candidate])):
+                result=payload(a.__dict__,KEY)
+            self.assertEqual(result['meta'],{'id':'tt0000001','type':'movie','name':'Fixture',
+                                             'originalName':'Fixture Original','releaseInfo':'2026'})
+        finally:
+            a.BUDGET.validation_background=previous
+
+    def test_background_payload_falls_back_to_cinemeta_when_local_identity_is_missing(self):
+        previous=getattr(a.BUDGET,'validation_background',False)
+        a.BUDGET.validation_background=True
+        try:
+            candidate={'infoHash':HASH,'title':'Fixture 2026 1080p',
+                       'behaviorHints':{'filename':'Fixture.2026.mp4'}}
+            with (patch.object(a,'cached',return_value=None),
+                  patch.object(a,'metadata',return_value=self.meta) as metadata,
+                  patch.object(a,'verification_candidates',return_value=[candidate])):
+                result=payload(a.__dict__,KEY)
+            metadata.assert_called_once_with('movie','tt0000001')
+            self.assertEqual(result['meta']['name'],'Fixture')
+        finally:
+            a.BUDGET.validation_background=previous
+
     def test_windows_candidate_discovery_uses_background_provider_queue_and_preserves_decode_budget(self):
         previous={name:getattr(a.BUDGET,name,None) for name in ('remote_verification','first_sweep_attempt','worker_deadline')}
         try:

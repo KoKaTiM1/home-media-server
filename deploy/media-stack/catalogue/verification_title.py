@@ -45,7 +45,21 @@ def validate_task(p):
 
 def payload(g,key):
     kind,imdb,*_=key.split(':')
-    meta={k:v for k,v in g['metadata'](kind,imdb).items() if k in ('name','year','id','type','original_title','originalName','releaseInfo','released')}
+    # A remote background proof only needs exact title identity for the local
+    # verifier. Reuse rich cached metadata when present; otherwise the trusted
+    # IMDb index can satisfy this prerequisite without waiting on Cinemeta.
+    # This mirrors source-admission's local-index fallback and keeps its strict
+    # filename/year and V6 evidence checks unchanged.
+    metadata_key='meta:'+kind+':'+imdb
+    meta=g['cached'](metadata_key)
+    if meta is None and getattr(g['BUDGET'],'validation_background',False):
+        importer=g.get('metadata_import')
+        if importer:
+            importer(limit=1,key=kind+':'+imdb)
+            meta=g['cached'](metadata_key)
+        if meta is None:meta=g['F'].local_index_metadata(kind,imdb)
+    if meta is None:meta=g['metadata'](kind,imdb)
+    meta={k:v for k,v in meta.items() if k in ('name','year','id','type','original_title','originalName','releaseInfo','released')}
     candidates=[];providers=set()
     for c in g['verification_candidates'](key):
         h=c['infoHash'].lower()
