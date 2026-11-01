@@ -68,6 +68,35 @@ class Features:
         self.ensure_read_model(conn)
         return conn
 
+    def local_index_metadata(self,kind,imdb):
+        """Return the exact local IMDb identity used by source verification.
+
+        This projection is deliberately limited to title identity fields. It
+        does not populate the catalogue cache or stand in for Cinemeta's richer
+        metadata. Movies require a usable title and year for filename matching;
+        series need only an exact indexed IMDb identity because episode matching
+        uses the requested series ID and season/episode.
+        """
+        if kind not in ('movie','series') or not re.fullmatch(r'tt\d{5,12}',str(imdb)):
+            return None
+        index=self.g['DATA']/'imdb/catalogue.sqlite'
+        if not index.is_file():return None
+        try:
+            with closing(sqlite3.connect('file:'+str(index)+'?mode=ro',uri=True,timeout=1)) as conn:
+                row=conn.execute('SELECT name,original,year FROM titles WHERE imdb=? AND kind=?',(imdb,kind)).fetchone()
+        except sqlite3.Error:return None
+        if not row:return None
+        name=str(row[0] or '').strip();year=str(row[2] or '')[:4]
+        if kind=='movie' and (not name or not re.fullmatch(r'\d{4}',year)):
+            return None
+        return {'id':imdb,'type':kind,'name':name or imdb,'originalName':str(row[1] or name or imdb),
+                'releaseInfo':year if re.fullmatch(r'\d{4}',year) else ''}
+
+    def local_index_identity(self,metadata_key):
+        """Whether a metadata dependency has an exact local IMDb row."""
+        parts=str(metadata_key).split(':')
+        return len(parts)==3 and parts[0]=='meta' and bool(self.local_index_metadata(parts[1],parts[2]))
+
     def defer_verification(self,key,category):
         with self.db() as conn:
             row=conn.execute('SELECT attempts FROM verification_retry_waits WHERE key=?',(key,)).fetchone()
@@ -151,6 +180,10 @@ class Features:
             conn.execute("UPDATE verification_sweep_attempts SET outcome='deferred',finished=? WHERE key=? AND outcome='queued' AND sweep_id=(SELECT max(id) FROM verification_sweeps)",(now,key))
             return True
         if conn.execute('SELECT 1 FROM cache WHERE key=? AND expires>?',(meta,now)).fetchone():return False
+        # Source checks can use a trusted local IMDb identity without waiting
+        # for poster/episode-description enrichment from Cinemeta. Exact source,
+        # filename/year, sample and speed checks still decide the V6 proof.
+        if self.local_index_identity(meta):return False
         existing=conn.execute("SELECT 1 FROM verification_metadata_dependencies WHERE metadata_key=? AND state IN ('waiting','resumed') UNION ALL SELECT 1 FROM metadata_preparation_requests WHERE metadata_key=? LIMIT 1",(meta,meta)).fetchone()
         manual=conn.execute("SELECT 1 FROM manual_rechecks WHERE key=? AND status='pending'",(key,)).fetchone()
         if not existing and not manual:
@@ -208,7 +241,7 @@ class Features:
                 conn.execute("UPDATE verification_sweep_attempts SET outcome='deferred',finished=? WHERE sweep_id=? AND key=? AND outcome='metadata_wait'",(now,sweep,key))
                 conn.execute("UPDATE verification_metadata_dependencies SET state='closed' WHERE sweep_id=? AND key=?",(sweep,key));continue
             cached=conn.execute('SELECT 1 FROM cache WHERE key=? AND expires>?',(meta,now)).fetchone()
-            if not cached:continue
+            if not cached and not self.local_index_identity(meta):continue
             blocked=conn.execute('''SELECT
                 EXISTS(SELECT 1 FROM verification_claims WHERE key=? AND expires>?) OR
                 EXISTS(SELECT 1 FROM verification_holds WHERE key=? AND expires>?) OR

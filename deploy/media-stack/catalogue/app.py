@@ -1341,7 +1341,9 @@ def candidate_matches(candidate,key):
     with db() as conn:row=conn.execute('SELECT meta FROM items WHERE key=?',(key,)).fetchone()
     if not row:
         # Resolve the provider identity once, never guess a movie from a release.
-        meta=metadata('movie',key.split(':')[1])
+        imdb=key.split(':')[1]
+        meta=F.local_index_metadata('movie',imdb) if getattr(BUDGET,'validation_background',False) else None
+        if meta is None:meta=metadata('movie',imdb)
     else:meta=json.loads(row[0])
     def normalized(value):return re.sub(r'[^\w]+',' ',value.casefold()).strip()
     names=[meta.get(n,'') for n in ('name','original_title','originalName')]

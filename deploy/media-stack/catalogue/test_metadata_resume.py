@@ -19,6 +19,12 @@ class MetadataResumeTests(unittest.TestCase):
         return token
     def outcome(self,key=KEY):
         with app.F.db() as c:return c.execute('SELECT outcome FROM verification_sweep_attempts WHERE key=?',(key,)).fetchone()[0]
+    def add_local_index_title(self,kind='series',imdb='tt0000001',name='Example title',year=2024):
+        import sqlite3
+        path=app.DATA/'imdb/catalogue.sqlite';path.parent.mkdir(parents=True,exist_ok=True)
+        with sqlite3.connect(path) as c:
+            c.execute('CREATE TABLE IF NOT EXISTS titles(imdb TEXT,kind TEXT,name TEXT,original TEXT,year INTEGER,PRIMARY KEY(imdb,kind))')
+            c.execute('INSERT OR REPLACE INTO titles VALUES (?,?,?,?,?)',(imdb,kind,name,name,year))
     def test_real_worker_wait_then_import_resumes_same_first_attempt(self):
         app.REL.db().close();app.BUDGET.metadata_background=True;self.jobs.seen()
         with patch.object(app.F,'seed_validation'),patch.object(app.REL,'schedule'),\
@@ -316,4 +322,34 @@ class MetadataResumeTests(unittest.TestCase):
             self.assertGreater(c.execute('SELECT next_check FROM verification_metadata_dependencies').fetchone()[0],time.time())
             self.assertEqual(c.execute('SELECT completed FROM verification_sweeps').fetchone()[0],0)
         p=app.F.first_sweep_progress();self.assertEqual(p['metadata_wait'],1);self.assertEqual(p['attempted'],0)
+
+    def test_exact_local_series_identity_resumes_wait_without_mutating_proof(self):
+        self.wait();self.add_local_index_title()
+        self.assertEqual(app.F.resume_metadata_dependencies(),1)
+        self.assertEqual(self.outcome(),'queued')
+        self.assertEqual(app.F.first_sweep_candidate()[0][1],KEY)
+        with app.F.db() as c:
+            state,attempts,proof=c.execute('SELECT state,attempts,proof FROM validation WHERE key=?',(KEY,)).fetchone()
+            dependency=c.execute('SELECT state FROM verification_metadata_dependencies').fetchone()[0]
+        self.assertEqual((state,attempts),('pending',0));self.assertEqual(json.loads(proof),{'fixture':'original-proof'})
+        self.assertEqual(dependency,'resumed')
+
+    def test_movie_source_match_uses_exact_local_title_year_in_background(self):
+        self.add_local_index_title('movie','tt0000001','Indexed Example',2024)
+        with patch.object(app.BUDGET,'validation_background',True,create=True),\
+             patch.object(app,'metadata',side_effect=AssertionError('Cinemeta is not needed for source identity')):
+            self.assertTrue(app.candidate_matches({'title':'Indexed.Example.2024.1080p'},'movie:tt0000001'))
+            self.assertFalse(app.candidate_matches({'title':'Indexed.Example.2023.1080p'},'movie:tt0000001'))
+            self.assertFalse(app.candidate_matches({'title':'Different.Movie.2024.1080p'},'movie:tt0000001'))
+
+    def test_local_index_admission_skips_enrichment_request_only_for_exact_identity(self):
+        app.BUDGET.preparation_key=KEY
+        (app.DATA/'metadata-preparation.json').write_text(json.dumps({'enabled':True,'concurrency':2,'high':256,'low':128}))
+        self.add_local_index_title()
+        self.assertFalse(app.F.metadata_admission_blocked(KEY))
+        with app.F.db() as c:self.assertEqual(c.execute('SELECT count(*) FROM metadata_preparation_requests').fetchone()[0],0)
+        missing='series:tt0000002:1:1'
+        with app.F.db() as c:c.execute("INSERT INTO validation(key,state) VALUES (?,'pending')",(missing,))
+        self.assertFalse(app.F.metadata_admission_blocked(missing))
+        with app.F.db() as c:self.assertEqual(c.execute('SELECT key FROM metadata_preparation_requests').fetchone()[0],missing)
 if __name__=='__main__':unittest.main()
