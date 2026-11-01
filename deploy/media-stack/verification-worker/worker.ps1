@@ -1,7 +1,7 @@
-param([ValidateSet('Update','Start','Logs','Stop','Status')][string]$Action='Status')
+param([ValidateSet('Update','UpdateLane','RollbackLane','Start','Logs','Stop','Status')][string]$Action='Status',[int]$Lane=0)
 $ErrorActionPreference='Stop'
 $Root=$PSScriptRoot
-$Image='home-media-verification-worker:0.4.6'
+$Image='home-media-verification-worker:0.4.7'
 $TorrentImage='home-media-verification-torrserver:0.3.0'
 $Network='home-media-verification'
 function Invoke-DockerExecutable {
@@ -148,6 +148,61 @@ function Start-All {
  }
  Write-Host ('Running '+$T.workers+' workers using '+$T.torrservers+' TorrServers. Edit config/workers.json then run 02-START-ALL.cmd to change counts.')
 }
+function Update-Lane([int]$SelectedLane) {
+ Assert-Config
+ $T=Read-Topology
+ if($SelectedLane -lt 1 -or $SelectedLane -gt $T.workers){throw 'Lane must be within the configured worker count'}
+ $Name=Get-LaneName $SelectedLane;$RollbackName=$Name+'-rollback'
+ $Current=Get-Container $Name;$Rollback=Get-Container $RollbackName
+ if(-not $Current -or -not $Current.State.Running){throw 'Selected worker must exist and be running'}
+ if($Rollback){throw 'A rollback container already exists; resolve it before another lane update'}
+ $Backend=1+[int][math]::Floor(($SelectedLane-1)*$T.torrservers/$T.workers)
+ $TorrentName=Get-TorrentName $Backend;$Torrent=Get-Container $TorrentName
+ if(-not $Torrent -or -not $Torrent.State.Running){throw 'Selected worker backend must be running'}
+ if($Current.Config.Labels.'home-media.backend' -ne $TorrentName){throw 'Selected worker backend mapping differs from configured topology'}
+ $ImageId=& docker.exe image inspect $Image --format '{{.Id}}'
+ if($LASTEXITCODE -ne 0){throw 'Updated verifier image is not loaded'}
+ if($Current.Config.Image -eq $Image -and $Current.HostConfig.Init -eq $true){Write-Host 'Selected worker already uses the current image';return}
+ $Data=Get-DataPath $SelectedLane;$State=Get-StatePath $Backend
+ $Renamed=$false
+ try {
+  Invoke-WorkerTool $SelectedLane 'request-drain'
+  Invoke-WorkerTool $SelectedLane 'drain'
+  Invoke-DockerExecutable stop --time 45 $Name
+  Invoke-DockerExecutable rename $Name $RollbackName
+  $Renamed=$true
+  Invoke-WorkerTool $SelectedLane 'resume'
+  Invoke-DockerExecutable run --detach --name $Name --label 'home-media.component=verification-worker' --init --label ('home-media.backend='+$TorrentName) --restart unless-stopped --network $Network --env ('WORKER_LANE='+$SelectedLane) --env ('LOCAL_TORRENT_BACKEND_ID=torrent-'+$Backend) --env ('LOCAL_TORRSERVER_URL=http://'+$TorrentName+':8090') --mount ('type=bind,source='+$State+',target=/torrent-state') --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 96 --memory 512m --cpus 2 --log-opt max-size=2m --log-opt max-file=2 --tmpfs '/tmp:rw,nosuid,nodev,size=128m' --mount ('type=bind,source='+(Join-Path $Root 'config')+',target=/config,readonly') --mount ('type=bind,source='+$Data+',target=/data') $Image run
+  $Updated=Get-Container $Name
+  if(-not $Updated -or -not $Updated.State.Running -or $Updated.Config.Image -ne $Image -or $Updated.HostConfig.Init -ne $true){throw 'Updated worker did not start with the expected image and init'}
+ }catch {
+  if($Renamed){
+   $Failed=Get-Container $Name
+   if($Failed){if($Failed.State.Running){Invoke-DockerExecutable stop --time 20 $Name};Invoke-DockerExecutable rm $Name}
+   Invoke-DockerExecutable rename $RollbackName $Name
+   Invoke-WorkerTool $SelectedLane 'resume'
+   Invoke-DockerExecutable start $Name
+  }else{Invoke-WorkerTool $SelectedLane 'resume'}
+  throw
+ }
+ Write-Host ('Updated lane '+$SelectedLane+' only; the previous container is retained as '+$RollbackName+' for rollback.')
+}
+function Rollback-Lane([int]$SelectedLane) {
+ $T=Read-Topology
+ if($SelectedLane -lt 1 -or $SelectedLane -gt $T.workers){throw 'Lane must be within the configured worker count'}
+ $Name=Get-LaneName $SelectedLane;$RollbackName=$Name+'-rollback'
+ $Current=Get-Container $Name;$Rollback=Get-Container $RollbackName
+ if(-not $Rollback){throw 'No retained rollback container exists for this lane'}
+ $Data=Get-DataPath $SelectedLane
+ if($Current -and $Current.State.Running){Invoke-WorkerTool $SelectedLane 'request-drain';Invoke-WorkerTool $SelectedLane 'drain';Invoke-DockerExecutable stop --time 45 $Name}
+ if($Current){Invoke-DockerExecutable rm $Name}
+ Invoke-DockerExecutable rename $RollbackName $Name
+ Invoke-DockerExecutable run --rm --network $Network --read-only --memory 128m --cap-drop ALL --security-opt no-new-privileges --mount ('type=bind,source='+$Data+',target=/data') $Rollback.Config.Image resume
+ Invoke-DockerExecutable start $Name
+ $Restored=Get-Container $Name
+ if(-not $Restored -or -not $Restored.State.Running){throw 'Retained worker container did not restart'}
+ Write-Host ('Restored the retained image for lane '+$SelectedLane+'; data and identity were preserved.')
+}
 function Remove-OldLaunchers {
  # Exact historical launcher names only. Never remove data, config, or other files.
  $Old=@('01-INSTALL.cmd','04-START.cmd','05-STATUS.cmd','06-LOGS.cmd','07-STOP.cmd',
@@ -183,6 +238,15 @@ try {
    Start-All
    Remove-OldLaunchers
   }
+  'UpdateLane' {
+   Assert-Config;$null=Read-Topology
+   $Manifest=Get-Content -Raw (Join-Path $Root 'SHA256SUMS.json')|ConvertFrom-Json
+   $Archive=Join-Path $Root 'verification-worker-image.tar.gz'
+   if((Get-FileHash -Algorithm SHA256 $Archive).Hash.ToLowerInvariant() -ne $Manifest.'verification-worker-image.tar.gz'){throw 'Image checksum mismatch; running containers retained'}
+   Invoke-DockerExecutable load --input $Archive
+   Update-Lane $Lane
+  }
+  'RollbackLane' {Rollback-Lane $Lane}
   'Start' {Start-All}
   'Stop' {Stop-All}
   'Logs' {Show-Logs}

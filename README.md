@@ -143,13 +143,13 @@ See [the helper guide](deploy/media-stack/metadata-worker/README.md) for setup
 and recovery. Runtime credentials, queues and local databases remain private.
 
 Optional Windows source verification is implemented separately from metadata
-fetching. The current worker package is 0.4.6 (verifier image 0.4.6); the configurable launcher supports
+fetching. Worker package 0.4.7 (verifier image 0.4.7) supports a drained single-lane update and retained-container rollback; it also includes
 1–16 workers and 1–8 private TorrServer backends. The Debian server validates all
 submitted evidence. See [worker operation and recovery](deploy/media-stack/verification-worker/README.md)
 for sizing, preserved-data updates and measured-throughput limits. Issue [#4](../../issues/4)
 tracks ongoing capacity tuning; [#6](../../issues/6) tracks individual playback failures.
 
-Windows verifier package 0.4.6 reports allowlisted FFmpeg failure codes without exposing raw decoder output; it does not alter V6 acceptance. It retains the exact Torrentio slow-source fallback from 0.4.5, a durable initial V6 sweep, and separate queue/execution timing, with configurable worker/backend counts and existing source-proof, memory, playback and data-preservation guards. See the verifier README for current requirements and the preserved-data update procedure.
+Windows verifier package 0.4.7 reports allowlisted FFmpeg failure codes without exposing raw decoder output; it does not alter V6 acceptance. It retains the exact Torrentio slow-source fallback from 0.4.5, a durable initial V6 sweep, and separate queue/execution timing, with configurable worker/backend counts and existing source-proof, memory, playback and data-preservation guards. Packages do not update the physical Windows fleet until the launcher is run; inspect installed client versions before claiming deployment. See the verifier README for current requirements and the preserved-data update procedure.
 
 ## Automated regression gate
 

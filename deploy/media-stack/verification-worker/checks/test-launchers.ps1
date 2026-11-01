@@ -1,6 +1,7 @@
 $ErrorActionPreference='Stop'
-function Run([string]$Action,[int]$Expected=0) {
+function Run([string]$Action,[int]$Expected=0,[int]$Lane=0) {
  $Command='function docker.exe { & /test/mock-docker.ps1 @args }; & /test/worker.ps1 -Action '+$Action
+ if($Lane -gt 0){$Command+=' -Lane '+$Lane}
  $Output=& pwsh -NoProfile -Command $Command 2>&1
  if($LASTEXITCODE -ne $Expected){throw ($Action+': '+($Output -join "`n"))}
  return ($Output -join "`n")
@@ -39,6 +40,20 @@ foreach($Lane in 1..8){
  $Backend=if($Lane -le 4){'home-media-verification-torrserver'}else{'home-media-verification-torrserver-2'}
  Assert ((State).containers[$Name].Config.Labels.'home-media.backend' -eq $Backend) 'Wrong backend mapping'
 }
+$S=State;$Lane8='home-media-verification-worker-8';$S.containers[$Lane8].Config.Image='home-media-verification-worker:0.4.4';Save $S
+$CanaryData='/test/data-8/preserve.txt';Set-Content -LiteralPath $CanaryData -Value 'lane-eight-identity-sentinel'
+$StopCallsBefore=@(Calls|Where-Object {$_.Count -ge 3 -and $_[0] -eq 'stop'}).Count
+$null=Run UpdateLane 0 8
+$S=State
+Assert ($S.containers[$Lane8].State.Running -and $S.containers[$Lane8].Config.Image -eq 'home-media-verification-worker:0.4.7') 'Canary lane did not start on updated image'
+Assert ($S.containers[$Lane8+'-rollback'].Config.Image -eq 'home-media-verification-worker:0.4.4' -and -not $S.containers[$Lane8+'-rollback'].State.Running) 'Previous lane image was not retained for rollback'
+Assert (@($S.containers.Values|Where-Object {$_.Config.Labels.'home-media.component' -eq 'verification-worker' -and $_.State.Running}).Count -eq 8) 'Lane update interrupted another worker'
+Assert (@(Calls|Where-Object {$_.Count -ge 3 -and $_[0] -eq 'stop'}).Count -eq $StopCallsBefore+1) 'Lane update stopped more than the selected worker'
+Assert ((Get-Content -Raw $CanaryData).Trim() -eq 'lane-eight-identity-sentinel') 'Lane update touched the worker identity/data directory'
+$null=Run RollbackLane 0 8
+$S=State
+Assert ($S.containers[$Lane8].State.Running -and $S.containers[$Lane8].Config.Image -eq 'home-media-verification-worker:0.4.4') 'Canary rollback did not restore the original worker image'
+Assert (-not $S.containers.ContainsKey($Lane8+'-rollback')) 'Rollback container was not consumed'
 Topology 10 3;$null=Run Start
 $S=State
 $Groups=@($S.containers.Values|Where-Object {$_.State.Running -and $_.Config.Labels.'home-media.component' -eq 'verification-worker'}|Group-Object {$_.Config.Labels.'home-media.backend'})

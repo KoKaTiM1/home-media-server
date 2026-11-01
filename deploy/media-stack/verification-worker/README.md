@@ -1,9 +1,11 @@
 # Windows V6 verification workers
 
-Launcher package **0.4.6** uses verifier image **0.4.6**. Verifiers
+Launcher package **0.4.7** uses verifier image **0.4.7**. Verifiers
 run with Docker `--init` to reap orphaned decoder children after cancellations.
-Start/Update automatically drains and recreates same-image containers missing
-this flag while preserving identities, config, data and backend state.
+Start/Update automatically drains and recreates containers with a mismatched
+image or missing init while preserving identities, config, data and backend state.
+`UpdateLane` upgrades exactly one selected worker and retains its prior container
+for rollback; `RollbackLane` restores it without deleting data.
 
 The optional Windows PC verifies torrent sources using the same V6 source, speed,
 video sample and audio requirements as Debian. Debian chooses candidates and
@@ -104,7 +106,7 @@ separate measurements. No raw error text or source URLs appear in these metrics.
 
 Build the worker Dockerfile with an allowlisted context containing catalogue/*.py
 and the verifier sources; exclude secrets and runtime data. package.py produces
-verification-worker-v0.4.6.zip from the worker 0.4.6 image and torrent backend 0.3.0.
+verification-worker-v0.4.7.zip from the worker 0.4.7 image and torrent backend 0.3.0.
 The archive contains exactly four CMD launchers and no enrolled data or credentials.
 On restore, install the coordinator and resource gate, provision private TLS/token
 configuration, then copy the package to Windows and run Update. The topology is

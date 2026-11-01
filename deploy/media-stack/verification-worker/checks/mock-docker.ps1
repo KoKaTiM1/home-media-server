@@ -25,6 +25,10 @@ switch($A[0]) {
   Save;exit 0
  }
  'rm' {$State.containers.Remove($A[1]);Save;exit 0}
+ 'rename' {
+  if(-not $State.containers.ContainsKey($A[1]) -or $State.containers.ContainsKey($A[2])){exit 1}
+  $Container=$State.containers[$A[1]];$State.containers.Remove($A[1]);$Container.Name='/'+$A[2];$State.containers[$A[2]]=$Container;Save;exit 0
+ }
  'run' {
   if($A -contains '--rm'){
    if($A -contains 'configure-capacity'){if($State.fail_configure){exit 1};$State['topology']=@{workers=[int]$A[$A.IndexOf('--workers')+1];torrservers=[int]$A[$A.IndexOf('--torrservers')+1]};Save}

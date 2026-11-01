@@ -1,5 +1,5 @@
-Launcher package 0.4.6; verifier image 0.4.6. Start/Update migrates missing --init safely.
-Windows verification worker 0.4.6
+Launcher package 0.4.7; verifier image 0.4.7. Use UpdateLane for a one-worker canary.
+Windows verification worker 0.4.7; previous package behavior and V6 proof rules retained.
 
 Extract this package over the existing HomeMediaVerificationWorker folder.
 Preserve ALL config/, data*/ and torrent-state*/ directories.
