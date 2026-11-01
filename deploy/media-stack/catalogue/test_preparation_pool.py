@@ -297,6 +297,14 @@ class SourcePacingTests(unittest.TestCase):
         self.assertEqual(order,['first','second'])
         self.assertEqual(errors,[])
         self.assertEqual(list(queue_dir.glob('*.ticket')),[])
+    def test_background_provider_queue_reaps_ticket_left_by_dead_owner(self):
+        lock_path=app.DATA/'orphan-provider.lock';queue_dir=app.DATA/'orphan-provider.lock.waiters'
+        queue_dir.mkdir(parents=True)
+        orphan=queue_dir/'00000000000000000000-dead-owner.ticket';orphan.touch()
+        app.BUDGET.validation_background=True
+        with app.serialized_provider_slot(lock_path,'orphan-provider-control'):
+            self.assertFalse(orphan.exists())
+        self.assertEqual(list(queue_dir.glob('*.ticket')),[])
     def test_background_source_wait_obeys_worker_deadline(self):
         app.BUDGET.validation_background=True;app.BUDGET.remote_verification=True
         app.BUDGET.worker_deadline=__import__('time').monotonic()-.01

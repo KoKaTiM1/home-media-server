@@ -242,33 +242,63 @@ def serialized_provider_slot(lock_path,control_key):
         for name in ('worker_deadline','deadline'):
             limit=getattr(BUDGET,name,None)
             if limit is not None:deadline=min(deadline,limit)
-    ticket=None
+    ticket=None;ticket_fd=None;queue_dir=None
     if background:
         queue_dir=Path(str(lock_path)+'.waiters')
         try:
             queue_dir.mkdir(parents=True,exist_ok=True)
-            # Calls have a <=16-minute execution budget. A one-hour ticket
-            # retention safely removes files left by killed/rebooted callers.
-            cutoff=time.time()-3600
-            for stale in queue_dir.glob('*.ticket'):
-                try:
-                    if stale.stat().st_mtime<cutoff:stale.unlink()
-                except OSError:pass
-            ticket=queue_dir/(f'{time.time_ns():020d}-{uuid.uuid4().hex}.ticket')
-            fd=os.open(ticket,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o660);os.close(fd)
+            guard=Path(str(queue_dir)+'.guard').open('a')
+            try:
+                fcntl.flock(guard,fcntl.LOCK_EX)
+                ticket=queue_dir/(f'{time.time_ns():020d}-{uuid.uuid4().hex}.ticket')
+                ticket_fd=os.open(ticket,os.O_CREAT|os.O_EXCL|os.O_RDWR,0o660)
+                # The descriptor lock marks ownership. The queue guard makes
+                # ticket creation and orphan scans atomic with respect to one
+                # another, so a just-created ticket cannot be reaped early.
+                fcntl.flock(ticket_fd,fcntl.LOCK_EX)
+            finally:
+                fcntl.flock(guard,fcntl.LOCK_UN);guard.close()
         except OSError:
             # A transient ticket-directory error must not make source lookup
             # unavailable; retain the prior serialized-lock behavior.
+            if ticket_fd is not None:
+                os.close(ticket_fd);ticket_fd=None
+            if ticket is not None:
+                try:ticket.unlink()
+                except OSError:pass
             ticket=None
     def ticket_turn():
         if ticket is None:return True
+        guard=None
         try:
+            guard=Path(str(queue_dir)+'.guard').open('a')
+            fcntl.flock(guard,fcntl.LOCK_EX)
             entries=[]
-            for entry in ticket.parent.glob('*.ticket'):
-                try:entries.append((entry.stat().st_mtime_ns,entry.name,entry))
-                except OSError:continue
-            return bool(entries) and min(entries)[2]==ticket
+            for entry in queue_dir.glob('*.ticket'):
+                if entry==ticket:
+                    entries.append(entry);continue
+                fd=None
+                try:
+                    fd=os.open(entry,os.O_RDWR)
+                    try:fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                    except BlockingIOError:
+                        entries.append(entry)
+                    else:
+                        # No process owns this ticket; it survived a crash or
+                        # forced termination and cannot block the FIFO queue.
+                        try:entry.unlink()
+                        except FileNotFoundError:pass
+                        fcntl.flock(fd,fcntl.LOCK_UN)
+                except FileNotFoundError:pass
+                except OSError:entries.append(entry)
+                finally:
+                    if fd is not None:os.close(fd)
+            return bool(entries) and min(entries,key=lambda item:item.name)==ticket
         except OSError:return True
+        finally:
+            if guard is not None:
+                try:fcntl.flock(guard,fcntl.LOCK_UN)
+                finally:guard.close()
     def wait_slice(seconds):
         cancel=getattr(BUDGET,'cancel',None)
         if cancel and cancel():raise ClientCancelled('Client disconnected')
@@ -310,8 +340,20 @@ def serialized_provider_slot(lock_path,control_key):
             lock.close()
     finally:
         if ticket is not None:
-            try:ticket.unlink()
-            except FileNotFoundError:pass
+            guard=None
+            try:
+                guard=Path(str(queue_dir)+'.guard').open('a')
+                fcntl.flock(guard,fcntl.LOCK_EX)
+                try:ticket.unlink()
+                except FileNotFoundError:pass
+            except OSError:pass
+            finally:
+                if guard is not None:
+                    try:fcntl.flock(guard,fcntl.LOCK_UN)
+                    finally:guard.close()
+                if ticket_fd is not None:
+                    try:fcntl.flock(ticket_fd,fcntl.LOCK_UN)
+                    finally:os.close(ticket_fd)
 
 
 @contextmanager
