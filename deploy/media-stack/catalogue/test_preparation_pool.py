@@ -267,6 +267,12 @@ class SourcePacingTests(unittest.TestCase):
                 with self.assertRaisesRegex(app.SourceProviderWait,'slot wait budget exhausted'):
                     with app.source_provider_slot():self.fail('Deadline should stop the wait')
             finally:fcntl.flock(lock,fcntl.LOCK_UN)
+    def test_server_background_lane_uses_same_queue_but_not_remote_flag(self):
+        clock=[1000.0]
+        app.BUDGET.validation_background=True;app.BUDGET.remote_verification=False
+        app.remember('source-provider-control',{'next':1005},90000)
+        with patch.object(app.time,'time',side_effect=lambda:clock[0]),patch.object(app.time,'sleep',side_effect=lambda seconds:clock.__setitem__(0,clock[0]+seconds)):
+            with app.source_provider_slot():self.assertGreaterEqual(clock[0],1005)
     def test_rate_limit_has_one_recovery_request_and_preserves_retry_after(self):
         import urllib.error
         from email.message import Message

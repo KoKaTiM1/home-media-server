@@ -229,10 +229,10 @@ class SourceProviderWait(Checkpoint):
 @contextmanager
 def serialized_provider_slot(lock_path,control_key):
     # All source providers serialize across processes. Foreground calls fail
-    # fast; remote background lanes wait briefly rather than all checkpointing
-    # behind the same request. Cooldowns remain fail-fast for provider fallback.
-    background=bool(getattr(BUDGET,'validation_background',False)
-                    and getattr(BUDGET,'remote_verification',False))
+    # fast; both Debian and Windows background validation lanes queue instead
+    # of checkpointing behind the shared provider request. Cooldowns remain
+    # fail-fast so provider fallback can proceed without bypassing rate limits.
+    background=bool(getattr(BUDGET,'validation_background',False))
     deadline=time.monotonic()
     if background:
         # There are up to 16 independent producer lanes but provider calls
