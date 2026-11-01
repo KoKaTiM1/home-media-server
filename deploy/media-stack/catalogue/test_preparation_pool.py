@@ -383,6 +383,25 @@ class FallbackTests(unittest.TestCase):
             self.assertEqual(fetch.call_count,1)
             self.assertTrue(fetch.call_args.args[0].startswith('https://fallback.example.invalid/'))
             self.assertEqual(app.cached('source-status:movie:tt0000001')['state'],'listed')
+    def test_primary_empty_is_not_repeated_when_fallback_queue_times_out(self):
+        key='movie:tt0000001'
+        with patch.object(app,'fetch',return_value={'streams':[]}) as primary,\
+             patch.object(app,'mediafusion_streams',side_effect=app.SourceProviderWait('queued')):
+            with self.assertRaises(app.SourceProviderWait):app.stream_candidates(key)
+            self.assertEqual(primary.call_count,1)
+        self.assertEqual(app.cached('streams:'+key),[])
+        with patch.object(app,'fetch',side_effect=AssertionError('repeat Torrentio lookup')) as fetch,\
+             patch.object(app,'mediafusion_streams',return_value=[self.stream()]):
+            rows=app.stream_candidates(key)
+        self.assertEqual(len(rows),1)
+        fetch.assert_not_called()
+    def test_primary_transport_error_is_not_cached_as_an_empty_listing(self):
+        import urllib.error
+        key='movie:tt0000001'
+        with patch.object(app,'fetch',side_effect=urllib.error.URLError('offline')),\
+             patch.object(app,'mediafusion_streams',side_effect=app.SourceProviderWait('queued')):
+            with self.assertRaises(app.SourceProviderWait):app.stream_candidates(key)
+        self.assertIsNone(app.cached('streams:'+key))
     def test_torrentio_derived_and_unknown_origin_are_excluded(self):
         with patch.object(app,'fetch',return_value={'streams':[self.stream('Torrentio'),{**self.stream(),'description':'unknown'}]}):
             self.assertEqual(app.mediafusion_streams('movie:tt0000001'),[])

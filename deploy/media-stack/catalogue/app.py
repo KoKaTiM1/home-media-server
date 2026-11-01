@@ -1449,6 +1449,12 @@ def stream_candidates(key):
         if not isinstance(response,dict) or not isinstance(response.get('streams'),list):raise ValueError('Invalid source response')
         candidates,stats=filter_streams_with_diagnostics(response)
         source_provider_event('torrentio','compatible' if candidates else 'empty','miss',len(response['streams']),stats)
+        if not candidates and primary_error is None:
+            # If the fallback provider is locally queued, retain this short
+            # primary-negative result. Otherwise every retry repeats the same
+            # paced Torrentio lookup before rejoining the fallback queue.
+            # A completed fallback result replaces this with its normal TTL.
+            remember('streams:'+key,[],300)
     except (SourceProviderWait,urllib.error.URLError,TimeoutError,ValueError) as error:
         primary_error=error;response={'streams':[]};candidates=[]
         source_provider_event('torrentio','error','miss',error=error)
