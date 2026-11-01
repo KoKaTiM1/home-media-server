@@ -274,6 +274,10 @@ def serialized_provider_slot(lock_path,control_key):
             guard=Path(str(queue_dir)+'.guard').open('a')
             fcntl.flock(guard,fcntl.LOCK_EX)
             entries=[]
+            # Processes already in flight before this version closed their
+            # ticket descriptors. Preserve those recent legacy tickets for
+            # one maximum provider-wait window during the live code handoff.
+            legacy_grace=time.time()-20*60
             for entry in queue_dir.glob('*.ticket'):
                 if entry==ticket:
                     entries.append(entry);continue
@@ -284,9 +288,12 @@ def serialized_provider_slot(lock_path,control_key):
                     except BlockingIOError:
                         entries.append(entry)
                     else:
-                        # No process owns this ticket; it survived a crash or
-                        # forced termination and cannot block the FIFO queue.
-                        try:entry.unlink()
+                        # New tickets are descriptor-locked. An unlocked,
+                        # recent file may belong to a pre-update process;
+                        # retain it briefly, then reap it if still present.
+                        try:
+                            if entry.stat().st_mtime>=legacy_grace:entries.append(entry)
+                            else:entry.unlink()
                         except FileNotFoundError:pass
                         fcntl.flock(fd,fcntl.LOCK_UN)
                 except FileNotFoundError:pass
