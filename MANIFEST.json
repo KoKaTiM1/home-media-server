@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-11-01T04:56:36.464004+00:00",
+  "created_utc": "2026-11-01T05:04:06.904862+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -61,8 +61,8 @@
     "deploy/media-stack/catalogue/test_startup.py": "2263d151fe7352035d3650703b72449f39831805ad6f68a4c3759810a1099bb1",
     "deploy/media-stack/catalogue/test_torrent_metadata.py": "7401a3c04e96a9c70c2553e2ef88a3a6dd311d6b74940fb6efab1a18e9984810",
     "deploy/media-stack/catalogue/test_verification_title.py": "4846b536efe318ae116a2965e6019216820492ce4418e0d7ee6908e5ca399983",
-    "deploy/media-stack/catalogue/test_verification_worker.py": "9113589b57594783baa7b814c9aecc2113c6629d206df359225fecbc56df2163",
-    "deploy/media-stack/catalogue/verification_jobs.py": "d07308a56c825c6bb539a61a9e701e69bd7c6a6f7cd36691394fe1cc976e96bb",
+    "deploy/media-stack/catalogue/test_verification_worker.py": "5e0b3ce975be2acb916b22b4a0f2b976ea9d2d87e58cb2f6b49055b564c687dc",
+    "deploy/media-stack/catalogue/verification_jobs.py": "6855f56948e5dd2263dc20b7a2ca230e1829009c512b15abd9f91b70b3522dbd",
     "deploy/media-stack/catalogue/verification_media.py": "00d792a5790d137d0c384e721c182dd5d25b4c41805824e95e430c93e7ebe8dd",
     "deploy/media-stack/catalogue/verification_remote.py": "47be0fea22bf6627541f3bc03b648a980dc6df4d4d86adf0f77d9d343470798e",
     "deploy/media-stack/catalogue/verification_title.py": "97dabdf2e9878873bb9885c7ac24b993702fb6c0ce282bab83ec716330e15ee3",

@@ -153,7 +153,12 @@ class DecodeJobs:
             c.execute("DELETE FROM decode_jobs WHERE created<? AND state IN ('consumed','cancelled')",(now-7*86400,))
             active=c.execute("SELECT COUNT(*) FROM decode_jobs WHERE state IN ('pending','leased') AND controller>?",(now,)).fetchone()[0]
             if active>=self.queue_capacity(c):raise WorkerWait('Windows ready queue full')
-            if c.execute("SELECT COUNT(*) FROM decode_jobs WHERE state IN ('pending','leased','result')").fetchone()[0]>=32:raise WorkerWait('Decode work capacity reached')
+            # A result remains durable until its originating controller calls
+            # finish(). If that controller dies, the retained receipt must not
+            # permanently consume live queue capacity; a live controller keeps
+            # its result protected by refreshing `controller` from poll().
+            live=c.execute("SELECT COUNT(*) FROM decode_jobs WHERE state IN ('pending','leased') OR (state='result' AND controller>?)",(now,)).fetchone()[0]
+            if live>=32:raise WorkerWait('Decode work capacity reached')
             if operation=='verify_title':
                 continuous=self.setting(c,'local_torrent_continuous',False)
                 remaining=self.setting(c,'local_torrent_pilot_remaining',20)

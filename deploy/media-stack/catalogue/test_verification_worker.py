@@ -97,6 +97,22 @@ class QueueTests(unittest.TestCase):
         self.q.submit('movie:tt0000002',SID,'probe',{},'http://127.0.0.1:8092/raw/movie:tt0000002',120)
         with self.assertRaises(WorkerWait):
             self.q.submit('movie:tt0000003',SID,'probe',{},'http://127.0.0.1:8092/raw/movie:tt0000003',120)
+    def test_expired_controller_results_are_retained_but_do_not_fill_live_capacity(self):
+        self.q.set('max_windows_jobs',8);self.q.set('prefetch_per_lane',4)
+        now=time.time();receipt=json.dumps({'status':'checkpoint','reason':'transport'})
+        with self.q.db(True) as c:
+            for i in range(32):
+                c.execute("INSERT INTO decode_jobs(id,key,sid,operation,params,url,state,created,controller,deadline,result,result_id,result_hash,outcome,finished) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    ('orphan-'+str(i),f'movie:tt{1000000+i}',SID,'probe','{}','', 'result',now-3600,now-1800,now-1,receipt,uuid.uuid4().hex,'a'*64,'checkpoint',now-1800))
+        self.assertEqual(self.q.status()['jobs']['result'],32)
+        self.assertTrue(self.submit())
+        with self.q.db(True) as c:
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM decode_jobs WHERE state='result' AND controller<?",(now,)).fetchone()[0],32)
+            for i in range(31):
+                c.execute("INSERT INTO decode_jobs(id,key,sid,operation,params,url,state,created,controller,deadline,result,result_id,result_hash,outcome,finished) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    ('live-'+str(i),f'movie:tt{2000000+i}',SID,'probe','{}','', 'result',now,now+60,now+120,receipt,uuid.uuid4().hex,'b'*64,'checkpoint',now))
+        with self.assertRaisesRegex(WorkerWait,'Decode work capacity reached'):
+            self.q.submit('movie:tt0000002',SID,'probe',{},'http://127.0.0.1:8092/raw/movie:tt0000002',120)
     def test_prefetched_queue_cannot_exceed_active_limit_with_four_clients(self):
         self.q.set('max_windows_jobs',3);self.q.set('prefetch_per_lane',2)
         workers=[WORKER,'pc-two','pc-three','pc-four']
