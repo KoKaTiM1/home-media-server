@@ -358,14 +358,14 @@ class SourcePacingTests(unittest.TestCase):
             stack.enter_context(patch.object(app.F,'jf',return_value=[]))
             stack.enter_context(patch.object(app.F,'first_sweep_candidate',return_value=((1,KEY),True)))
             stack.enter_context(patch.object(app.F,'metadata_admission_blocked',return_value=False))
-            stack.enter_context(patch.object(app,'prepared',side_effect=app.SourceProviderWait('Source provider request deferred')))
+            stack.enter_context(patch.object(app,'prepared',side_effect=app.SourceProviderWait('Source provider request deferred',reason='queue_timeout')))
             app.F.warm_availability(limit=1)
         with app.F.db() as c:
             self.assertEqual(tuple(c.execute('SELECT outcome,finished FROM verification_sweep_attempts WHERE key=?',(KEY,)).fetchone()),('queued',0))
             self.assertEqual(c.execute('SELECT count(*) FROM verification_claims').fetchone()[0],0)
             wait=c.execute('SELECT expires FROM metadata_waits WHERE key=?',(KEY,)).fetchone()
         self.assertIsNotNone(wait)
-        self.assertGreater(wait[0],time.time())
+        self.assertGreaterEqual(wait[0],time.time()+899)
         self.assertEqual(app.F.first_sweep_candidate()[0][1],other)
 
 class FallbackTests(unittest.TestCase):

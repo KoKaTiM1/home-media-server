@@ -1774,7 +1774,11 @@ class Features:
                             sweep_attempt=False
                             budget.worker_deadline=previous_attempt_deadline
                         reason=getattr(error,'reason',None)
-                        retry_after=300 if reason=='cooldown' else 60 if reason=='queue_timeout' else 30
+                        # A queue timeout can consume six minutes before this
+                        # handler runs. Keep the first-sweep item queued, but
+                        # let the provider FIFO drain other titles before this
+                        # same oldest candidate is eligible again.
+                        retry_after=900 if reason=='queue_timeout' else 300 if reason=='cooldown' else 30
                         with self.db() as conn:
                             conn.execute('INSERT OR REPLACE INTO metadata_waits VALUES (?,?)',(key,time.time()+retry_after))
                         message=('Source provider request queue timed out; title retained for retry'
