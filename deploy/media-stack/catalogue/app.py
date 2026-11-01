@@ -71,6 +71,7 @@ FOREGROUND_CLEANUP = {'event': None, 'protected': set(), 'hashes': set()}
 BUDGET = threading.local()
 PREPARATION_SECONDS = 60
 FIRST_DATA_SECONDS = 15
+BACKGROUND_PROVIDER_SLOT_WAIT = 360
 
 class PlaybackBusy(RuntimeError): pass
 class ClientCancelled(RuntimeError): pass
@@ -221,7 +222,8 @@ def remember(key, value, ttl):
 
 
 class SourceProviderWait(Checkpoint):
-    pass
+    def __init__(self,message,provider=None,reason=None):
+        super().__init__(message);self.provider=provider;self.reason=reason
 
 
 @contextmanager
@@ -233,7 +235,11 @@ def serialized_provider_slot(lock_path,control_key):
                     and getattr(BUDGET,'remote_verification',False))
     deadline=time.monotonic()
     if background:
-        deadline+=60
+        # There are up to 16 independent producer lanes but provider calls
+        # remain deliberately serialized and paced (15s fallback/5s primary).
+        # A minute expires most queued lanes before their turn; cap at six
+        # minutes and still honor the caller's worker/request deadline.
+        deadline+=BACKGROUND_PROVIDER_SLOT_WAIT
         for name in ('worker_deadline','deadline'):
             limit=getattr(BUDGET,name,None)
             if limit is not None:deadline=min(deadline,limit)
@@ -247,21 +253,21 @@ def serialized_provider_slot(lock_path,control_key):
             try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
             except BlockingIOError:
                 lock.close()
-                if not background:raise SourceProviderWait('Source provider request already active') from None
+                if not background:raise SourceProviderWait('Source provider request already active',control_key,'busy') from None
                 wait=deadline-time.monotonic()
-                if wait<=0:raise SourceProviderWait('Source provider slot wait budget exhausted') from None
+                if wait<=0:raise SourceProviderWait('Source provider slot wait budget exhausted',control_key,'queue_timeout') from None
                 wait_slice(wait);continue
             state=cached(control_key) or {}
             now=time.time()
             if state.get('cooldown',0)>now:
                 lock.close()
-                raise SourceProviderWait('Source provider cooldown active')
+                raise SourceProviderWait('Source provider cooldown active',control_key,'cooldown')
             spacing=state.get('next',0)-now
             if spacing>0:
                 lock.close()
-                if not background:raise SourceProviderWait('Source provider pacing interval active')
+                if not background:raise SourceProviderWait('Source provider pacing interval active',control_key,'pacing')
                 wait=deadline-time.monotonic()
-                if wait<=0:raise SourceProviderWait('Source provider slot wait budget exhausted') from None
+                if wait<=0:raise SourceProviderWait('Source provider slot wait budget exhausted',control_key,'queue_timeout') from None
                 wait_slice(min(spacing,wait));continue
             break
         except BaseException:

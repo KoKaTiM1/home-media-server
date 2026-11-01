@@ -1740,7 +1740,13 @@ class Features:
                                 conn.execute("UPDATE verification_sweep_attempts SET outcome='queued',started=0,finished=0 WHERE key=? AND outcome='started' AND sweep_id=(SELECT max(id) FROM verification_sweeps)",(key,))
                             sweep_attempt=False
                             budget.worker_deadline=previous_attempt_deadline
-                        self.remember(worker_key,{'message':'Source provider pacing or cooldown; queue retained','started':time.time()},180)
+                        reason=getattr(error,'reason',None)
+                        message=('Source provider request queue timed out; title retained for retry'
+                                 if reason=='queue_timeout' else
+                                 'Source provider cooldown active; title retained for retry'
+                                 if reason=='cooldown' else
+                                 'Source provider pacing wait; title retained for retry')
+                        self.remember(worker_key,{'message':message,'started':time.time()},180)
                         break
                     pending=self.g.get('MetadataPending')
                     if pending and isinstance(error,pending):
