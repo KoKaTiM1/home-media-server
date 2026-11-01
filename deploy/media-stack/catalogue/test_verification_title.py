@@ -312,6 +312,28 @@ class TitleTests(unittest.TestCase):
                          {'category':'speed_rejected','failure_type':'SourceTooSlow','phase':'speed verification','code':'unclassified','source_hash':HASH})
         self.assertNotIn('source_hash',module.failure_diagnostic(SourceStalled(),'video probe',{'hash':HASH}))
         self.assertNotIn('source_hash',module.failure_diagnostic(SourceTooSlow(),'speed verification',{'hash':'secret'}))
+
+    def test_local_ffmpeg_diagnostics_are_allowlisted_and_never_echo_stderr(self):
+        import importlib.util
+        worker=Path(__file__).parents[1]/'verification-worker/local_verifier.py'
+        spec=importlib.util.spec_from_file_location('test_local_verifier_ffmpeg_diagnostic',worker)
+        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        cases=((1,b'Cannot allocate memory','ffmpeg_resource'),
+               (1,b'HTTP error 503 Server returned secret https://private.invalid/key','ffmpeg_transport'),
+               (1,b'Moov atom not found','ffmpeg_missing_index'),
+               (1,b'Invalid data found when processing input','ffmpeg_invalid_data'),
+               (-9,b'','ffmpeg_signal_exit'),(1,b'private.invalid/token','ffmpeg_nonzero_exit'))
+        for status,stderr,expected in cases:
+            with self.subTest(expected=expected):
+                code=module.ffmpeg_failure_code(status,stderr)
+                self.assertEqual(code,expected)
+                self.assertIn(code,module.SAFE_DIAGNOSTIC_CODES)
+                self.assertNotIn('private.invalid',code)
+        from reliability import DecodeFailure
+        error=DecodeFailure('decoder rejected source');error.code=module.ffmpeg_failure_code(1,b'private.invalid/token')
+        diagnostic=module.failure_diagnostic(error,'sample decode')
+        self.assertEqual(diagnostic['code'],'ffmpeg_nonzero_exit')
+        self.assertNotIn('private.invalid',json.dumps(diagnostic))
     def test_local_failure_defers_fallback_while_debian_gate_is_paused(self):
         self.q.set('enabled',False)
         a.BUDGET.remote_verification=True;a.BUDGET.worker_deadline=time.monotonic()+60

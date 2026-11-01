@@ -658,7 +658,9 @@ background audits refresh speed evidence without redecoding unchanged torrents.
 Local files retain their decode checks and bypass torrent-speed requirements.
 Speed evidence describes the machine and network path that measured it, not
 future peer availability or the client Wi-Fi path. Current Windows package
-0.4.5 can perform the complete V6 check with a private local TorrServer before
+0.4.6 adds allowlisted FFmpeg failure codes to the existing bounded diagnostics;
+it does not change any V6 acceptance rule. Version 0.4.5 can perform the complete
+V6 check with a private local TorrServer before
 Debian retrieves torrent metadata. Debian still ranks candidates, validates raw
 evidence and commits the final proof. Exact accepted legacy decode samples can be reused;
 Windows supplies the new speed evidence. Windows-local failures use one normal

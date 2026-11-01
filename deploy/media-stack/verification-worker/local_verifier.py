@@ -10,11 +10,43 @@ import subprocess
 import time
 
 
+SAFE_DIAGNOSTIC_CODES=frozenset((
+    'range_mismatch','missing_media_size','cache_attribution','uncached_range_budget',
+    'speed_work_budget','local_work_budget','local_output_bound','local_transport',
+    'unclassified','ffmpeg_resource','ffmpeg_transport','ffmpeg_io',
+    'ffmpeg_decoder_missing','ffmpeg_stream_mapping','ffmpeg_missing_index',
+    'ffmpeg_invalid_data','ffmpeg_decode_error','ffmpeg_truncated_input',
+    'ffmpeg_signal_exit','ffmpeg_nonzero_exit','ffmpeg_stderr_exit'))
+
+
+def ffmpeg_failure_code(returncode, stderr):
+    """Map FFmpeg output to a fixed safe code; never return stderr content."""
+    text=stderr.lower() if isinstance(stderr,bytes) else str(stderr).encode(errors='replace').lower()
+    patterns=(
+        ((b'cannot allocate memory',b'resource temporarily unavailable',b'pthread_create failed'),'ffmpeg_resource'),
+        ((b'connection refused',b'connection reset',b'http error',b'server returned'),'ffmpeg_transport'),
+        ((b'input/output error',),'ffmpeg_io'),
+        ((b'unknown decoder',b'no decoder for',b'decoder not found'),'ffmpeg_decoder_missing'),
+        ((b'matches no streams',b'stream map',b'could not find output stream'),'ffmpeg_stream_mapping'),
+        ((b'moov atom not found',b'moov atom is missing'),'ffmpeg_missing_index'),
+        ((b'invalid data found when processing input',),'ffmpeg_invalid_data'),
+        ((b'error while decoding',b'corrupt decoded frame',b'corrupt input'),'ffmpeg_decode_error'),
+        ((b'unexpected eof',b'end of file',b'partial file'),'ffmpeg_truncated_input'))
+    for markers,code in patterns:
+        if any(marker in text for marker in markers):return code
+    if returncode<0:return 'ffmpeg_signal_exit'
+    if returncode:return 'ffmpeg_nonzero_exit'
+    if text:return 'ffmpeg_stderr_exit'
+    return 'unclassified'
+
+
 def failure_diagnostic(error, stage, selected=None):
     """Return bounded diagnostics; attach a source hash only to a speed rejection."""
     typ=type(error).__name__
     category={'SourceTooSlow':'speed_rejected','SourceStalled':'stream_stall','DecodeFailure':'decoder','ResourceCheckpoint':'resource','TimeoutError':'torrent_timeout' if stage=='torrent resolution' else 'stream_stall'}.get(typ,'transport')
-    value={'category':category,'failure_type':typ,'phase':stage,'code':getattr(error,'code','unclassified')}
+    code=getattr(error,'code','unclassified')
+    if code not in SAFE_DIAGNOSTIC_CODES:code='unclassified'
+    value={'category':category,'failure_type':typ,'phase':stage,'code':code}
     if category=='speed_rejected' and isinstance(selected,dict):
         source_hash=selected.get('hash')
         if isinstance(source_hash,str) and re.fullmatch(r'[a-f0-9]{40}',source_hash.lower()):
@@ -86,8 +118,10 @@ def verify(payload,state,output,budget_seconds=470):
                         try:
                             out,err=proc.communicate(timeout=.5)
                             if len(out)>1024*1024:raise Checkpoint('Local output bound','local_output_bound')
-                            if proc.returncode<0 or re.search(rb'Cannot allocate memory|Resource temporarily unavailable|pthread_create failed|Connection refused|Connection reset|HTTP error|Server returned|Input/output error',err,re.I):raise Checkpoint('Local resource/transport checkpoint','local_transport')
-                            if proc.returncode or err:raise DecodeFailure('Local decoder rejected source')
+                            diagnostic_code=ffmpeg_failure_code(proc.returncode,err)
+                            if diagnostic_code in ('ffmpeg_resource','ffmpeg_transport','ffmpeg_io') or proc.returncode<0:raise Checkpoint('Local resource/transport checkpoint',diagnostic_code)
+                            if proc.returncode or err:
+                                error=DecodeFailure('Local decoder rejected source');error.code=diagnostic_code;raise error
                             return subprocess.CompletedProcess(command,0,out,b'')
                         except subprocess.TimeoutExpired:continue
                 except Exception as error:

@@ -85,11 +85,11 @@ class QueueTests(unittest.TestCase):
 
     def test_failure_diagnostics_survive_consumption_without_raw_details(self):
         job=self.submit();task=self.q.claim(WORKER);result=self.result()
-        result.update(reason='transport',diagnostic={'category':'stream_stall','failure_type':'SourceStalled','url':'https://private.invalid/token'})
+        result.update(reason='transport',diagnostic={'category':'decoder','failure_type':'DecodeFailure','code':'ffmpeg_missing_index','url':'https://private.invalid/token'})
         self.q.receive(WORKER,task,result);self.q.finish(job)
         with self.q.db() as c:
-            row=c.execute('SELECT failure_category,failure_type,result FROM decode_jobs WHERE id=?',(job,)).fetchone()
-            self.assertEqual(tuple(row),('stream_stall','SourceStalled',None))
+            row=c.execute('SELECT failure_category,failure_type,checkpoint_code,result FROM decode_jobs WHERE id=?',(job,)).fetchone()
+            self.assertEqual(tuple(row),('decoder','DecodeFailure','ffmpeg_missing_index',None))
 
     def test_speed_rejection_hash_is_retained_only_for_submitted_torrentio_candidate(self):
         self.q.set('local_torrent_enabled',True);self.q.set('local_torrent_permitted',True)
