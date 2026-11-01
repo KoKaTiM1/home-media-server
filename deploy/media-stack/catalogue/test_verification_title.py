@@ -282,6 +282,26 @@ class TitleTests(unittest.TestCase):
             self.assertEqual([c['provider'] for c in result['candidates']],['mediafusion','torrentio'])
         finally:a.BUDGET.validation_background=previous
 
+    def test_expired_primary_cache_still_fetches_mediafusion_for_speed_retry(self):
+        rejected=HASH;primary='b'*40;fallback='c'*40
+        a.remember('mediafusion-needed:'+KEY,{'rejected_hash':rejected},3600)
+        previous=getattr(a.BUDGET,'validation_background',False);a.BUDGET.validation_background=True
+        primary_candidate={'infoHash':primary,'title':'Fixture 2026 720p','_provider':'torrentio',
+                           'behaviorHints':{'filename':'Fixture.2026.720p.mp4'}}
+        media_candidate={'infoHash':fallback,'title':'Fixture 2026 1080p','_provider':'mediafusion',
+                         'behaviorHints':{'filename':'Fixture.2026.mp4'}}
+        try:
+            with patch.object(a,'fetch',return_value={'streams':[{}]}) as fetch,\
+                 patch.object(a,'filter_streams_with_diagnostics',side_effect=[([primary_candidate],{}),([media_candidate],{})]),\
+                 patch.object(a,'mediafusion_streams',return_value=[{}]) as mediafusion:
+                result=a.stream_candidates(KEY)
+            self.assertEqual({c['infoHash'] for c in result},{primary,fallback})
+            self.assertEqual([c['_provider'] for c in result],['mediafusion','torrentio'])
+            fetch.assert_called_once()
+            mediafusion.assert_called_once_with(KEY)
+            self.assertIsNone(a.cached('mediafusion-needed:'+KEY))
+        finally:a.BUDGET.validation_background=previous
+
     def test_local_speed_failure_diagnostic_carries_only_valid_source_hash(self):
         import importlib.util
         worker=Path(__file__).parents[1]/'verification-worker/local_verifier.py'

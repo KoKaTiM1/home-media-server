@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-11-01T08:52:35.915375+00:00",
+  "created_utc": "2026-11-01T09:05:47.544253+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -18,7 +18,7 @@
     "deploy/media-stack/README.md": "0562a802954db8056d28f204d12d62d757f605e1e9f79f428bcffd50345c56d1",
     "deploy/media-stack/catalogue/Dockerfile": "ce04557b530984de2b95ed30eb584ae460c2d9bd75067b3f5d19f6afba0ac730",
     "deploy/media-stack/catalogue/README.md": "e692feae57d9ef1516b01c17cd7ef3e7c7545ad59e171fece2e639b8b06f80aa",
-    "deploy/media-stack/catalogue/app.py": "60ae0af2a9f438a50e6b78cb5a3fcc539a898135f6f3fd9ff5cc651c84d9df01",
+    "deploy/media-stack/catalogue/app.py": "4ddbdfa66bdf992a815ad2115c89c53ac6a1a204a12dd6162fd304a443a850dd",
     "deploy/media-stack/catalogue/bootstrap.py": "002cb58a203f36b9ee66d83900cf939a273e73e75637dfd8b342a67b48edfad9",
     "deploy/media-stack/catalogue/check_audio_conversion.py": "669463dd9be988b0becf34db0014739e559e2f1fa6c350be11d5dd4a81c4a899",
     "deploy/media-stack/catalogue/check_audio_subtitles.py": "f89e81cd25fa7767dddef438e63e8155a92e8689e5aeeaf5e27af306ed4eb02f",
@@ -60,7 +60,7 @@
     "deploy/media-stack/catalogue/test_speed_verification.py": "0c174d5180e5e40c87e9332d2d16c5d4fa6e355cb8b2670d00e1fbc7a39b91db",
     "deploy/media-stack/catalogue/test_startup.py": "2263d151fe7352035d3650703b72449f39831805ad6f68a4c3759810a1099bb1",
     "deploy/media-stack/catalogue/test_torrent_metadata.py": "7401a3c04e96a9c70c2553e2ef88a3a6dd311d6b74940fb6efab1a18e9984810",
-    "deploy/media-stack/catalogue/test_verification_title.py": "1e050940320230e0b74cd40cc7e9aaec8a953df3719feb253f4d9003bf4d0f2a",
+    "deploy/media-stack/catalogue/test_verification_title.py": "1b04689aeb09b7907347bbfc910176f839e02ceab500fbf6cfa7f2dcc9be8126",
     "deploy/media-stack/catalogue/test_verification_worker.py": "a3f409360feaaceae40368809af4234acd7b26497bb5b2d7858222894beb1fa0",
     "deploy/media-stack/catalogue/verification_jobs.py": "968bd60193056dc8d4b894425d7fc04db1399bc3b24f3a45a43c83acaa3c597b",
     "deploy/media-stack/catalogue/verification_media.py": "00d792a5790d137d0c384e721c182dd5d25b4c41805824e95e430c93e7ebe8dd",

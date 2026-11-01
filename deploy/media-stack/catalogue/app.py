@@ -1553,6 +1553,12 @@ def stream_candidates(key):
         primary_error=error;response={'streams':[]};candidates=[]
         source_provider_event('torrentio','error','miss',error=error)
     for candidate in candidates:candidate['_provider']='torrentio'
+    # A speed-rejected source may have expired from the ordinary listing
+    # cache before its scheduled retry. In that cache-miss path, still consult
+    # the paced fallback when Torrentio returns candidates; otherwise a fresh
+    # primary listing would silently bypass the retry marker.
+    if candidates and getattr(BUDGET,'validation_background',False) and cached('mediafusion-needed:'+key):
+        candidates=add_mediafusion_after_slow_primary(key,candidates)
     if not candidates:
         fallback_cache='hit' if cached('mediafusion:'+key) is not None else 'miss'
         try:fallback=mediafusion_streams(key)
