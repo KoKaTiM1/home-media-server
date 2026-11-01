@@ -21,8 +21,8 @@ SOURCE_DISCOVERY_WAIT_SECONDS=180
 MIN_LOCAL_EXECUTION_SECONDS=180
 
 class LocalTitleCheckpoint(Checkpoint):
-    def __init__(self,category):
-        super().__init__('Windows local title deferred')
+    def __init__(self,category,code='unclassified'):
+        super().__init__('Windows local title deferred',code)
         self.failure_category=category if category in ('torrent_timeout','stream_stall','speed_rejected','decoder','resource','coordinator','transport','interrupted','validation') else 'transport'
 
 
@@ -256,11 +256,14 @@ def _execute_title(g,key,cancel,execution_seconds):
                     if not accepted or accepted[0]!='verified' or json.loads(accepted[1])!=proof:raise Checkpoint('Title report superseded Windows result')
                     q.count('windows_local_titles_verified');consumed=True
                     return True
-                if state in ('cancelled','consumed'):raise Checkpoint('Windows title lease ended')
+                if state in ('cancelled','consumed'):raise LocalTitleCheckpoint('coordinator','coordinator_job_ended')
                 if time.monotonic()>=(deadline if execution_started else queue_deadline):raise TimeoutError('Windows execution budget' if execution_started else 'Windows queue budget')
                 time.sleep(.5)
-        except TimeoutError:
-            cancel_code='controller_budget' if execution_started else 'queue_timeout';raise
+        except TimeoutError as error:
+            cancel_code='controller_budget' if execution_started else 'queue_timeout'
+            error.failure_category='coordinator'
+            error.code='coordinator_execution_budget' if execution_started else 'coordinator_queue_budget'
+            raise
         except Checkpoint:
             cancel_code=getattr(g['BUDGET'],'remote_cancel_code','') or 'receipt_interrupted';raise
         except g['ClientCancelled']:
@@ -269,11 +272,11 @@ def _execute_title(g,key,cancel,execution_seconds):
         except sqlite3.Error as error:
             controller_fault(g,error)
             cancel_code='controller_database'
-            raise Checkpoint('Controller database checkpoint') from None
+            raise LocalTitleCheckpoint('coordinator','coordinator_database') from None
         except OSError as error:
             controller_fault(g,error)
             cancel_code='controller_transport'
-            raise Checkpoint('Controller transport checkpoint') from None
+            raise LocalTitleCheckpoint('coordinator','coordinator_transport') from None
         except g['PlaybackBusy']:
             cancel_code='navigation_interrupted' if g['F'].foreground_busy() else 'controller_busy'
             raise

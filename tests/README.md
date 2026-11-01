@@ -48,3 +48,5 @@ requires the pinned PowerShell image recorded in
 `deploy/media-stack/verification-worker/checks/run-launcher-checks.py` to be
 available locally (prepare it before an offline run). Neither test container
 receives the Docker socket or real worker configuration/state.
+
+The worker-image-permissions stage builds the actual worker Dockerfile against the test base with mode-0600 catalogue inputs, then imports the worker modules as user 10001. Release packaging repeats the import contract on the actual release image before saving it. This covers image permissions that root-run Python tests cannot detect.

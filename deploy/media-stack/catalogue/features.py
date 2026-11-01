@@ -62,6 +62,7 @@ class Features:
             sweep_id INTEGER NOT NULL,key TEXT NOT NULL,started REAL NOT NULL,finished REAL NOT NULL DEFAULT 0,
             outcome TEXT NOT NULL DEFAULT 'started',PRIMARY KEY(sweep_id,key))''')
         conn.execute('CREATE INDEX IF NOT EXISTS verification_sweep_attempts_id ON verification_sweep_attempts(sweep_id,outcome)')
+        conn.execute('CREATE TABLE IF NOT EXISTS verification_attempt_outbox(id TEXT PRIMARY KEY,payload TEXT NOT NULL)')
         conn.execute('CREATE TABLE IF NOT EXISTS manual_rechecks(key TEXT PRIMARY KEY,requested REAL,request_id TEXT,status TEXT)')
         conn.execute('CREATE TABLE IF NOT EXISTS recheck_requests(id TEXT PRIMARY KEY,requested REAL,count INTEGER)')
         self.metadata_dependency_schema(conn)
@@ -349,10 +350,25 @@ class Features:
                     cur=conn.execute("INSERT OR IGNORE INTO verification_sweep_attempts(sweep_id,key,started,outcome) VALUES (?,?,?,'started')",(sweep_id,key,now))
             return bool(cur.rowcount)
 
-    def finish_first_sweep_attempt(self,key,outcome):
+    def requeue_first_sweep_infrastructure(self,key,delay=30):
+        """An infrastructure interruption did not finish checking this source."""
+        due=time.time()+delay
+        with self.db() as conn:
+            cur=conn.execute("UPDATE verification_sweep_attempts SET outcome='queued',started=0,finished=0,due=MAX(due,?) WHERE key=? AND outcome='started' AND sweep_id=(SELECT MAX(id) FROM verification_sweeps)",(due,key))
+            if cur.rowcount:conn.execute('INSERT INTO metadata_waits VALUES (?,?) ON CONFLICT(key) DO UPDATE SET expires=MAX(expires,excluded.expires)',(key,due))
+        return bool(cur.rowcount)
+
+    def finish_first_sweep_attempt(self,key,outcome,diagnostic=None,attempt_started=None):
         if outcome not in ('passed','failed','deferred'):outcome='deferred'
         with self.db() as conn:
             cur=conn.execute("UPDATE verification_sweep_attempts SET finished=?,outcome=? WHERE key=? AND outcome='started' AND sweep_id=(SELECT MAX(id) FROM verification_sweeps)",(time.time(),outcome,key))
+            if cur.rowcount or diagnostic is not None:
+                from verification_diagnostics import classify_error
+                detail=diagnostic or classify_error(None)
+                budget=self.g.get('BUDGET');provider=getattr(budget,'remote_provider','none')
+                if provider not in ('torrentio','mediafusion','mixed','other','none'):provider='none'
+                finished=time.time();event={'scope':'first_sweep' if cur.rowcount else 'preparation','key':key,'finished':finished,'outcome':outcome if cur.rowcount else 'waiting','provider':provider,'phase':getattr(budget,'remote_phase','source preparation'),'execution_seconds':round(max(0,finished-(attempt_started or finished)),3),**detail}
+                conn.execute('INSERT INTO verification_attempt_outbox VALUES (?,?)',(uuid.uuid4().hex,json.dumps(event,sort_keys=True)))
             if cur.rowcount:
                 conn.execute("UPDATE verification_metadata_dependencies SET state='finished' WHERE key=? AND sweep_id=(SELECT MAX(id) FROM verification_sweeps) AND state='resumed'",(key,))
 
@@ -1709,6 +1725,7 @@ class Features:
                 # here silently reduced the verifier's 240s provider-wait
                 # window to about 60s after reserving 180s for V6 decoding.
                 if sweep_attempt:budget.worker_deadline=min(previous_attempt_deadline or time.monotonic()+420,time.monotonic()+420)
+                sweep_original=sweep_attempt;attempt_diagnostic=None
                 sweep_outcome='deferred'
                 if remote:
                     from verification_remote import producer_phase
@@ -1770,6 +1787,12 @@ class Features:
                             self.enqueue_many(aired,30)
                         except Exception:self.log('Episode verification queue expansion deferred')
                 except Exception as error:
+                    from verification_diagnostics import classify_error
+                    attempt_diagnostic=classify_error(error)
+                    from verification_jobs import CANCEL_CODES
+                    interruption_code=getattr(budget,'remote_cancel_code','')
+                    if interruption_code in CANCEL_CODES and interruption_code!='unclassified' and type(error).__name__ in ('Checkpoint','ClientCancelled','PlaybackBusy','LocalTitleCheckpoint'):
+                        attempt_diagnostic.update(category='interrupted',code=interruption_code)
                     self.log('Verification attempt interrupted ('+type(error).__name__+')')
                     # A lease held by the metadata PC is a scheduling wait, not
                     # a source failure. Its short SQL exclusion lets this batch
@@ -1818,6 +1841,18 @@ class Features:
                         self.remember(worker_key,{'message':'Torrent metadata pending; moving to another title','started':time.time(),'batch':batch_number},180)
                         checked+=1
                         continue
+                    interruption=tuple(self.g[name] for name in ('ClientCancelled','PlaybackBusy') if isinstance(self.g.get(name),type))
+                    infrastructure=(getattr(error,'failure_category',None) in ('coordinator','resource','validation')
+                                    or isinstance(error,sqlite3.OperationalError)
+                                    or interruption and isinstance(error,interruption)
+                                    or type(error).__name__=='ResourceCheckpoint'
+                                    or bool(getattr(budget,'remote_cancel_code','')))
+                    if sweep_attempt and infrastructure:
+                        self.requeue_first_sweep_infrastructure(key)
+                        sweep_attempt=False;budget.worker_deadline=previous_attempt_deadline
+                        checked+=1
+                        self.remember(worker_key,{'message':'Infrastructure interrupted this check; untouched title retained for another attempt','started':time.time(),'batch':batch_number},180)
+                        continue
                     if getattr(error,'failure_category',None):
                         self.defer_verification(key,error.failure_category)
                         if remote:
@@ -1859,7 +1894,7 @@ class Features:
                         from verification_remote import jobs
                         jobs(self.g).count('windows_titles_unavailable')
                 finally:
-                    if sweep_attempt:self.finish_first_sweep_attempt(key,sweep_outcome)
+                    if sweep_original:self.finish_first_sweep_attempt(key,sweep_outcome,attempt_diagnostic,attempt_started)
                     budget.preparation_key=None
                     budget.first_sweep_attempt=previous_sweep_flag
                     if sweep_attempt:budget.worker_deadline=previous_attempt_deadline

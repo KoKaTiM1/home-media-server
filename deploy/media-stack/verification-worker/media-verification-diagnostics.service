@@ -1,0 +1,23 @@
+[Unit]
+Description=Export compact durable verification diagnostics
+After=media-stack.service
+RequiresMountsFor=/srv/dev-disk-by-uuid-<APPDATA_FILESYSTEM_UUID>
+[Service]
+Type=oneshot
+User=root
+Group=users
+UMask=0007
+Environment=PYTHONPATH=/usr/local/lib/home-media-verification
+ExecStart=/usr/bin/python3 /usr/local/lib/home-media-verification/verification_diagnostics.py --queue /srv/dev-disk-by-uuid-<APPDATA_FILESYSTEM_UUID>/appdata/verification-worker/queue.sqlite --catalogue /srv/dev-disk-by-uuid-<APPDATA_FILESYSTEM_UUID>/appdata/catalogue/catalogue.sqlite
+NoNewPrivileges=true
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/srv/dev-disk-by-uuid-<APPDATA_FILESYSTEM_UUID>/appdata/verification-worker /srv/dev-disk-by-uuid-<APPDATA_FILESYSTEM_UUID>/appdata/catalogue
+RestrictAddressFamilies=AF_UNIX
+Nice=19
+IOSchedulingClass=idle
+CPUQuota=25%
+MemoryMax=128M
+TimeoutStartSec=25

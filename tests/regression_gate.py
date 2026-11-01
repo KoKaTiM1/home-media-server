@@ -49,7 +49,8 @@ def main():
                 results.append({'suite':name,'exit_code':rc,'seconds':round(time.monotonic()-started,2)})
                 print(name+': '+('PASS' if rc==0 else 'FAIL'),flush=True)
             # These host orchestrators launch isolated containers with no Docker socket inside.
-            extras=[('process-reaping',[sys.executable,str(root/'tests/check_process_reaping.py'),'--image',a.image]),
+            extras=[('worker-image-permissions',[sys.executable,str(root/'tests/check_worker_image.py'),'--repository',str(root),'--image',a.image]),
+                    ('process-reaping',[sys.executable,str(root/'tests/check_process_reaping.py'),'--image',a.image]),
                     ('windows-launchers',[sys.executable,str(root/'deploy/media-stack/verification-worker/checks/run-launcher-checks.py')])]
             for name,command in extras:
                 started=time.monotonic()

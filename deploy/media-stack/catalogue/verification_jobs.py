@@ -14,7 +14,7 @@ PROTOCOL = 'home-media-verification/1'
 PREFIX = '/v1/verification-worker'
 PHASES = frozenset(('video probe','audio conversion','conversion probe','sample decode','torrent resolution','speed verification','title validation','server fallback','waiting for backend lock'))
 REASONS = frozenset(('interrupted','resource','transport','decoder','validation'))
-DIAGNOSTIC_CODES = frozenset(('range_mismatch','missing_media_size','cache_attribution','uncached_range_budget','speed_work_budget','local_work_budget','local_output_bound','local_transport','unclassified','ffmpeg_resource','ffmpeg_transport','ffmpeg_io','ffmpeg_decoder_missing','ffmpeg_stream_mapping','ffmpeg_missing_index','ffmpeg_invalid_data','ffmpeg_decode_error','ffmpeg_truncated_input','ffmpeg_signal_exit','ffmpeg_nonzero_exit','ffmpeg_stderr_exit'))
+DIAGNOSTIC_CODES = frozenset(('range_mismatch','speed_window_timeout','speed_range_truncated','speed_startup_timeout','speed_read_timeout','speed_throughput_low','speed_sustained_low','missing_media_size','cache_attribution','uncached_range_budget','speed_work_budget','local_work_budget','local_output_bound','local_transport','unclassified','ffmpeg_resource','ffmpeg_transport','ffmpeg_io','ffmpeg_decoder_missing','ffmpeg_stream_mapping','ffmpeg_missing_index','ffmpeg_invalid_data','ffmpeg_decode_error','ffmpeg_truncated_input','ffmpeg_signal_exit','ffmpeg_nonzero_exit','ffmpeg_stderr_exit','coordinator_job_ended','coordinator_execution_budget','coordinator_queue_budget','coordinator_database','coordinator_transport','worker_permission','worker_import','worker_local_io','worker_task_invalid','worker_child_exit','worker_result_missing'))
 CANCEL_CODES = frozenset(('queue_timeout','execution_timeout','controller_lost','lease_expired','controller_budget','foreground_interrupted','controller_error','receipt_interrupted','navigation_interrupted','playback_interrupted','session_unavailable','title_claim_lost','worker_unavailable','controller_cancelled','controller_database','controller_transport','controller_busy','unclassified'))
 MAX_WORKERS = 16
 CLIENT_TABLES = ('client','second_client','third_client','fourth_client')
@@ -33,7 +33,8 @@ class DecodeJobs:
         except BaseException:c.rollback();raise
         finally:c.close()
     def initialize(self):
-        self.path.parent.mkdir(parents=True,exist_ok=True);self.path.touch(mode=0o660,exist_ok=True);self.path.chmod(0o660)
+        self.path.parent.mkdir(parents=True,exist_ok=True);self.path.touch(mode=0o660,exist_ok=True)
+        if self.path.stat().st_mode & 0o777 != 0o660:self.path.chmod(0o660)
         with self.db() as c:
             c.execute('PRAGMA journal_mode=WAL')
             c.executescript('''CREATE TABLE IF NOT EXISTS control(key TEXT PRIMARY KEY,value TEXT);
@@ -60,9 +61,12 @@ class DecodeJobs:
             if 'stream_started' not in {r[1] for r in c.execute('PRAGMA table_info(decode_jobs)')}:c.execute('ALTER TABLE decode_jobs ADD COLUMN stream_started REAL DEFAULT 0')
             columns={r[1] for r in c.execute('PRAGMA table_info(decode_jobs)')}
             for name,definition in (('phase',"TEXT DEFAULT ''"),('phase_at','REAL DEFAULT 0'),
-                                    ('outcome',"TEXT DEFAULT ''"),('reason_code',"TEXT DEFAULT ''"),('finished','REAL DEFAULT 0'),('failure_category',"TEXT DEFAULT ''"),('failure_type',"TEXT DEFAULT ''"),('checkpoint_code',"TEXT DEFAULT ''"),('cancel_code',"TEXT DEFAULT ''"),('claimed_at','REAL DEFAULT 0'),('execution_seconds','REAL DEFAULT 0'),('lock_wait_seconds','REAL DEFAULT 0'),('active_seconds','REAL DEFAULT 0')):
+                                    ('outcome',"TEXT DEFAULT ''"),('reason_code',"TEXT DEFAULT ''"),('finished','REAL DEFAULT 0'),('failure_category',"TEXT DEFAULT ''"),('failure_type',"TEXT DEFAULT ''"),('checkpoint_code',"TEXT DEFAULT ''"),('cancel_code',"TEXT DEFAULT ''"),('claimed_at','REAL DEFAULT 0'),('execution_seconds','REAL DEFAULT 0'),('lock_wait_seconds','REAL DEFAULT 0'),('active_seconds','REAL DEFAULT 0'),('worker_phase_seconds',"TEXT DEFAULT '{}'"),('diagnostic_queued','INTEGER DEFAULT 0'),('client_version',"TEXT DEFAULT 'legacy'")):
                 if name not in columns:c.execute('ALTER TABLE decode_jobs ADD COLUMN '+name+' '+definition)
             c.execute("INSERT OR IGNORE INTO control VALUES('enabled','false')")
+            c.execute('CREATE INDEX IF NOT EXISTS diagnostic_unqueued ON decode_jobs(diagnostic_queued,finished)')
+            c.execute('CREATE TABLE IF NOT EXISTS diagnostic_outbox(id TEXT PRIMARY KEY,payload TEXT NOT NULL)')
+            c.execute('CREATE TABLE IF NOT EXISTS decode_phase_times(job TEXT,phase TEXT,seconds REAL NOT NULL,PRIMARY KEY(job,phase))')
             c.execute("INSERT OR IGNORE INTO control VALUES('generation',?)",(json.dumps(uuid.uuid4().hex),))
     def set(self,key,value):
         with self.db(True) as c:c.execute('INSERT OR REPLACE INTO control VALUES (?,?)',(key,json.dumps(value)))
@@ -150,7 +154,7 @@ class DecodeJobs:
             seen=c.execute('SELECT COALESCE(MAX(seen),0) FROM workers').fetchone()[0]
             permitted=(self.setting(c,'local_torrent_enabled',False) and self.setting(c,'local_torrent_permitted',False)) if operation=='verify_title' else self.setting(c,'enabled',False)
             if not permitted or seen<now-45:raise WorkerWait('Windows verification worker offline or gated')
-            c.execute("DELETE FROM decode_jobs WHERE created<? AND state IN ('consumed','cancelled')",(now-7*86400,))
+            c.execute("DELETE FROM decode_jobs WHERE created<? AND state IN ('consumed','cancelled') AND diagnostic_queued=1",(now-7*86400,))
             active=c.execute("SELECT COUNT(*) FROM decode_jobs WHERE state IN ('pending','leased') AND controller>?",(now,)).fetchone()[0]
             if active>=self.queue_capacity(c):raise WorkerWait('Windows ready queue full')
             # A result remains durable until its originating controller calls
@@ -191,7 +195,7 @@ class DecodeJobs:
                         (int(capable and local_permitted),int(server_permitted))).fetchone()
             if not r:return None
             lease=uuid.uuid4().hex
-            c.execute("UPDATE decode_jobs SET state='leased',worker=?,lease=?,expires=?,phase='claimed',phase_at=?,claimed_at=?,deadline=CASE WHEN execution_seconds>0 THEN ?+execution_seconds ELSE deadline END WHERE id=?",(worker,lease,now+180,now,now,now,r['id']))
+            c.execute("UPDATE decode_jobs SET state='leased',worker=?,lease=?,expires=?,phase='claimed',phase_at=?,claimed_at=?,client_version=?,deadline=CASE WHEN execution_seconds>0 THEN ?+execution_seconds ELSE deadline END WHERE id=?",(worker,lease,now+180,now,now,self.setting(c,'client_version:'+worker,'legacy'),now,r['id']))
             return self.public(c.execute('SELECT * FROM decode_jobs WHERE id=?',(r['id'],)).fetchone())
     def public(self,r):
         return {'job_id':r['id'],'key':r['key'],'source_id':r['sid'],'operation':r['operation'],'params':json.loads(r['params']),
@@ -212,6 +216,7 @@ class DecodeJobs:
             if r:
                 now=time.time()
                 if phase and phase!=r['phase']:
+                    self.phase_time(c,r,now)
                     c.execute('UPDATE decode_jobs SET expires=?,phase=?,phase_at=? WHERE id=?',(now+180,phase,now,r['id']))
                 else:c.execute('UPDATE decode_jobs SET expires=? WHERE id=?',(now+180,r['id']))
             return bool(r)
@@ -270,9 +275,14 @@ class DecodeJobs:
             def metric(name):
                 v=metrics.get(name,0) if isinstance(metrics,dict) else 0
                 return float(v) if type(v) in (int,float) and 0<=v<=960 else 0
+            phases=metrics.get('phase_seconds',{}) if isinstance(metrics,dict) else {}
+            if not (isinstance(phases,dict) and len(phases)<=len(PHASES) and all(k in PHASES and type(v) in (int,float) and 0<=v<=960 for k,v in phases.items()) and sum(phases.values())<=960):phases={}
+            c.execute('UPDATE decode_jobs SET worker_phase_seconds=? WHERE id=?',(json.dumps(phases),r['id']))
             c.execute('UPDATE decode_jobs SET checkpoint_code=?,lock_wait_seconds=?,active_seconds=? WHERE id=?',(code,metric('lock_wait_seconds'),metric('active_seconds'),r['id']))
             stage=diagnostic.get('phase') if isinstance(diagnostic,dict) else None
-            if stage in PHASES:c.execute('UPDATE decode_jobs SET phase=? WHERE id=?',(stage,r['id']))
+            if stage in PHASES and stage!=r['phase']:
+                self.phase_time(c,r,time.time())
+                c.execute('UPDATE decode_jobs SET phase=?,phase_at=? WHERE id=?',(stage,time.time(),r['id']))
             c.execute('UPDATE decode_jobs SET failure_category=?,failure_type=? WHERE id=?',(category,failure_type,r['id']))
             c.execute("UPDATE decode_jobs SET state='result',result=?,result_id=?,result_hash=?,outcome=?,reason_code=?,finished=? WHERE id=?",
                       (raw,result['result_id'],digest,result['status'],reason,time.time(),r['id']))
@@ -297,7 +307,37 @@ class DecodeJobs:
         if cancel_code not in CANCEL_CODES:cancel_code='unclassified'
         with self.db(True) as c:
             c.execute("UPDATE decode_jobs SET cancel_code=CASE WHEN outcome='' AND cancel_code='' AND ?=0 THEN CASE WHEN deadline<=? THEN CASE WHEN claimed_at=0 THEN 'queue_timeout' ELSE 'execution_timeout' END ELSE ? END ELSE cancel_code END WHERE id=?",(int(consumed),time.time(),cancel_code,job))
+            row=c.execute('SELECT * FROM decode_jobs WHERE id=?',(job,)).fetchone()
+            if row and (row['state'] not in ('consumed','cancelled') or not row['finished']):
+                self.phase_time(c,row,row['finished'] or time.time())
+            c.execute("UPDATE decode_jobs SET outcome=CASE WHEN outcome='' THEN ? ELSE outcome END,finished=CASE WHEN finished=0 THEN ? ELSE finished END WHERE id=?",('ok' if consumed else 'cancelled',time.time(),job))
+            row=c.execute('SELECT * FROM decode_jobs WHERE id=?',(job,)).fetchone()
+            if row:
+                from verification_diagnostics import final_event
+                phases=c.execute('SELECT phase,seconds FROM decode_phase_times WHERE job=?',(job,)).fetchall()
+                event=final_event(row,row['client_version'],phases,consumed)
+                c.execute('INSERT OR IGNORE INTO diagnostic_outbox VALUES (?,?)',(job,json.dumps(event,sort_keys=True)))
+                c.execute('UPDATE decode_jobs SET diagnostic_queued=1 WHERE id=?',(job,))
             c.execute("UPDATE decode_jobs SET state=?,url='',params='{}',result=NULL,outcome=CASE WHEN outcome='' THEN ? ELSE outcome END,finished=? WHERE id=?",
-                                       ('consumed' if consumed else 'cancelled','ok' if consumed else 'cancelled',time.time(),job))
+                                       ('consumed' if consumed else 'cancelled','ok' if consumed else 'cancelled',row['finished'] if row else time.time(),job))
+    def phase_time(self,c,row,now):
+        if row['phase'] and row['phase_at']:
+            seconds=max(0,min(960,now-row['phase_at']))
+            c.execute('INSERT INTO decode_phase_times VALUES (?,?,?) ON CONFLICT(job,phase) DO UPDATE SET seconds=seconds+excluded.seconds',(row['id'],row['phase'],seconds))
+    def flush_diagnostics(self,limit=128):
+        from verification_diagnostics import DiagnosticLedger
+        from verification_diagnostics import final_event
+        with self.db(True) as c:
+            for row in c.execute("SELECT * FROM decode_jobs WHERE diagnostic_queued=0 AND finished>0 AND state IN ('consumed','cancelled') ORDER BY finished LIMIT ?",(limit,)).fetchall():
+                event=final_event(row,row['client_version'],[])
+                c.execute('INSERT OR IGNORE INTO diagnostic_outbox VALUES (?,?)',(row['id'],json.dumps(event,sort_keys=True)))
+                c.execute('UPDATE decode_jobs SET diagnostic_queued=1 WHERE id=?',(row['id'],))
+            events=[tuple(r) for r in c.execute('SELECT id,payload FROM diagnostic_outbox ORDER BY rowid LIMIT ?',(limit,))]
+        if not events:return 0
+        imported=DiagnosticLedger(self.path.with_name('verification-diagnostics.sqlite')).ingest(events)
+        with self.db(True) as c:
+            c.executemany('DELETE FROM diagnostic_outbox WHERE id=?',[(x,) for x in imported])
+            c.executemany('DELETE FROM decode_phase_times WHERE job=?',[(x,) for x in imported])
+        return len(imported)
     def count(self,label):
         with self.db(True) as c:c.execute('INSERT INTO totals VALUES(?,1) ON CONFLICT(key) DO UPDATE SET value=value+1',(label,))

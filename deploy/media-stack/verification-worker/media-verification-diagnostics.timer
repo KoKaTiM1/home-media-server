@@ -1,0 +1,8 @@
+[Unit]
+Description=Export verification diagnostic receipts every 30 seconds
+[Timer]
+OnBootSec=3min
+OnUnitInactiveSec=30s
+AccuracySec=5s
+[Install]
+WantedBy=timers.target

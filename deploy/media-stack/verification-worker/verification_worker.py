@@ -69,27 +69,35 @@ class API:
         if not re.fullmatch('[a-f0-9]{64}',self.pin) or not re.fullmatch('[A-Za-z0-9_-]{32,256}',self.token):raise ValueError('Invalid worker connection')
     def connection(self):
         ctx=ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT);ctx.check_hostname=False;ctx.verify_mode=ssl.CERT_NONE;ctx.minimum_version=ssl.TLSVersion.TLSv1_2
-        for origin in self.origins:
+        for number,origin in enumerate(self.origins):
             c=http.client.HTTPSConnection(origin.hostname,origin.port or 443,timeout=5,context=ctx)
             try:
                 c.connect()
                 if not hmac.compare_digest(hashlib.sha256(c.sock.getpeercert(binary_form=True)).hexdigest(),self.pin):
                     c.close();continue
                 c.sock.settimeout(60)
+                c.worker_endpoint='primary' if number==0 else 'fallback-'+str(number)
                 return c
             except (OSError,ssl.SSLError):
                 c.close()
-        raise TransportWait('Coordinator unavailable or access denied')
+        raise TransportWait('connection_unavailable')
     def request(self,path,body=None):
         c=self.connection()
         try:
-            data=json.dumps({'protocol':PROTOCOL,'client_version':'0.4.7',**body},allow_nan=False).encode() if body is not None else None
+            data=json.dumps({'protocol':PROTOCOL,'client_version':'0.4.8',**body},allow_nan=False).encode() if body is not None else None
             c.request('POST' if body is not None else 'GET',PREFIX+path,data,{'Authorization':'Bearer '+self.token,'Content-Type':'application/json'})
             response=c.getresponse();raw=response.read(2*1024*1024+1)
-            if response.status!=200 or len(raw)>2*1024*1024:raise TransportWait('Coordinator unavailable or access denied')
+            endpoint=getattr(c,'worker_endpoint','unknown')
+            if response.status!=200:raise TransportWait('http_'+str(response.status)+' endpoint='+endpoint)
+            if len(raw)>2*1024*1024:raise TransportWait('response_bound endpoint='+endpoint)
             value=json.loads(raw)
-            if value.get('protocol')!=PROTOCOL:raise TransportWait('Protocol changed')
+            if value.get('protocol')!=PROTOCOL:raise TransportWait('protocol_mismatch')
             return value
+        except (OSError,http.client.HTTPException) as error:
+            code='request_timeout' if isinstance(error,TimeoutError) else 'request_transport'
+            raise TransportWait(code+' endpoint='+getattr(c,'worker_endpoint','unknown')) from None
+        except (ValueError,TypeError):
+            raise TransportWait('response_invalid') from None
         finally:c.close()
 
 class Proxy(BaseHTTPRequestHandler):
@@ -166,7 +174,8 @@ def run_local_task(api,worker,task,status):
                     if not api.request('/renew',{'worker_id':worker,'task':task,'phase':phase,'local_torrent_available':local_torrent_available(),'backend_id':os.getenv('LOCAL_TORRENT_BACKEND_ID','torrent-1'),'lane':int(os.getenv('WORKER_LANE','0')) or None})['active']:return {'status':'checkpoint','reason':'interrupted'}
                     last=time.monotonic()
                 STOP.wait(.25)
-            if proc.returncode or not output.is_file():return {'status':'checkpoint','reason':'transport'}
+            if proc.returncode or not output.is_file():
+                return {'status':'checkpoint','reason':'transport','diagnostic':{'category':'coordinator','failure_type':'RuntimeError','phase':phase,'code':'worker_child_exit' if proc.returncode else 'worker_result_missing'}}
             result=json.loads(output.read_text())
             if len(json.dumps(result).encode())>2*1024*1024:return {'status':'checkpoint','reason':'validation'}
             return result
@@ -177,6 +186,21 @@ def run_local_task(api,worker,task,status):
                 except ProcessLookupError:pass
             proc.wait()
 
+
+def runtime_checkpoint(error):
+    """A local startup fault must not masquerade as a connection outage."""
+    code=('worker_permission' if isinstance(error,PermissionError) else
+          'worker_import' if isinstance(error,ImportError) else
+          'worker_local_io' if isinstance(error,OSError) else 'worker_task_invalid')
+    return {'status':'checkpoint','reason':'transport','diagnostic':{
+        'category':'coordinator','failure_type':'OSError' if isinstance(error,OSError) else 'ValueError',
+        'phase':'title validation','code':code}}
+
+def execute_task(api,worker,task,status):
+    try:return run_task(api,worker,task,status)
+    except TransportWait:raise
+    except (OSError,ImportError,ValueError,TypeError) as error:
+        return runtime_checkpoint(error)
 
 def run_task(api,worker,task,status):
     if task['operation']=='verify_title':return run_local_task(api,worker,task,status)
@@ -290,7 +314,7 @@ def main():
                 summary.update(title_key=task['key'],last_title_key=task['key'],operation=task['operation'],job_id=task['job_id'])
                 if result is None:
                     if not api.request('/renew',{'worker_id':worker,'task':task})['active']:result={'status':'checkpoint'}
-                    else:result=run_task(api,worker,task,status)
+                    else:result=execute_task(api,worker,task,status)
                     result['result_id']=uuid.uuid4().hex
                     with db:db.execute('UPDATE current SET result=? WHERE id=1',(json.dumps(result),))
                 reply=api.request('/result',{'worker_id':worker,'task':task,'result':result})
@@ -305,7 +329,7 @@ def main():
                         import shutil
                         shutil.rmtree(folder/'title-jobs'/task['job_id'],ignore_errors=True)
                     diagnostic=result.get('diagnostic',{})
-                    if isinstance(diagnostic,dict) and diagnostic.get('category'):status('Local title checkpoint: '+str(diagnostic.get('category'))+'; '+str(diagnostic.get('failure_type','')))
+                    if isinstance(diagnostic,dict) and diagnostic.get('category'):status('Local title checkpoint: '+str(diagnostic.get('category'))+'; '+str(diagnostic.get('failure_type',''))+' code='+str(diagnostic.get('code','unclassified')))
                     status('Server acknowledged '+task['operation']+' ('+result['status']+'); '+str(completed)+' operations acknowledged on this worker (not final titles)')
                 elif reply.get('ack')=='stale':
                     try:
@@ -320,8 +344,11 @@ def main():
                         shutil.rmtree(folder/'title-jobs'/task['job_id'],ignore_errors=True)
                     status('Expired result retained; requesting new work')
                 else:raise TransportWait('Result not acknowledged')
-            except (TransportWait,OSError,http.client.HTTPException,ValueError,sqlite3.Error):
-                status('Connection or server unavailable; progress retained for retry');STOP.wait(15)
+            except TransportWait as error:
+                # TransportWait messages contain only internally generated codes.
+                status('Coordinator unavailable code='+str(error)+'; progress retained for retry');STOP.wait(15)
+            except (OSError,http.client.HTTPException,ValueError,sqlite3.Error) as error:
+                status('Worker state unavailable type='+type(error).__name__+'; progress retained for retry');STOP.wait(15)
         status('Stopped; pending results remain on this PC');db.close()
 
 if __name__=='__main__':main()

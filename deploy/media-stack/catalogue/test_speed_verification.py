@@ -43,7 +43,8 @@ class SpeedTests(DurablePlaybackTests):
         selected,info,cache=self.speed_fixture()
         def read(key,sel,start,size,deadline):return {'offset':start,'bytes':size,'seconds':100,'first_byte_seconds':.1}
         with patch.object(a.REL,'speed_read',side_effect=read),patch.object(a.REL,'cache_state',return_value=cache):
-            with self.assertRaises(SourceTooSlow):a.REL.speed_verify(KEY,selected,info,time.monotonic()+60)
+            with self.assertRaises(SourceTooSlow) as rejected:a.REL.speed_verify(KEY,selected,info,time.monotonic()+60)
+            self.assertEqual(rejected.exception.code,'speed_throughput_low')
     def test_other_reader_or_missing_cache_checkpoints(self):
         selected,info,cache=self.speed_fixture()
         for value in ({}, {**cache,'Readers':[{}]}):

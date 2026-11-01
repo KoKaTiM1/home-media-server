@@ -24,6 +24,7 @@ JOBS=[
  ('media-torrent-metadata','Verified torrent metadata retention','One source while idle; 30 seconds between attempts; no video re-audit'),
  ('media-catalogue-collections','Jellyfin collections','Every 30 minutes'),
  ('media-cleanup','Download retention cleanup','Hourly'),
+ ('media-verification-diagnostics','Verification diagnostic receipts','Every 30 seconds; compact durable title history'),
  ('media-worker-status','Worker status counters','1 minute after previous snapshot'),
  ('media-metadata-prepare@1','Metadata preparation slot 1','Continuous; shared provider spacing and playback guard'),
  ('media-metadata-prepare@2','Metadata preparation slot 2','Continuous; shared provider spacing and playback guard'),
@@ -436,6 +437,7 @@ def overview(data=DATA,snapshot=None):
             phase=active['phase'] or ''
             if active['state']=='pending':stage='Queued for Windows'
             elif active['state']=='result':stage='Result received; server checking'
+            elif active['operation']=='verify_title' and phase=='claimed':stage='Starting Windows title job'
             elif active['operation']=='verify_title' and phase=='torrent resolution':stage='Resolving torrent on Windows'
             elif active['operation']=='verify_title' and phase=='speed verification':stage='Measuring two uncached Windows ranges'
             elif active['operation']=='verify_title' and phase=='title validation':stage='Validating the complete Windows V6 proof'
@@ -481,6 +483,18 @@ def overview(data=DATA,snapshot=None):
         else:add('Latest PC operation issue','None in last hour','Older issues remain in the detailed worker log')
     except (sqlite3.Error,OSError,ValueError,TypeError):
         add('Windows worker','Status unavailable','Live operation state will return when the coordinator is readable')
+    ledger=data.parent/'verification-worker/verification-diagnostics.sqlite'
+    if ledger.exists():
+        try:
+            with closing(sqlite3.connect('file:'+str(ledger)+'?mode=ro',uri=True,timeout=1)) as c:
+                recent=c.execute("SELECT scope,count(*),count(distinct key) FROM receipts WHERE finished>=? GROUP BY scope",(now-3600,)).fetchall()
+                r={scope:(events,titles) for scope,events,titles in recent}
+                add('First sweep completed in last hour',r.get('first_sweep',(0,0))[1],'Distinct previously untouched keys that completed a first attempt; receipts since diagnostic rollout; includes passes, source failures and deferred sources')
+                add('Preparation waits in last hour',r.get('preparation',(0,0))[0],'Scheduling/provider/metadata waits; these do not complete the first sweep')
+                add('Worker operations in last hour',r.get('worker_job',(0,0))[0],'Operations are separate from whole-title first attempts')
+                for bucket,count in c.execute("SELECT bucket,count FROM buckets WHERE count>0 AND bucket NOT LIKE '%/ok/%' AND bucket NOT LIKE '%/passed/%' AND bucket NOT LIKE '%/operation_ok/%' ORDER BY count DESC LIMIT 5"):
+                    add('Latest title outcome: '+bucket.replace('/',' · '),f'{count:,}','Distinct titles per scope with this latest result; decreases when a later result replaces it')
+        except (sqlite3.Error,OSError):add('Durable diagnostic history','Temporarily unavailable','Existing verification and saved proofs continue')
     return rows
 
 def playback_events(data=DATA):

@@ -1,6 +1,6 @@
 # Windows V6 verification workers
 
-Launcher package **0.4.7** uses verifier image **0.4.7**. Verifiers
+Candidate launcher package **0.4.8** uses verifier image **0.4.8**. The accepted fleet remains on 0.4.4 until the corrected canary passes. Verifiers
 run with Docker `--init` to reap orphaned decoder children after cancellations.
 Start/Update automatically drains and recreates containers with a mismatched
 image or missing init while preserving identities, config, data and backend state.
@@ -106,7 +106,7 @@ separate measurements. No raw error text or source URLs appear in these metrics.
 
 Build the worker Dockerfile with an allowlisted context containing catalogue/*.py
 and the verifier sources; exclude secrets and runtime data. package.py produces
-verification-worker-v0.4.7.zip from the worker 0.4.7 image and torrent backend 0.3.0.
+verification-worker-v0.4.8.zip from the worker 0.4.8 image and torrent backend 0.3.0.
 The archive contains exactly four CMD launchers and no enrolled data or credentials.
 On restore, install the coordinator and resource gate, provision private TLS/token
 configuration, then copy the package to Windows and run Update. The topology is
@@ -161,3 +161,15 @@ Metadata preparation now receives the same child deadline as probe, speed and
 sample work. Expiry produces a structured local_work_budget checkpoint with
 its current phase before the parent deadline, preserving the existing receipt
 margin. V6 proof requirements, candidate alternatives and retry policy are unchanged.
+
+## Runtime permissions and durable diagnostics (0.4.8 candidate)
+
+The image normalizes copied Python sources to mode 0644 before dropping to user 10001. The publication gate builds with deliberately restrictive source modes and tests imports as that user; package creation repeats the smoke check on the actual release image. Local import/permission faults become acknowledged infrastructure checkpoints, rather than misleading connection retries. Transport retries preserve their current task/result and log fixed request/endpoint labels without addresses or exception text.
+
+The single diagnostics exporter runs every 30 seconds with bounded batches. Queue and first-sweep completion transactions retain private outbox receipts until the separate diagnostic ledger commits them. It preserves every receipt ID, cumulative reason counts and the latest outcome for the sweep lifetime, plus three detailed attempts per title per scope. First-sweep completions, prerequisite waits and Windows operations remain separate. Normal queue-history cleanup cannot delete unexported receipts. No raw source URL, credentials, exception text or decoder stderr enters the ledger or OMV. A later pass replaces the latest failure bucket without deleting historical counts.
+
+Capacity remains eight Windows workers and four backends during this stabilization round. Preserve V6 criteria and provider pacing; specialized difficult-source recovery remains after the first sweep.
+
+The diagnostic exporter is a local service with no capabilities or network access and write access limited to the two private runtime database directories. It runs as root to access the existing private catalogue directory without changing that directory's ownership or permissions. The queue remains owned by its coordinator account; initialization does not rewrite an already-correct shared mode.
+
+Infrastructure startup faults, controller expiry, database faults and viewing interruptions retain an untouched first-sweep item in its queue with a short scheduling cooldown. They do not finish its first attempt or alter an accepted proof. Actual source rejections remain recorded/deferred under the existing sweep policy.

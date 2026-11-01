@@ -658,7 +658,7 @@ background audits refresh speed evidence without redecoding unchanged torrents.
 Local files retain their decode checks and bypass torrent-speed requirements.
 Speed evidence describes the machine and network path that measured it, not
 future peer availability or the client Wi-Fi path. Current Windows package
-Worker package 0.4.7 adds allowlisted FFmpeg failure codes and a one-lane
+Worker package 0.4.8 adds allowlisted FFmpeg failure codes and a one-lane
 upgrade/rollback path; it retains the 0.4.5 slow-source fallback and does not
 change any V6 acceptance rule. Version 0.4.5 can perform the complete V6 check
 with a private local TorrServer before Debian retrieves torrent metadata.
@@ -779,3 +779,9 @@ Fallback calls share their own process lock, 15-second spacing, Retry-After-awar
 ### Optional fallback queue admission
 
 The private `source-providers.json` may set `mediafusion_queue_slots` to an integer from 1 to 32. Omit the setting to retain the existing unrestricted waiter queue. A proposed controlled value is 8 for a 16-producer installation; it requires a measured live comparison before acceptance. The limit counts background active and waiting tickets. Already admitted callers keep their place; priority requests cannot evict them. Overflow returns a scheduling deferral, retains any primary-negative cache, and leaves the first-sweep item queued for its existing short retry. It does not mark the source unavailable or finish its verification attempt. Provider spacing, cooldown, foreground fail-fast behavior and all V6 evidence checks are preserved. Removing the setting restores unrestricted admission.
+
+## Durable verification receipts
+
+The private diagnostics exporter keeps Windows job receipts separate from whole-title first-sweep completions and prerequisite waits. Completion transactions retain an outbox record until the compact ledger commits it. Latest outcome and cumulative reason counts persist for the sweep lifetime; detailed history retains three attempts per title per scope. Receipt IDs remain durable for replay deduplication. Old source URLs, credentials and decoder output are excluded. Historical worker receipts without version/source detail are marked legacy/unknown rather than inferred from the current worker.
+
+The media-verification-diagnostics timer exports bounded batches every 30 seconds. OMV shows recorded first-sweep completions in the last hour, prerequisite waits, worker operations, and the largest latest outcome buckets. A later successful outcome reduces the corresponding current failure bucket; historical attempts remain counted. Current proof decisions, provider pacing, first-sweep membership and retry policy are unchanged by diagnostics.

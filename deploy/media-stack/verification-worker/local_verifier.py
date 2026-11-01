@@ -11,7 +11,7 @@ import time
 
 
 SAFE_DIAGNOSTIC_CODES=frozenset((
-    'range_mismatch','missing_media_size','cache_attribution','uncached_range_budget',
+    'range_mismatch','speed_window_timeout','speed_range_truncated','speed_startup_timeout','speed_read_timeout','speed_throughput_low','speed_sustained_low','missing_media_size','cache_attribution','uncached_range_budget',
     'speed_work_budget','local_work_budget','local_output_bound','local_transport',
     'unclassified','ffmpeg_resource','ffmpeg_transport','ffmpeg_io',
     'ffmpeg_decoder_missing','ffmpeg_stream_mapping','ffmpeg_missing_index',
@@ -65,11 +65,12 @@ def verify(payload,state,output,budget_seconds=470):
     diagnostic={};lock_wait_seconds=0.0;run_started=time.monotonic()
     def record_failure(error,stage,selected=None):
         diagnostic.update(failure_diagnostic(error,stage,selected))
-    current_phase='torrent resolution'
+    current_phase='torrent resolution';phase_started=time.monotonic();phase_totals={}
     progress=state/'progress.json'
     def phase(name):
-        nonlocal current_phase
-        current_phase=name
+        nonlocal current_phase,phase_started
+        now=time.monotonic();phase_totals[current_phase]=phase_totals.get(current_phase,0)+now-phase_started
+        current_phase=name;phase_started=now
         tmp=progress.with_suffix('.tmp');tmp.write_text(json.dumps({'phase':name,'updated':time.time()}));tmp.replace(progress)
     a.log=lambda message:None
     deadline=time.monotonic()+max(1,min(470,int(budget_seconds)))
@@ -165,7 +166,8 @@ def verify(payload,state,output,budget_seconds=470):
             record_failure(Checkpoint('Local verification budget','local_work_budget'),current_phase)
         elif not diagnostic:record_failure(error,current_phase)
         result={'status':'checkpoint','reason':'transport','diagnostic':diagnostic,'data':{'backend':'windows-torrent'}}
-    result['metrics']={'lock_wait_seconds':round(lock_wait_seconds,3),'active_seconds':round(max(0,time.monotonic()-run_started-lock_wait_seconds),3)}
+    phase_totals[current_phase]=phase_totals.get(current_phase,0)+time.monotonic()-phase_started
+    result['metrics']={'phase_seconds':{k:round(v,3) for k,v in phase_totals.items()},'lock_wait_seconds':round(lock_wait_seconds,3),'active_seconds':round(max(0,time.monotonic()-run_started-lock_wait_seconds),3)}
     tmp=output.with_suffix('.tmp');tmp.write_text(json.dumps(result));tmp.replace(output)
 
 if __name__=='__main__':

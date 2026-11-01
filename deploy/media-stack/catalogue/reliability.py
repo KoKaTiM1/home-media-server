@@ -39,7 +39,9 @@ class ResourceCheckpoint(Checkpoint):pass
 class SourceFailure(RuntimeError):pass
 class DecodeFailure(SourceFailure):pass
 class SourceStalled(SourceFailure):pass
-class SourceTooSlow(SourceFailure):pass
+class SourceTooSlow(SourceFailure):
+    def __init__(self,message='',code='unclassified'):
+        super().__init__(message);self.code=code
 
 
 def rank(candidate):
@@ -330,15 +332,15 @@ class Reliability:
             while received<size:
                 self.g['remaining'](1)
                 left=deadline-time.monotonic()
-                if left<=0:raise SourceTooSlow('Selected source delivery too slow')
+                if left<=0:raise SourceTooSlow('Selected source delivery too slow','speed_window_timeout')
                 # Bound each read by startup and whole-test deadlines.
                 if connection.sock:connection.sock.settimeout(min(10,left))
                 block=response.read1(min(65536,size-received))
-                if not block:raise SourceTooSlow('Selected source range ended early')
+                if not block:raise SourceTooSlow('Selected source range ended early','speed_range_truncated')
                 received+=len(block)
                 if first is None:
                     first=time.monotonic()-started
-                    if first>10:raise SourceTooSlow('Selected source startup too slow')
+                    if first>10:raise SourceTooSlow('Selected source startup too slow','speed_startup_timeout')
                 if time.monotonic()-last_report>=.5 or received==size:
                     self.checkpoint(key,phase='speed verification',source_id=self.sid(selected),received_bytes=received,
                         speed=round(received/max(.001,time.monotonic()-started)),required_speed=self._speed_required,state='preparing')
@@ -346,7 +348,7 @@ class Reliability:
             return {'offset':start,'bytes':received,'seconds':max(.001,time.monotonic()-started),'first_byte_seconds':first}
         except (TimeoutError,socket.timeout):
             self.g['remaining'](1)
-            raise SourceTooSlow('Selected source delivery timed out') from None
+            raise SourceTooSlow('Selected source delivery timed out','speed_read_timeout') from None
         finally:
             if response is not None:response.close()
             connection.close()
@@ -396,10 +398,10 @@ class Reliability:
                     raise
                 w['cached_bytes_bound']=cached;w['uncached_bytes_lower_bound']=max(0,w['bytes']-cached)
                 w['bytes_per_second']=w['uncached_bytes_lower_bound']/w['seconds']
-                if w['bytes_per_second']<required:raise SourceTooSlow('Selected source delivery below 1.5x bitrate')
+                if w['bytes_per_second']<required:raise SourceTooSlow('Selected source delivery below 1.5x bitrate','speed_throughput_low')
                 windows.append(w)
                 if sum(x['uncached_bytes_lower_bound'] for x in windows)/max(.001,time.monotonic()-measured_start)<required:
-                    raise SourceTooSlow('Selected source sustained delivery below 1.5x bitrate')
+                    raise SourceTooSlow('Selected source sustained delivery below 1.5x bitrate','speed_sustained_low')
         return {'policy':1,'mode':'torrent','checked_at':time.time(),'required_bytes_per_second':required,
                 'margin':1.5,'startup_seconds':startup['first_byte_seconds'],'windows':windows,'measurement_worker':'server'}
 
