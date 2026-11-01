@@ -811,12 +811,16 @@ def fetch_waiting_metadata(jobs):
         record_metadata_retry(error,stage)
         retry_delay=3600 if isinstance(error,MetadataResponseShapeError) else (900 if status==429 else 300)
         try:
-            jobs.receive('server',worker,lease,{'result_id':uuid.uuid4().hex,
+            ack=jobs.receive('server',worker,lease,{'result_id':uuid.uuid4().hex,
                 'source':'cinemeta','fetched_at':time.time(),'status':'retry',
                 'provider_status':status,'retry_after_seconds':retry_delay})
         except Exception as receipt_error:
             record_metadata_retry(receipt_error,'retry_receipt')
             raise
+        if ack in ('accepted','duplicate'):
+            with F.db() as conn:
+                conn.execute('UPDATE verification_metadata_fetch SET next_fetch=? WHERE metadata_key=?',
+                             (time.time()+retry_delay,meta))
         return False
     finally:BUDGET.metadata_background=previous
 

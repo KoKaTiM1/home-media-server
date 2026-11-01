@@ -99,6 +99,8 @@ class MetadataResumeTests(unittest.TestCase):
             self.assertFalse(app.fetch_waiting_metadata(self.jobs))
         with app.F.db() as c:diagnostic=c.execute('SELECT stage,category,error_type FROM metadata_retry_details').fetchone()
         self.assertEqual(tuple(diagnostic),('provider_envelope','invalid_response','missing_meta'))
+        with app.F.db() as c:next_fetch=c.execute('SELECT next_fetch FROM verification_metadata_fetch').fetchone()[0]
+        self.assertGreaterEqual(next_fetch-time.time(),3590)
         self.assertNotIn('private body',log.call_args.args[0])
 
     def test_dependency_metadata_identity_mismatch_records_safe_field_code(self):
@@ -108,6 +110,8 @@ class MetadataResumeTests(unittest.TestCase):
             self.assertFalse(app.fetch_waiting_metadata(self.jobs))
         with app.F.db() as c:diagnostic=c.execute('SELECT stage,category,error_type FROM metadata_retry_details').fetchone()
         self.assertEqual(tuple(diagnostic),('provider_envelope','invalid_response','id_mismatch'))
+        with app.F.db() as c:next_fetch=c.execute('SELECT next_fetch FROM verification_metadata_fetch').fetchone()[0]
+        self.assertGreaterEqual(next_fetch-time.time(),3590)
         message=log.call_args.args[0]
         self.assertIn('type=id_mismatch',message)
         self.assertNotIn('tt0000001',message);self.assertNotIn('tt9999999',message)
