@@ -15,6 +15,7 @@ class CleanupTests(unittest.TestCase):
         self.fetch=patch.object(a,'fetch');self.f=self.fetch.start();self.addCleanup(self.fetch.stop)
         p=patch.object(a,'torr');self.t=p.start();self.addCleanup(p.stop)
         p=patch.object(a,'retain_background_torrent_records');self.ret=p.start();self.addCleanup(p.stop)
+        p=patch.object(a,'log');self.log=p.start();self.addCleanup(p.stop)
     def test_dormant_record_does_not_activate_or_drop(self):
         self.f.side_effect=urllib.error.HTTPError('fixture',404,'missing',None,None)
         a.cleanup_background_torrents();self.t.assert_not_called();self.ret.assert_called_once_with({self.hash})
@@ -27,6 +28,8 @@ class CleanupTests(unittest.TestCase):
     def test_unreachable_cache_retains_record(self):
         self.f.side_effect=urllib.error.HTTPError('fixture',503,'unavailable',None,None)
         a.cleanup_background_torrents();self.t.assert_not_called();self.ret.assert_called_once_with(set())
+        self.log.assert_called_once();message=self.log.call_args.args[0]
+        self.assertIn('api_errors=1',message);self.assertNotIn(self.hash,message);self.assertNotIn(self.key,message)
     def test_new_foreground_protection_is_rechecked_before_drop(self):
         def inspect(*args,**kwargs):a.FOREGROUND_CLEANUP['hashes'].add(self.hash);return {}
         self.f.side_effect=inspect;a.cleanup_background_torrents();self.t.assert_not_called()

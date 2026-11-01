@@ -439,31 +439,34 @@ def cleanup_background_torrents():
         protected_hashes=set(FOREGROUND_CLEANUP['hashes'])
     candidates=[infohash for infohash,owners in by_hash.items()
                 if infohash not in protected_hashes and not any(key in protected for _,key in owners)]
-    removed=set()
+    removed=set();outcomes={'dropped':0,'missing':0,'active_readers':0,'protected':0,'api_error':0}
     def discard(infohash):
         with FOREGROUND_CLEANUP_LOCK:
             current=set(FOREGROUND_CLEANUP['protected'])
             current_hashes=set(FOREGROUND_CLEANUP['hashes'])
-        if infohash in current_hashes or any(key in current for _,key in by_hash[infohash]):return False
+        if infohash in current_hashes or any(key in current for _,key in by_hash[infohash]):return 'protected'
         try:
             # Cache inspection is non-activating on the pinned native build.
             # A dormant saved record has no readers and needs no drop request.
             for _ in range(2):
                 try:cache=fetch(TORR+'/cache',{'action':'get','hash':infohash},torr_headers(),timeout=.75) or {}
                 except urllib.error.HTTPError as error:
-                    if error.code==404:return True
+                    if error.code==404:return 'missing'
                     raise
-                if cache.get('Readers'):return False
+                if cache.get('Readers'):return 'active_readers'
             with FOREGROUND_CLEANUP_LOCK:
-                if infohash in FOREGROUND_CLEANUP['hashes'] or any(key in FOREGROUND_CLEANUP['protected'] for _,key in by_hash[infohash]):return False
+                if infohash in FOREGROUND_CLEANUP['hashes'] or any(key in FOREGROUND_CLEANUP['protected'] for _,key in by_hash[infohash]):return 'protected'
             torr({'action':'drop','hash':infohash},timeout=.75)
-            return True
-        except (OSError,TimeoutError,ValueError,urllib.error.URLError):return False
+            return 'dropped'
+        except (OSError,TimeoutError,ValueError,urllib.error.URLError):return 'api_error'
     with ThreadPoolExecutor(max_workers=8) as pool:
-        for infohash,dropped in zip(candidates,pool.map(discard,candidates)):
-            if dropped:removed.add(infohash)
+        for infohash,outcome in zip(candidates,pool.map(discard,candidates)):
+            if outcome in ('dropped','missing'):removed.add(infohash)
+            if outcome in outcomes:outcomes[outcome]+=1
+            else:outcomes['api_error']+=1
     retain_background_torrent_records(removed)
-    if removed:log(f'Foreground cleanup released {len(removed)} idle background torrents')
+    if records:log('Background torrent cleanup tracked={} candidates={} dropped={} missing={} active_readers={} protected={} api_errors={}'.format(
+        len(records),len(candidates),outcomes['dropped'],outcomes['missing'],outcomes['active_readers'],outcomes['protected'],outcomes['api_error']))
 
 
 def start_foreground_cleanup(key):

@@ -86,6 +86,14 @@ Playback interruptions and connection outages remain scheduling interruptions.
 Windows-local failures may request Debian fallback; its separate resource gate
 can defer that request. Host TorrServer OOM does not disable otherwise healthy
 Windows-local torrent work. Host-memory and catalogue-bridge protections still apply.
+The 15-second resource guard also keeps a bounded, identifier-free diagnostic
+history at `/var/log/home-media/torrserver-resource.jsonl` (three 1 MiB rotated
+files plus the active file). It records TorrServer/bridge cgroup memory breakdown,
+host availability, OOM/restart counters, queue/worker counts, provider/phase lane
+counts, gate decisions and the number of tracked background-torrent cleanup
+records. It contains no title keys, infohashes, source URLs or client addresses.
+Catalogue playback logs include a matching cleanup summary (dropped, already
+missing, active-reader protected, concurrently protected, or API error counts).
 
 OMV Diagnostics > Media workers reports requested topology, worker concurrency,
 distinct healthy torrent backends, attempts, distinct titles, V6 passes and

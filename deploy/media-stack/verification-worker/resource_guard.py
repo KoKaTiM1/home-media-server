@@ -1,10 +1,45 @@
 """Host-only resource gate. Never restarts or kills a playback service."""
 import argparse
+import datetime
 import json
 from pathlib import Path
+import os
 import subprocess
 import time
 from verification_jobs import DecodeJobs
+
+HISTORY=Path('/var/log/home-media/torrserver-resource.jsonl')
+HISTORY_LIMIT=1024*1024
+HISTORY_FILES=3
+
+def save_sample(sample):
+    """Keep a bounded, identifier-free history for diagnosing memory pauses."""
+    try:
+        HISTORY.parent.mkdir(mode=0o750,parents=True,exist_ok=True)
+        if HISTORY.exists() and HISTORY.stat().st_size>=HISTORY_LIMIT:
+            for index in range(HISTORY_FILES-1,0,-1):
+                source=HISTORY.with_name(HISTORY.name+'.'+str(index))
+                target=HISTORY.with_name(HISTORY.name+'.'+str(index+1))
+                if source.exists():
+                    if index+1>HISTORY_FILES:target.unlink(missing_ok=True)
+                    source.replace(target)
+            HISTORY.replace(HISTORY.with_name(HISTORY.name+'.1'))
+        with HISTORY.open('a',encoding='utf-8') as stream:
+            stream.write(json.dumps(sample,separators=(',',':'),sort_keys=True)+'\n')
+    except OSError as error:
+        print('Could not save TorrServer resource sample: '+type(error).__name__,flush=True)
+
+def background_record_count():
+    """Count tracked cleanup records without reading/logging hashes or titles."""
+    try:
+        mounts=json.loads(subprocess.check_output(['docker','inspect','catalogue-bridge'],timeout=5))[0]['Mounts']
+        source=next(Path(m['Source']) for m in mounts if m.get('Destination')=='/data')
+        ledger=source/'background-torrents.tsv'
+        if not ledger.is_file():return 0
+        with ledger.open(encoding='ascii',errors='ignore') as stream:
+            return sum(1 for line in stream if len(line.rstrip('\n').split('\t'))>=3)
+    except (OSError,KeyError,IndexError,StopIteration,subprocess.SubprocessError,ValueError):
+        return None
 
 def sync_producers(queue,workers):
     slots=min(32,workers*2)
@@ -28,9 +63,9 @@ def main():
             stat=dict(line.split() for line in (path/'memory.stat').read_text().splitlines())
             events=dict(line.split() for line in (path/'memory.events').read_text().splitlines())
             inactive_file=int(stat.get('inactive_file',0))
-            return item,current,limit,inactive_file,max(0,current-inactive_file),events
-        item,current,limit,inactive_file,working,events=cgroup('torrserver')
-        bridge_item,bridge_current,bridge_limit,bridge_inactive_file,bridge_working,bridge_events=cgroup('catalogue-bridge')
+            return item,current,limit,inactive_file,max(0,current-inactive_file),events,stat
+        item,current,limit,inactive_file,working,events,torr_stat=cgroup('torrserver')
+        bridge_item,bridge_current,bridge_limit,bridge_inactive_file,bridge_working,bridge_events,_=cgroup('catalogue-bridge')
         mem=dict(line.split(':',1) for line in Path('/proc/meminfo').read_text().splitlines())
         available=int(mem['MemAvailable'].split()[0])*1024
         health={'time':time.time(),'torr_bytes':current,'torr_working_bytes':working,
@@ -39,6 +74,16 @@ def main():
                 'bridge_bytes':bridge_current,'bridge_working_bytes':bridge_working,'bridge_limit':bridge_limit,
                 'bridge_oom_kill':int(bridge_events.get('oom_kill',0))}
         status=q.status();totals=status['totals'];done=totals.get('windows_titles_verified',0)+totals.get('windows_titles_unavailable',0)
+        provider_counts={};phase_counts={}
+        for entry in status.get('producer_activity',{}).values():
+            if not isinstance(entry,dict):continue
+            provider=entry.get('provider')
+            phase=entry.get('phase')
+            if provider in ('torrentio','mediafusion','mixed','other','none'):
+                provider_counts[provider]=provider_counts.get(provider,0)+1
+            if phase in ('claimed','metadata preparation','torrent resolution','windows local torrent',
+                         'video probe','speed verification','sample decode','conversion probe','finished','waiting'):
+                phase_counts[phase]=phase_counts.get(phase,0)+1
         bridge_oom_baseline=int(cfg.get('baseline_bridge_oom',health['bridge_oom_kill']))
         if not cfg.get('requested'):reason='Windows verification has not been enabled'
         elif not cfg.get('memory_gate_passed'):reason='Waiting for viewing-safe memory investigation / parallel pilot'
@@ -81,6 +126,20 @@ def main():
     q.set('prefetch_per_lane',2)
     q.set('russian_serial_permitted',permitted)
     q.set('russian_extra_permitted',bool(permitted and russian_extra))
+    if health:
+        health.update({'time_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            'torr_anon_bytes':int(torr_stat.get('anon',0)),
+            'torr_file_bytes':int(torr_stat.get('file',0)),
+            'torr_slab_bytes':int(torr_stat.get('slab',0)),
+            'torr_percent':round(100*health['torr_bytes']/max(1,health['torr_limit']),2),
+            'bridge_percent':round(100*health['bridge_bytes']/max(1,health['bridge_limit']),2),
+            'windows_online':status.get('windows_slots_online',0),
+            'windows_capacity':status.get('windows_capacity',0),
+            'jobs':status.get('jobs',{}),
+            'tracked_background_torrents':background_record_count(),
+            'provider_lanes':provider_counts,'phase_lanes':phase_counts,
+            'gate_enabled':permitted,'gate_reason':reason})
+        save_sample(health)
     print(reason+'; '+local_reason)
 
 if __name__=='__main__':main()
