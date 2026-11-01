@@ -919,7 +919,11 @@ class Features:
                 conn.execute('ATTACH DATABASE ? AS bulk',(str(index),))
                 conn.execute("INSERT OR IGNORE INTO validation(key,priority) SELECT kind||':'||imdb||CASE WHEN kind='series' THEN ':1:1' ELSE '' END, CASE WHEN votes>10000 THEN 10 ELSE 0 END FROM bulk.titles WHERE year<=? ORDER BY year DESC,votes DESC",(dt.date.today().year,))
                 conn.execute('INSERT OR REPLACE INTO cache VALUES (?,?,?)',(signature,'true',time.time()+10*365*86400))
-            for kind,imdb in conn.execute('SELECT kind,imdb FROM discovery UNION SELECT kind,imdb FROM items').fetchall():
+            # Read existing identities before requesting a writer lock. Most
+            # producer starts have no newly discovered keys; no-op INSERTs
+            # would still serialize every producer behind a SQLite writer.
+            missing=conn.execute("SELECT d.kind,d.imdb FROM (SELECT kind,imdb FROM discovery UNION SELECT kind,imdb FROM items) d WHERE NOT EXISTS (SELECT 1 FROM validation v WHERE v.key=d.kind||':'||d.imdb||CASE WHEN d.kind='series' THEN ':1:1' ELSE '' END)").fetchall()
+            for kind,imdb in missing:
                 key=kind+':'+imdb+(':1:1' if kind=='series' else '')
                 conn.execute('INSERT OR IGNORE INTO validation(key,priority) VALUES (?,20)',(key,))
             if not conn.execute("SELECT 1 FROM cache WHERE key='validation-migrated-v2'").fetchone():

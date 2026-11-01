@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-11-01T09:35:15.250685+00:00",
+  "created_utc": "2026-11-01T10:15:13.963030+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -31,7 +31,7 @@
     "deploy/media-stack/catalogue/check_subtitle_delivery.py": "cc143d9c5ad787bcfc3e66a8b26cb48e465afb487d5d2e4e35872486bbc439f9",
     "deploy/media-stack/catalogue/check_tv_recovery.py": "52bf401d509aa7e45cbb0e5c83db15935e39fbd4842a9146ac44be7b3ab4afbc",
     "deploy/media-stack/catalogue/embedded_subtitles.py": "88cbb7199b92a5c1f5cde75d3483be1ec50d6cf470e69d0975113b1deca96d39",
-    "deploy/media-stack/catalogue/features.py": "9cdb133a6b867cc23fdd2023155d57f2d94d01112d5c7153b7b26b19a3d74dfd",
+    "deploy/media-stack/catalogue/features.py": "ce53919b619f09ddd26862b96c5eb9e2c26b58aeaf9abfcab5ca2a132f08ba3a",
     "deploy/media-stack/catalogue/metadata-preparation.example.json": "37da46da8c81801090d7c30458296376e5d54e2067e0988ef08416b6c4c2c0ab",
     "deploy/media-stack/catalogue/metadata_jobs.py": "565754af294c80f1b3988532ac807da45da5a165e14bd90f5d71bc965feabd93",
     "deploy/media-stack/catalogue/playback_diagnostics.py": "4287867fefcc3061855efb6344f9d918eebd1174d0673c9e80ca759e78985f11",
@@ -57,6 +57,7 @@
     "deploy/media-stack/catalogue/test_russian_audio.py": "708f3a496191b77d615df79ace9650bb7372fc62267f983bc538bd9e3cad0774",
     "deploy/media-stack/catalogue/test_scaling_retry.py": "276c47a595c77f0422ade1a859e337b1bf57b1ae736ea1545bfc9ce0694262b8",
     "deploy/media-stack/catalogue/test_search_diagnostics.py": "c7d4de89ba88a53506f4875e1f8d30e57b46ba4531198a804f54e00e27c47e0f",
+    "deploy/media-stack/catalogue/test_seed_contention.py": "ecb446ec49f8f6da97bbedfdda9356f69af8d523adf08d4e49fb6fa90a4c26fa",
     "deploy/media-stack/catalogue/test_speed_verification.py": "0c174d5180e5e40c87e9332d2d16c5d4fa6e355cb8b2670d00e1fbc7a39b91db",
     "deploy/media-stack/catalogue/test_startup.py": "2263d151fe7352035d3650703b72449f39831805ad6f68a4c3759810a1099bb1",
     "deploy/media-stack/catalogue/test_torrent_metadata.py": "7401a3c04e96a9c70c2553e2ef88a3a6dd311d6b74940fb6efab1a18e9984810",
