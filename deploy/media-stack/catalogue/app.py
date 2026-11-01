@@ -229,54 +229,89 @@ class SourceProviderWait(Checkpoint):
 @contextmanager
 def serialized_provider_slot(lock_path,control_key):
     # All source providers serialize across processes. Foreground calls fail
-    # fast; both Debian and Windows background validation lanes queue instead
-    # of checkpointing behind the shared provider request. Cooldowns remain
-    # fail-fast so provider fallback can proceed without bypassing rate limits.
+    # fast; background callers take a filesystem ticket so the 16 producer
+    # lanes cannot repeatedly race one another for the next provider slot.
+    # The existing provider pacing and cooldown remain authoritative.
     background=bool(getattr(BUDGET,'validation_background',False))
     deadline=time.monotonic()
     if background:
-        # There are up to 16 independent producer lanes but provider calls
-        # remain deliberately serialized and paced (15s fallback/5s primary).
-        # A minute expires most queued lanes before their turn; cap at six
-        # minutes and still honor the caller's worker/request deadline.
+        # There are up to 16 producer lanes. Provider calls remain serialized
+        # and paced (15s fallback/5s primary); FIFO admission prevents later
+        # lanes from repeatedly overtaking an older request.
         deadline+=BACKGROUND_PROVIDER_SLOT_WAIT
         for name in ('worker_deadline','deadline'):
             limit=getattr(BUDGET,name,None)
             if limit is not None:deadline=min(deadline,limit)
+    ticket=None
+    if background:
+        queue_dir=Path(str(lock_path)+'.waiters')
+        try:
+            queue_dir.mkdir(parents=True,exist_ok=True)
+            # Calls have a <=16-minute execution budget. A one-hour ticket
+            # retention safely removes files left by killed/rebooted callers.
+            cutoff=time.time()-3600
+            for stale in queue_dir.glob('*.ticket'):
+                try:
+                    if stale.stat().st_mtime<cutoff:stale.unlink()
+                except OSError:pass
+            ticket=queue_dir/(f'{time.time_ns():020d}-{uuid.uuid4().hex}.ticket')
+            fd=os.open(ticket,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o660);os.close(fd)
+        except OSError:
+            # A transient ticket-directory error must not make source lookup
+            # unavailable; retain the prior serialized-lock behavior.
+            ticket=None
+    def ticket_turn():
+        if ticket is None:return True
+        try:
+            entries=[]
+            for entry in ticket.parent.glob('*.ticket'):
+                try:entries.append((entry.stat().st_mtime_ns,entry.name,entry))
+                except OSError:continue
+            return bool(entries) and min(entries)[2]==ticket
+        except OSError:return True
     def wait_slice(seconds):
         cancel=getattr(BUDGET,'cancel',None)
         if cancel and cancel():raise ClientCancelled('Client disconnected')
-        time.sleep(min(.25,seconds))
-    while True:
-        lock=Path(lock_path).open('a')
-        try:
-            try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-            except BlockingIOError:
-                lock.close()
-                if not background:raise SourceProviderWait('Source provider request already active',control_key,'busy') from None
+        time.sleep(min(.5,seconds))
+    try:
+        while True:
+            if background and not ticket_turn():
                 wait=deadline-time.monotonic()
                 if wait<=0:raise SourceProviderWait('Source provider slot wait budget exhausted',control_key,'queue_timeout') from None
                 wait_slice(wait);continue
-            state=cached(control_key) or {}
-            now=time.time()
-            if state.get('cooldown',0)>now:
-                lock.close()
-                raise SourceProviderWait('Source provider cooldown active',control_key,'cooldown')
-            spacing=state.get('next',0)-now
-            if spacing>0:
-                lock.close()
-                if not background:raise SourceProviderWait('Source provider pacing interval active',control_key,'pacing')
-                wait=deadline-time.monotonic()
-                if wait<=0:raise SourceProviderWait('Source provider slot wait budget exhausted',control_key,'queue_timeout') from None
-                wait_slice(min(spacing,wait));continue
-            break
-        except BaseException:
-            if not lock.closed:lock.close()
-            raise
-    try:yield
+            lock=Path(lock_path).open('a')
+            try:
+                try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                except BlockingIOError:
+                    lock.close()
+                    if not background:raise SourceProviderWait('Source provider request already active',control_key,'busy') from None
+                    wait=deadline-time.monotonic()
+                    if wait<=0:raise SourceProviderWait('Source provider slot wait budget exhausted',control_key,'queue_timeout') from None
+                    wait_slice(wait);continue
+                state=cached(control_key) or {}
+                now=time.time()
+                if state.get('cooldown',0)>now:
+                    lock.close()
+                    raise SourceProviderWait('Source provider cooldown active',control_key,'cooldown')
+                spacing=state.get('next',0)-now
+                if spacing>0:
+                    lock.close()
+                    if not background:raise SourceProviderWait('Source provider pacing interval active',control_key,'pacing')
+                    wait=deadline-time.monotonic()
+                    if wait<=0:raise SourceProviderWait('Source provider slot wait budget exhausted',control_key,'queue_timeout') from None
+                    wait_slice(min(spacing,wait));continue
+                break
+            except BaseException:
+                if not lock.closed:lock.close()
+                raise
+        try:yield
+        finally:
+            fcntl.flock(lock,fcntl.LOCK_UN)
+            lock.close()
     finally:
-        fcntl.flock(lock,fcntl.LOCK_UN)
-        lock.close()
+        if ticket is not None:
+            try:ticket.unlink()
+            except FileNotFoundError:pass
 
 
 @contextmanager

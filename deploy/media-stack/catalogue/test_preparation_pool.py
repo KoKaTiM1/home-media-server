@@ -258,6 +258,45 @@ class SourcePacingTests(unittest.TestCase):
             finally:owner_thread.join(3);remote_thread.join(3)
         self.assertEqual(errors,[])
         self.assertGreaterEqual(clock[0],1005)
+    def test_background_provider_waiters_get_shared_slot_in_fifo_order(self):
+        import threading,fcntl
+        lock_path=app.DATA/'fifo-provider.lock';queue_dir=app.DATA/'fifo-provider.lock.waiters'
+        held=threading.Event();release_owner=threading.Event();first_entered=threading.Event()
+        release_first=threading.Event();second_entered=threading.Event();errors=[];order=[]
+        def owner():
+            try:
+                with app.serialized_provider_slot(lock_path,'fifo-provider-control'):
+                    held.set();release_owner.wait(5)
+            except Exception as error:errors.append(type(error).__name__)
+        def waiter(label,entered,release=None):
+            app.BUDGET.validation_background=True
+            try:
+                with app.serialized_provider_slot(lock_path,'fifo-provider-control'):
+                    order.append(label);entered.set()
+                    if release is not None:release.wait(5)
+            except Exception as error:errors.append(type(error).__name__)
+        owner_thread=threading.Thread(target=owner);owner_thread.start()
+        self.assertTrue(held.wait(2))
+        try:
+            first=threading.Thread(target=waiter,args=('first',first_entered,release_first));first.start()
+            deadline=time.monotonic()+2
+            while len(list(queue_dir.glob('*.ticket')))<1 and time.monotonic()<deadline:time.sleep(.01)
+            self.assertEqual(len(list(queue_dir.glob('*.ticket'))),1)
+            second=threading.Thread(target=waiter,args=('second',second_entered));second.start()
+            deadline=time.monotonic()+2
+            while len(list(queue_dir.glob('*.ticket')))<2 and time.monotonic()<deadline:time.sleep(.01)
+            self.assertEqual(len(list(queue_dir.glob('*.ticket'))),2)
+            release_owner.set()
+            self.assertTrue(first_entered.wait(2))
+            self.assertFalse(second_entered.is_set())
+            release_first.set()
+            self.assertTrue(second_entered.wait(2))
+            first.join(2);second.join(2)
+        finally:
+            release_owner.set();release_first.set();owner_thread.join(2)
+        self.assertEqual(order,['first','second'])
+        self.assertEqual(errors,[])
+        self.assertEqual(list(queue_dir.glob('*.ticket')),[])
     def test_background_source_wait_obeys_worker_deadline(self):
         app.BUDGET.validation_background=True;app.BUDGET.remote_verification=True
         app.BUDGET.worker_deadline=__import__('time').monotonic()-.01
