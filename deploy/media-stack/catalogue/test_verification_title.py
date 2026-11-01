@@ -82,7 +82,7 @@ class TitleTests(unittest.TestCase):
         previous={name:getattr(a.BUDGET,name,None) for name in ('remote_verification','first_sweep_attempt','worker_deadline')}
         try:
             a.BUDGET.remote_verification=True;a.BUDGET.worker_deadline=None
-            for first_sweep,expected in ((False,180),(True,120)):
+            for first_sweep,expected in ((False,180),(True,240)):
                 a.BUDGET.first_sweep_attempt=first_sweep;observed={}
                 def discover(*args):
                     observed['background']=a.BUDGET.validation_background
@@ -100,7 +100,7 @@ class TitleTests(unittest.TestCase):
                 self.assertLessEqual(observed['source_seconds'],expected+1)
                 if first_sweep:
                     self.assertGreaterEqual(submitted['execution_seconds'],180)
-                    self.assertLessEqual(submitted['execution_seconds'],300)
+                    self.assertLessEqual(submitted['execution_seconds'],420)
         finally:
             for name,value in previous.items():
                 if value is None:

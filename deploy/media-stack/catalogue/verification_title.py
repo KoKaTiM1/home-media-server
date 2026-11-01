@@ -166,10 +166,10 @@ def controller_fault(g,error):
 
 def execute_title(g,key,cancel=None):
     first_sweep=bool(getattr(g['BUDGET'],'first_sweep_attempt',False))
-    # First-sweep provider FIFO waits were expiring before a queued fallback
-    # request could reach its 15-second paced slot. Give discovery up to 120s
-    # while preserving at least 180s for the actual Windows V6 verification.
-    execution_seconds=300 if first_sweep else 500
+    # First-sweep MediaFusion requests can wait behind several 15-second FIFO
+    # slots. Allow four minutes for discovery while preserving at least 180s
+    # for the actual Windows V6 verification.
+    execution_seconds=420 if first_sweep else 500
     previous=getattr(g['BUDGET'],'worker_deadline',None)
     deadline=time.monotonic()+execution_seconds
     g['BUDGET'].worker_deadline=min(previous or deadline,deadline)
@@ -188,7 +188,7 @@ def _execute_title(g,key,cancel,execution_seconds):
     deadline=min(time.monotonic()+execution_seconds,getattr(g['BUDGET'],'worker_deadline',float('inf')))
     now=time.monotonic();remaining_budget=max(1,deadline-now)
     execution_reserve=min(MIN_LOCAL_EXECUTION_SECONDS,max(1,remaining_budget/2))
-    source_budget=120 if getattr(g['BUDGET'],'first_sweep_attempt',False) else SOURCE_DISCOVERY_WAIT_SECONDS
+    source_budget=240 if getattr(g['BUDGET'],'first_sweep_attempt',False) else SOURCE_DISCOVERY_WAIT_SECONDS
     source_deadline=min(now+source_budget,deadline-execution_reserve)
     if source_deadline<=time.monotonic():raise Checkpoint('Local source discovery budget exhausted')
     with g['validation_attempt'](True),g['request_budget'](source_deadline,cancel):p=payload(g,key)

@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-11-01T06:30:17.440810+00:00",
+  "created_utc": "2026-11-01T06:44:59.355352+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -60,12 +60,12 @@
     "deploy/media-stack/catalogue/test_speed_verification.py": "0c174d5180e5e40c87e9332d2d16c5d4fa6e355cb8b2670d00e1fbc7a39b91db",
     "deploy/media-stack/catalogue/test_startup.py": "2263d151fe7352035d3650703b72449f39831805ad6f68a4c3759810a1099bb1",
     "deploy/media-stack/catalogue/test_torrent_metadata.py": "7401a3c04e96a9c70c2553e2ef88a3a6dd311d6b74940fb6efab1a18e9984810",
-    "deploy/media-stack/catalogue/test_verification_title.py": "b1d5b119973c4b2cfff8514a9b549de01752448f7660bba681868092cecd29c8",
+    "deploy/media-stack/catalogue/test_verification_title.py": "02dea34af232d8e16113f2e5f02f719957ce7137f3b52a673e5c343930f6edfe",
     "deploy/media-stack/catalogue/test_verification_worker.py": "5e0b3ce975be2acb916b22b4a0f2b976ea9d2d87e58cb2f6b49055b564c687dc",
     "deploy/media-stack/catalogue/verification_jobs.py": "6855f56948e5dd2263dc20b7a2ca230e1829009c512b15abd9f91b70b3522dbd",
     "deploy/media-stack/catalogue/verification_media.py": "00d792a5790d137d0c384e721c182dd5d25b4c41805824e95e430c93e7ebe8dd",
     "deploy/media-stack/catalogue/verification_remote.py": "47be0fea22bf6627541f3bc03b648a980dc6df4d4d86adf0f77d9d343470798e",
-    "deploy/media-stack/catalogue/verification_title.py": "4eac99e03fe63a4cea5d6ba7a84c965b6a5a68762ed03e6d2886c0cc9810c670",
+    "deploy/media-stack/catalogue/verification_title.py": "97168b30fb93736f13fb403728f99b62e3f99d1a0e42c3beb113307635ce4e25",
     "deploy/media-stack/cleanup.py": "385e2c1965c5a998388a1b7b0ff1bdc1c4f9ab6508e382bc2bf38fb41f989e65",
     "deploy/media-stack/compose.yaml": "59d72a6d2627547d6893bc80ae3765d995f88c4ffa9af300b4112dc06532c767",
     "deploy/media-stack/configure-audio.py": "bc304f2a86342876cecdfdadd722bdbf6966202c5b24266943615596659c88d2",
