@@ -1774,13 +1774,17 @@ class Features:
                             sweep_attempt=False
                             budget.worker_deadline=previous_attempt_deadline
                         reason=getattr(error,'reason',None)
+                        retry_after=300 if reason=='cooldown' else 60 if reason=='queue_timeout' else 30
+                        with self.db() as conn:
+                            conn.execute('INSERT OR REPLACE INTO metadata_waits VALUES (?,?)',(key,time.time()+retry_after))
                         message=('Source provider request queue timed out; title retained for retry'
                                  if reason=='queue_timeout' else
                                  'Source provider cooldown active; title retained for retry'
                                  if reason=='cooldown' else
                                  'Source provider pacing wait; title retained for retry')
                         self.remember(worker_key,{'message':message,'started':time.time()},180)
-                        break
+                        checked+=1
+                        continue
                     pending=self.g.get('MetadataPending')
                     if pending and isinstance(error,pending):
                         if sweep_attempt:self.wait_for_metadata(key)

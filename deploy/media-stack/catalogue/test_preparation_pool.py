@@ -342,9 +342,13 @@ class SourcePacingTests(unittest.TestCase):
             self.assertEqual(app.fetch('https://v3-cinemeta.strem.io/meta/movie/tt0000001.json'),{'ok':True})
     def test_pacing_wait_keeps_first_sweep_queued(self):
         app.REL.db().close()
+        other='movie:tt0000002'
+        with app.F.db() as c:
+            c.execute("INSERT INTO validation(key,state,priority) VALUES (?,'pending',1)",(other,))
+            c.execute('UPDATE validation SET priority=100 WHERE key=?',(KEY,))
         app.F.start_verification_sweep()
         with app.F.db() as c:
-            c.execute("INSERT OR REPLACE INTO verification_sweep_attempts(sweep_id,key,started,outcome) VALUES (1,?,0,'queued')",(KEY,))
+            c.execute("UPDATE verification_sweep_attempts SET outcome='queued',started=0,finished=0 WHERE sweep_id=1 AND key=?",(KEY,))
         from contextlib import ExitStack
         with ExitStack() as stack:
             for name in ('seed_validation','repair_cached_series'):
@@ -359,6 +363,10 @@ class SourcePacingTests(unittest.TestCase):
         with app.F.db() as c:
             self.assertEqual(tuple(c.execute('SELECT outcome,finished FROM verification_sweep_attempts WHERE key=?',(KEY,)).fetchone()),('queued',0))
             self.assertEqual(c.execute('SELECT count(*) FROM verification_claims').fetchone()[0],0)
+            wait=c.execute('SELECT expires FROM metadata_waits WHERE key=?',(KEY,)).fetchone()
+        self.assertIsNotNone(wait)
+        self.assertGreater(wait[0],time.time())
+        self.assertEqual(app.F.first_sweep_candidate()[0][1],other)
 
 class FallbackTests(unittest.TestCase):
     def setUp(self):
