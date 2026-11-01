@@ -226,14 +226,49 @@ class SourceProviderWait(Checkpoint):
 
 @contextmanager
 def source_provider_slot():
-    # Cross-process ownership includes the response, so expiry permits one
-    # recovery request and never a simultaneous producer burst.
-    with (DATA/'source-provider.lock').open('a') as lock:
-        try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        except BlockingIOError:raise SourceProviderWait('Source provider request already active') from None
-        state=cached('source-provider-control') or {}
-        if max(state.get('next',0),state.get('cooldown',0))>time.time():
-            raise SourceProviderWait('Source provider request deferred')
+    # Playback and foreground requests fail fast. Background remote producers
+    # wait briefly for the shared cross-process slot instead of checkpointing
+    # every lane when another worker owns it. Cooldowns remain fail-fast so
+    # fallback providers can be tried and rate limits are never bypassed.
+    background=bool(getattr(BUDGET,'validation_background',False)
+                    and getattr(BUDGET,'remote_verification',False))
+    deadline=time.monotonic()
+    if background:
+        deadline+=60
+        for name in ('worker_deadline','deadline'):
+            limit=getattr(BUDGET,name,None)
+            if limit is not None:deadline=min(deadline,limit)
+    def wait_slice(seconds):
+        cancel=getattr(BUDGET,'cancel',None)
+        if cancel and cancel():raise ClientCancelled('Client disconnected')
+        time.sleep(min(.25,seconds))
+    while True:
+        lock=(DATA/'source-provider.lock').open('a')
+        try:
+            try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            except BlockingIOError:
+                lock.close()
+                if not background:raise SourceProviderWait('Source provider request already active') from None
+                wait=deadline-time.monotonic()
+                if wait<=0:raise SourceProviderWait('Source provider slot wait budget exhausted') from None
+                wait_slice(wait);continue
+            state=cached('source-provider-control') or {}
+            now=time.time()
+            if state.get('cooldown',0)>now:
+                lock.close()
+                raise SourceProviderWait('Source provider cooldown active')
+            spacing=state.get('next',0)-now
+            if spacing>0:
+                lock.close()
+                if not background:raise SourceProviderWait('Source provider pacing interval active')
+                wait=deadline-time.monotonic()
+                if wait<=0:raise SourceProviderWait('Source provider slot wait budget exhausted') from None
+                wait_slice(min(spacing,wait));continue
+            break
+        except BaseException:
+            if not lock.closed:lock.close()
+            raise
+    try:
         try:
             yield
         except urllib.error.HTTPError as error:
@@ -248,6 +283,9 @@ def source_provider_slot():
             state=cached('source-provider-control') or {}
             state['next']=time.time()+5
             remember('source-provider-control',state,90000)
+    finally:
+        fcntl.flock(lock,fcntl.LOCK_UN)
+        lock.close()
 
 
 def fetch(url, data=None, headers=None, timeout=20, raw=False, method=None):

@@ -204,8 +204,18 @@ class PoolTests(unittest.TestCase):
         self.assertTrue(stop.exists())
 
 class SourcePacingTests(unittest.TestCase):
-    def setUp(self):fixtures.ImportTests.setUp(self)
-    def tearDown(self):fixtures.ImportTests.tearDown(self)
+    def setUp(self):
+        fixtures.ImportTests.setUp(self)
+        self.old_budget={name:getattr(app.BUDGET,name,None) for name in ('validation_background','remote_verification','worker_deadline','deadline','cancel')}
+        app.BUDGET.validation_background=False;app.BUDGET.remote_verification=False
+        app.BUDGET.worker_deadline=None;app.BUDGET.deadline=None;app.BUDGET.cancel=None
+    def tearDown(self):
+        for name,value in self.old_budget.items():
+            if value is None:
+                try:delattr(app.BUDGET,name)
+                except AttributeError:pass
+            else:setattr(app.BUDGET,name,value)
+        fixtures.ImportTests.tearDown(self)
     def test_concurrent_producer_cannot_issue_second_request(self):
         import threading
         entered=threading.Event();release=threading.Event();errors=[]
@@ -222,6 +232,41 @@ class SourcePacingTests(unittest.TestCase):
         self.assertEqual(errors,[])
         with self.assertRaises(app.Checkpoint):
             with app.source_provider_slot():self.fail('Missing pacing delay')
+    def test_background_remote_waits_for_shared_slot_and_five_second_spacing(self):
+        import threading
+        from contextlib import ExitStack
+        held=threading.Event();release=threading.Event();entered=threading.Event();errors=[];clock=[1000.0]
+        def owner():
+            try:
+                with app.source_provider_slot():held.set();release.wait(3)
+            except Exception as error:errors.append(type(error).__name__)
+        def remote():
+            app.BUDGET.validation_background=True;app.BUDGET.remote_verification=True
+            try:
+                with app.source_provider_slot():entered.set()
+            except Exception as error:errors.append(type(error).__name__)
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(app.time,'time',side_effect=lambda:clock[0]))
+            stack.enter_context(patch.object(app.time,'sleep',side_effect=lambda seconds:clock.__setitem__(0,clock[0]+seconds)))
+            owner_thread=threading.Thread(target=owner);owner_thread.start();self.assertTrue(held.wait(2))
+            remote_thread=threading.Thread(target=remote);remote_thread.start()
+            # Let the remote lane observe the held lock before releasing it.
+            import time as wall_time;wall_time.sleep(.05)
+            self.assertFalse(entered.is_set())
+            release.set()
+            try:self.assertTrue(entered.wait(2))
+            finally:owner_thread.join(3);remote_thread.join(3)
+        self.assertEqual(errors,[])
+        self.assertGreaterEqual(clock[0],1005)
+    def test_background_source_wait_obeys_worker_deadline(self):
+        app.BUDGET.validation_background=True;app.BUDGET.remote_verification=True
+        app.BUDGET.worker_deadline=__import__('time').monotonic()-.01
+        with (app.DATA/'source-provider.lock').open('a') as lock:
+            import fcntl;fcntl.flock(lock,fcntl.LOCK_EX)
+            try:
+                with self.assertRaisesRegex(app.SourceProviderWait,'slot wait budget exhausted'):
+                    with app.source_provider_slot():self.fail('Deadline should stop the wait')
+            finally:fcntl.flock(lock,fcntl.LOCK_UN)
     def test_rate_limit_has_one_recovery_request_and_preserves_retry_after(self):
         import urllib.error
         from email.message import Message
