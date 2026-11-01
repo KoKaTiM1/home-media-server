@@ -340,6 +340,13 @@ class SourcePacingTests(unittest.TestCase):
         with app.serialized_provider_slot(lock_path,'orphan-provider-control'):
             self.assertFalse(orphan.exists())
         self.assertEqual(list(queue_dir.glob('*.ticket')),[])
+    def test_provider_ticket_cleanup_distinguishes_restart_generation_and_legacy_grace(self):
+        now=1000;generation=990
+        self.assertTrue(app.provider_ticket_is_stale(980,'',now,generation))
+        self.assertFalse(app.provider_ticket_is_stale(995,'',now,generation))
+        self.assertTrue(app.provider_ticket_is_stale(999,'locked-v1',now,generation))
+        self.assertTrue(app.provider_ticket_is_stale(100-1201,'',now,None))
+        self.assertFalse(app.provider_ticket_is_stale(995,'',now,None))
     def test_background_source_wait_obeys_worker_deadline(self):
         app.BUDGET.validation_background=True;app.BUDGET.remote_verification=True
         app.BUDGET.worker_deadline=__import__('time').monotonic()-.01
@@ -548,6 +555,17 @@ class FallbackTests(unittest.TestCase):
             with self.assertRaises(app.Checkpoint):app.stream_candidates('movie:tt0000001')
         self.assertIsNone(app.cached('streams:movie:tt0000001'))
         self.assertIsNone(app.cached('source-status:movie:tt0000001'))
+    def test_fallback_upstream_failure_category_is_sanitized(self):
+        import urllib.error
+        def request(url,**kwargs):
+            if url.startswith(app.PROVIDER):
+                raise urllib.error.HTTPError(url,429,'limited',{},None)
+            raise urllib.error.URLError('private upstream detail')
+        events=[]
+        with patch.object(app,'fetch',side_effect=request),patch.object(app,'log',side_effect=events.append):
+            with self.assertRaises(app.Checkpoint):app.stream_candidates('movie:tt0000001')
+        self.assertTrue(any('"provider":"mediafusion"' in event and '"error":"network"' in event for event in events))
+        self.assertFalse(any('private upstream detail' in event or 'fallback.example.invalid' in event for event in events))
     def test_compatibility_filter_keeps_hevc_excluded_pending_tv_test(self):
         s=self.stream();s['title']='1080p HEVC x265'
         self.assertEqual(app.filtered_streams({'streams':[s]}),[])

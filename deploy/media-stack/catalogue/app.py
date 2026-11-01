@@ -36,6 +36,7 @@ from playback_diagnostics import PlaybackDiagnostics
 from russian_audio import RussianAudio
 
 DATA = Path(os.getenv('CATALOGUE_DATA', '/data'))
+PROVIDER_QUEUE_GENERATION = DATA / 'provider-queue-generation'
 LIBRARY = Path(os.getenv('CATALOGUE_LIBRARY', '/catalogue'))
 MEDIA_ROOT = os.getenv('MEDIA_ROOT','/media')
 DOWNLOADS_ROOT = os.getenv('DOWNLOADS_ROOT','/downloads')
@@ -72,6 +73,31 @@ BUDGET = threading.local()
 PREPARATION_SECONDS = 60
 FIRST_DATA_SECONDS = 15
 BACKGROUND_PROVIDER_SLOT_WAIT = 360
+
+
+def provider_ticket_is_stale(mtime,protocol,now,generation):
+    """Reap abandoned current tickets immediately and legacy tickets after safe grace."""
+    if protocol=='locked-v1':return True
+    if generation is not None and mtime<generation:return True
+    return mtime<now-20*60
+
+
+def provider_generation_time():
+    try:return float(PROVIDER_QUEUE_GENERATION.read_text().strip())
+    except (OSError,ValueError):return None
+
+
+def initialize_provider_generation():
+    """Fence tickets from processes that cannot survive this container start."""
+    generation=time.time()
+    temporary=PROVIDER_QUEUE_GENERATION.with_name(PROVIDER_QUEUE_GENERATION.name+f'.tmp-{os.getpid()}')
+    try:
+        temporary.write_text(f'{generation:.6f}\n')
+        os.replace(temporary,PROVIDER_QUEUE_GENERATION)
+    except OSError:
+        try:temporary.unlink()
+        except OSError:pass
+        log('Provider queue generation marker unavailable; legacy grace retained')
 
 class PlaybackBusy(RuntimeError): pass
 class ClientCancelled(RuntimeError): pass
@@ -252,6 +278,7 @@ def serialized_provider_slot(lock_path,control_key):
                 fcntl.flock(guard,fcntl.LOCK_EX)
                 ticket=queue_dir/(f'{time.time_ns():020d}-{uuid.uuid4().hex}.ticket')
                 ticket_fd=os.open(ticket,os.O_CREAT|os.O_EXCL|os.O_RDWR,0o660)
+                os.write(ticket_fd,b'locked-v1')
                 # The descriptor lock marks ownership. The queue guard makes
                 # ticket creation and orphan scans atomic with respect to one
                 # another, so a just-created ticket cannot be reaped early.
@@ -274,10 +301,11 @@ def serialized_provider_slot(lock_path,control_key):
             guard=Path(str(queue_dir)+'.guard').open('a')
             fcntl.flock(guard,fcntl.LOCK_EX)
             entries=[]
-            # Processes already in flight before this version closed their
-            # ticket descriptors. Preserve those recent legacy tickets for
-            # one maximum provider-wait window during the live code handoff.
-            legacy_grace=time.time()-20*60
+            # Legacy tickets did not hold descriptor locks. Preserve recent
+            # live legacy tickets during a code handoff, but a container-start
+            # generation proves pre-start owners were killed. New-format
+            # unlocked tickets are always abandoned and can be reaped now.
+            now=time.time();generation=provider_generation_time()
             for entry in queue_dir.glob('*.ticket'):
                 if entry==ticket:
                     entries.append(entry);continue
@@ -288,12 +316,10 @@ def serialized_provider_slot(lock_path,control_key):
                     except BlockingIOError:
                         entries.append(entry)
                     else:
-                        # New tickets are descriptor-locked. An unlocked,
-                        # recent file may belong to a pre-update process;
-                        # retain it briefly, then reap it if still present.
                         try:
-                            if entry.stat().st_mtime>=legacy_grace:entries.append(entry)
-                            else:entry.unlink()
+                            st=entry.stat();protocol=os.read(fd,32).decode('ascii','ignore')
+                            if provider_ticket_is_stale(st.st_mtime,protocol,now,generation):entry.unlink()
+                            else:entries.append(entry)
                         except FileNotFoundError:pass
                         fcntl.flock(fd,fcntl.LOCK_UN)
                 except FileNotFoundError:pass
@@ -1319,10 +1345,14 @@ def mediafusion_streams(key):
             except (ValueError,TypeError,AttributeError):pass
             remember('mediafusion-provider-control',{'next':time.time()+15,'cooldown':time.time()+seconds,'status':error.code},90000)
             log('Fallback provider cooldown HTTP '+str(error.code))
-            raise Checkpoint('Fallback source provider unavailable') from None
-        except (urllib.error.URLError,TimeoutError,ValueError):
+            failure=Checkpoint('Fallback source provider unavailable')
+            failure.provider_failure_category=source_provider_error_category(error)
+            raise failure from None
+        except (urllib.error.URLError,TimeoutError,ValueError) as error:
             remember('mediafusion-provider-control',{'next':time.time()+15,'cooldown':time.time()+60},90000)
-            raise Checkpoint('Fallback source provider unavailable') from None
+            failure=Checkpoint('Fallback source provider unavailable')
+            failure.provider_failure_category=source_provider_error_category(error)
+            raise failure from None
 
 
 def mediafusion_origin_counts(streams):
@@ -1395,6 +1425,8 @@ def _filter_streams(response,stats=None):
 
 def source_provider_error_category(error):
     """Stable provider-failure label; never expose URL, title, or exception text."""
+    saved=getattr(error,'provider_failure_category',None)
+    if isinstance(saved,str) and re.fullmatch(r'(?:network|timeout|invalid_response|http_[1-5][0-9]{2})',saved):return saved
     if isinstance(error,SourceProviderWait):
         return 'wait_'+(error.reason if error.reason in ('busy','queue_timeout','cooldown','pacing') else 'other')
     if isinstance(error,urllib.error.HTTPError):
@@ -2623,6 +2655,7 @@ def main():
     if args.command=='downloads': return F.manage_downloads()
     if args.command=='imdb-sync': return F.update_index()
     db().close()
+    initialize_provider_generation()
     server=ThreadingHTTPServer(('0.0.0.0',8092),Handler)
     server.daemon_threads=True
     log('Catalogue bridge ready')
