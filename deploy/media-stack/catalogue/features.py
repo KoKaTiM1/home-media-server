@@ -1789,7 +1789,9 @@ class Features:
                         retry_after=900 if reason=='queue_timeout' else 300 if reason=='cooldown' else 30
                         with self.db() as conn:
                             conn.execute('INSERT OR REPLACE INTO metadata_waits VALUES (?,?)',(key,time.time()+retry_after))
-                        message=('Source provider request queue timed out; title retained for retry'
+                        message=('Source provider queue at capacity; title retained for retry'
+                                 if reason=='capacity' else
+                                 'Source provider request queue timed out; title retained for retry'
                                  if reason=='queue_timeout' else
                                  'Source provider cooldown active; title retained for retry'
                                  if reason=='cooldown' else

@@ -253,7 +253,7 @@ class SourceProviderWait(Checkpoint):
 
 
 @contextmanager
-def serialized_provider_slot(lock_path,control_key,priority=0):
+def serialized_provider_slot(lock_path,control_key,priority=0,queue_slots=None):
     # All source providers serialize across processes. Foreground calls fail
     # fast; background callers take a filesystem ticket so the 16 producer
     # lanes cannot repeatedly race one another for the next provider slot.
@@ -330,6 +330,16 @@ def serialized_provider_slot(lock_path,control_key,priority=0):
                 except OSError:entries.append(entry)
                 finally:
                     if fd is not None:os.close(fd)
+            def arrival_order(entry):
+                name=entry.name
+                raw=name[3:23] if name.startswith('p1-') else name.split('-',1)[0]
+                try:return (int(raw),name)
+                except ValueError:return (entry.stat().st_mtime_ns,name)
+            # Keep the oldest admitted callers. Overflow releases its ticket
+            # promptly so it can prepare other titles while this queue drains.
+            # Priority affects service order, never evicts admitted callers.
+            if queue_slots is not None and ticket not in sorted(entries,key=arrival_order)[:queue_slots]:
+                raise SourceProviderWait('Source provider queue is full',control_key,'capacity')
             priority_state=queue_dir/'priority-served'
             try:priority_served=priority_state.read_text().strip()=='1'
             except OSError:priority_served=False
@@ -1351,7 +1361,9 @@ def mediafusion_streams(key,priority=0):
         raise Checkpoint('Invalid fallback provider configuration')
     saved=cached('mediafusion:'+key)
     if saved is not None:return saved
-    with serialized_provider_slot(DATA/'mediafusion-provider.lock','mediafusion-provider-control',priority=priority):
+    slots=cfg.get('mediafusion_queue_slots')
+    if slots is not None and (type(slots) is not int or not 1<=slots<=32):raise Checkpoint('Invalid fallback queue capacity')
+    with serialized_provider_slot(DATA/'mediafusion-provider.lock','mediafusion-provider-control',priority=priority,queue_slots=slots):
         kind,imdb,*parts=key.split(':');ident=imdb+(':'+':'.join(parts) if parts else '')
         try:
             result=fetch(base+'/stream/'+kind+'/'+ident+'.json',timeout=15)
@@ -1457,7 +1469,7 @@ def source_provider_error_category(error):
     saved=getattr(error,'provider_failure_category',None)
     if isinstance(saved,str) and re.fullmatch(r'(?:network|timeout|invalid_response|http_[1-5][0-9]{2})',saved):return saved
     if isinstance(error,SourceProviderWait):
-        return 'wait_'+(error.reason if error.reason in ('busy','queue_timeout','cooldown','pacing') else 'other')
+        return 'wait_'+(error.reason if error.reason in ('busy','queue_timeout','cooldown','pacing','capacity') else 'other')
     if isinstance(error,urllib.error.HTTPError):
         try:code=int(error.code)
         except (TypeError,ValueError):code=0
