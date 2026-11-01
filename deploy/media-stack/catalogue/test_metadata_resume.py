@@ -98,8 +98,19 @@ class MetadataResumeTests(unittest.TestCase):
         with patch.object(app,'fetch',return_value={'error':'private body'}),patch.object(app,'log') as log:
             self.assertFalse(app.fetch_waiting_metadata(self.jobs))
         with app.F.db() as c:diagnostic=c.execute('SELECT stage,category,error_type FROM metadata_retry_details').fetchone()
-        self.assertEqual(tuple(diagnostic),('provider_envelope','invalid_envelope','KeyError'))
+        self.assertEqual(tuple(diagnostic),('provider_envelope','invalid_response','missing_meta'))
         self.assertNotIn('private body',log.call_args.args[0])
+
+    def test_dependency_metadata_identity_mismatch_records_safe_field_code(self):
+        self.wait()
+        metadata=dict(fixtures.result()['metadata']);metadata['id']='tt9999999'
+        with patch.object(app,'fetch',return_value={'meta':metadata}),patch.object(app,'log') as log:
+            self.assertFalse(app.fetch_waiting_metadata(self.jobs))
+        with app.F.db() as c:diagnostic=c.execute('SELECT stage,category,error_type FROM metadata_retry_details').fetchone()
+        self.assertEqual(tuple(diagnostic),('provider_envelope','invalid_response','id_mismatch'))
+        message=log.call_args.args[0]
+        self.assertIn('type=id_mismatch',message)
+        self.assertNotIn('tt0000001',message);self.assertNotIn('tt9999999',message)
 
     def test_dependency_receipt_rejection_is_distinct_from_provider_error(self):
         self.wait()

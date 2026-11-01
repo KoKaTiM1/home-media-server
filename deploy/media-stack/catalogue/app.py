@@ -670,6 +670,7 @@ def metadata(kind,imdb):
 
 def metadata_retry_category(error,stage):
     """Return a low-cardinality reason and HTTP code without exception text."""
+    if isinstance(error,MetadataResponseShapeError):return 'invalid_response',0
     if isinstance(error,urllib.error.HTTPError):
         status=error.code if type(error.code) is int and 100<=error.code<=599 else 0
         return 'upstream_http',status
@@ -701,11 +702,23 @@ def metadata_retry_category(error,stage):
     return 'other',0
 
 
+class MetadataResponseShapeError(ValueError):
+    """Sanitized discriminator for common Cinemeta envelope/identity defects."""
+    def __init__(self,code):
+        self.code=code
+        super().__init__('Invalid metadata response')
+
+
 def record_metadata_retry(error,stage):
     category,status=metadata_retry_category(error,stage)
+    if isinstance(error,MetadataResponseShapeError):
+        error_type=error.code
+    else:
+        error_type=type(error).__name__
     allowed_types={'HTTPError','URLError','TimeoutError','ConnectionError','OSError','JSONDecodeError',
-                   'KeyError','TypeError','ValueError','InvalidSubmission','MetadataBusy','OperationalError'}
-    error_type=type(error).__name__
+                   'KeyError','TypeError','ValueError','InvalidSubmission','MetadataBusy','OperationalError',
+                   'missing_meta','invalid_meta','id_mismatch','type_mismatch','id_type_mismatch',
+                   'missing_name','invalid_name'}
     if error_type not in allowed_types:error_type='Other'
     hour=int(time.time()//3600)
     try:
@@ -774,7 +787,21 @@ def fetch_waiting_metadata(jobs):
     try:
         response=fetch(f'{CINEMETA}/meta/{kind}/{imdb}.json',timeout=8)
         stage='provider_envelope'
+        if not isinstance(response,dict):raise MetadataResponseShapeError('invalid_meta')
+        if 'meta' not in response:raise MetadataResponseShapeError('missing_meta')
         data=response['meta']
+        if not isinstance(data,dict):raise MetadataResponseShapeError('invalid_meta')
+        id_ok=data.get('id')==imdb
+        type_ok=data.get('type')==kind
+        name=data.get('name')
+        name_ok=isinstance(name,str) and bool(name.strip())
+        if not id_ok or not type_ok or not name_ok:
+            if not id_ok and not type_ok:code='id_type_mismatch'
+            elif not id_ok:code='id_mismatch'
+            elif not type_ok:code='type_mismatch'
+            elif name is None or not isinstance(name,str):code='missing_name'
+            else:code='invalid_name'
+            raise MetadataResponseShapeError(code)
         stage='coordinator_receipt'
         ack=jobs.receive('server',worker,lease,{'result_id':uuid.uuid4().hex,
             'source':'cinemeta','fetched_at':time.time(),'status':'ok','metadata':data})
