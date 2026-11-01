@@ -31,6 +31,46 @@ class TitleTests(unittest.TestCase):
         self.payload={'schema':1,'key':KEY,'meta':self.meta,'candidates':[{'infoHash':HASH,'title':'Fixture 2026 1080p','behaviorHints':{'filename':'Fixture.2026.mp4'}}], 'aliases':[],'prior':{'state':'pending'}}
         self.q=DecodeJobs(self.root/'queue.sqlite');self.q.initialize();self.q.set('enabled',True);self.q.set('local_torrent_enabled',True);self.q.set('local_torrent_permitted',True);self.q.set('max_windows_jobs',4)
         self.q.claim('pc-new',['local-torrent-v1']);self.q.backend_health('pc-new',True)
+    def test_first_sweep_payload_carries_bounded_execution_policy(self):
+        candidate={'infoHash':HASH,'title':'Fixture 2026','behaviorHints':{'filename':'Fixture.2026.mp4'}}
+        with patch.object(a.BUDGET,'first_sweep_attempt',True,create=True),patch.object(a,'metadata',return_value=self.meta),patch.object(a,'verification_candidates',return_value=[candidate]):
+            result=payload(a.__dict__,KEY)
+        self.assertEqual(result['execution_policy'],{'profile':'first_sweep','active_seconds':240})
+        validate_task(result)
+        result['execution_policy']['active_seconds']=999
+        with self.assertRaises(ValueError):validate_task(result)
+
+    def test_first_sweep_preparation_time_does_not_consume_execution_budget(self):
+        import copy
+        p=copy.deepcopy(self.payload);p['execution_policy']={'profile':'first_sweep','active_seconds':240}
+        submitted={}
+        def submit(*args,**kwargs):submitted.update(kwargs);raise WorkerWait()
+        with patch.object(a.BUDGET,'first_sweep_attempt',True,create=True),patch.object(a.BUDGET,'worker_deadline',time.monotonic()+420,create=True),patch('verification_remote.jobs',return_value=self.q),patch('verification_title.payload',return_value=p),patch.object(self.q,'submit',side_effect=submit):
+            self.assertFalse(execute_title(a.__dict__,KEY))
+        self.assertEqual(submitted['execution_seconds'],270)
+
+    def test_preparation_wrapper_preserves_checkpoint_code(self):
+        with patch.object(a,'prepare_locked',side_effect=Checkpoint('fixture','metadata_pending')):
+            with self.assertRaises(Checkpoint) as caught:a.prepared(KEY,background=True)
+        self.assertEqual(caught.exception.code,'metadata_pending')
+
+    def test_local_watchdog_reaps_stalled_probe_and_keeps_specific_reason(self):
+        import importlib.util
+        spec=importlib.util.spec_from_file_location('fixture_local_verifier',Path(__file__).parents[1]/'verification-worker/local_verifier.py')
+        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        processes=[];popen=subprocess.Popen
+        def spawn(*args,**kwargs):
+            process=popen(*args,**kwargs);processes.append(process);return process
+        def prepared(*args,**kwargs):
+            selected={'hash':HASH,'index':1,'filename':'Fixture.2026.mp4','length':100}
+            url=a.REL.source_url('raw',KEY,selected)
+            a.REL.run([sys.executable,'-c','import time;time.sleep(5)',url],KEY,'video probe',selected,None,time.monotonic()+10)
+        output=self.root/'watchdog.json'
+        with patch.dict(sys.modules,{'app':a}),patch.object(a.BUDGET,'worker_deadline',None,create=True),patch.object(a,'DATA',self.root/'local'),patch.object(a,'TORR','http://fixture.invalid'),patch.object(a,'REL'),patch.object(a,'log'),patch.object(a,'verification_candidates'),patch.object(a,'torr_headers'),patch.object(a,'upstream',return_value='http://127.0.0.1:1/fixture'),patch.object(a,'prepared',side_effect=prepared),patch('local_progress.Progress.stalled',return_value=True),patch.object(module.subprocess,'Popen',side_effect=spawn):
+            module.verify(self.payload,self.root/'local',output,10)
+        value=json.loads(output.read_text());self.assertEqual(value['diagnostic']['code'],'probe_stalled')
+        self.assertEqual(value['diagnostic']['category'],'stream_stall');self.assertEqual(len(processes),1);self.assertIsNotNone(processes[0].poll())
+
     def test_empty_listing_is_source_unavailable_before_windows_submission(self):
         from reliability import SourceFailure
         with patch.object(a,'metadata',return_value=self.meta),patch.object(a,'verification_candidates',return_value=[]):
@@ -417,7 +457,7 @@ class TitleTests(unittest.TestCase):
         releaser=threading.Thread(target=release_lock);releaser.start()
         try:subprocess.run([sys.executable,str(child),'--payload',str(payload),'--state',str(state),'--output',str(result)],env=env,check=True,capture_output=True,timeout=60)
         finally:releaser.join();handle.close()
-        self.assertTrue(wait_seen.is_set())
+        self.assertTrue(wait_seen.is_set(),result.read_text())
         value=json.loads(result.read_text());self.assertEqual(value['status'],'ok',value)
         self.assertGreater(value['metrics']['active_seconds'],0)
         self.assertGreaterEqual(value['metrics']['lock_wait_seconds'],.25)

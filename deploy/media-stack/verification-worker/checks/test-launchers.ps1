@@ -45,7 +45,7 @@ $CanaryData='/test/data-8/preserve.txt';Set-Content -LiteralPath $CanaryData -Va
 $StopCallsBefore=@(Calls|Where-Object {$_.Count -ge 3 -and $_[0] -eq 'stop'}).Count
 $null=Run UpdateLane 0 8
 $S=State
-Assert ($S.containers[$Lane8].State.Running -and $S.containers[$Lane8].Config.Image -eq 'home-media-verification-worker:0.4.9') 'Canary lane did not start on updated image'
+Assert ($S.containers[$Lane8].State.Running -and $S.containers[$Lane8].Config.Image -eq 'home-media-verification-worker:0.4.10') 'Canary lane did not start on updated image'
 Assert ($S.containers[$Lane8+'-rollback'].Config.Image -eq 'home-media-verification-worker:0.4.4' -and -not $S.containers[$Lane8+'-rollback'].State.Running) 'Previous lane image was not retained for rollback'
 Assert (@($S.containers.Values|Where-Object {$_.Config.Labels.'home-media.component' -eq 'verification-worker' -and $_.State.Running}).Count -eq 8) 'Lane update interrupted another worker'
 Assert (@(Calls|Where-Object {$_.Count -ge 3 -and $_[0] -eq 'stop'}).Count -eq $StopCallsBefore+1) 'Lane update stopped more than the selected worker'

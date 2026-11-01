@@ -90,7 +90,7 @@ class API:
     def request(self,path,body=None):
         c=self.connection()
         try:
-            data=json.dumps({'protocol':PROTOCOL,'client_version':'0.4.9',**body},allow_nan=False).encode() if body is not None else None
+            data=json.dumps({'protocol':PROTOCOL,'client_version':'0.4.10',**body},allow_nan=False).encode() if body is not None else None
             c.request('POST' if body is not None else 'GET',PREFIX+path,data,{'Authorization':'Bearer '+self.token,'Content-Type':'application/json'})
             response=c.getresponse();raw=response.read(2*1024*1024+1)
             endpoint=getattr(c,'worker_endpoint','unknown')
@@ -167,7 +167,9 @@ def run_local_task(api,worker,task,status):
     payload=root/'payload.json';output=root/'result.json'
     payload.write_text(json.dumps(task['params']))
     phase='torrent resolution';status(phase)
-    child_budget=max(1,min(470,int(task['deadline']-time.time()-30)))
+    policy=task['params'].get('execution_policy')
+    execution_cap=240 if policy=={'profile':'first_sweep','active_seconds':240} else 470
+    child_budget=max(1,min(execution_cap,int(task['deadline']-time.time()-30)))
     command=['python','-u','/worker/local_verifier.py','--payload',str(payload),'--state',str(root/'state'),'--output',str(output),'--budget-seconds',str(child_budget)]
     # Only sanitized phase files cross from child to the console.
     with subprocess.Popen(command,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True) as proc:

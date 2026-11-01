@@ -143,13 +143,13 @@ See [the helper guide](deploy/media-stack/metadata-worker/README.md) for setup
 and recovery. Runtime credentials, queues and local databases remain private.
 
 Optional Windows source verification is implemented separately from metadata
-fetching. Candidate worker package 0.4.9 (verifier image 0.4.9) supports a drained single-lane update and retained-container rollback; it also includes
+fetching. Candidate worker package 0.4.10 (verifier image 0.4.10) supports a drained single-lane update and retained-container rollback; it also includes
 1–16 workers and 1–8 private TorrServer backends. The Debian server validates all
 submitted evidence. See [worker operation and recovery](deploy/media-stack/verification-worker/README.md)
 for sizing, preserved-data updates and measured-throughput limits. Issue [#4](../../issues/4)
 tracks ongoing capacity tuning; [#6](../../issues/6) tracks individual playback failures.
 
-The candidate Windows verifier package 0.4.9 reports allowlisted FFmpeg failure codes without exposing raw decoder output; it does not alter V6 acceptance. It retains the exact Torrentio slow-source fallback from 0.4.5, a durable initial V6 sweep, and separate queue/execution timing, with configurable worker/backend counts and existing source-proof, memory, playback and data-preservation guards. Packages do not update the physical Windows fleet until the launcher is run; inspect installed client versions before claiming deployment. See the verifier README for current requirements and the preserved-data update procedure.
+The candidate Windows verifier package 0.4.10 reports allowlisted FFmpeg failure codes without exposing raw decoder output; it does not alter V6 acceptance. It retains the exact Torrentio slow-source fallback from 0.4.5, a durable initial V6 sweep, and separate queue/execution timing, with configurable worker/backend counts and existing source-proof, memory, playback and data-preservation guards. Packages do not update the physical Windows fleet until the launcher is run; inspect installed client versions before claiming deployment. See the verifier README for current requirements and the preserved-data update procedure.
 
 ## Automated regression gate
 
@@ -167,4 +167,6 @@ Windows workers remain available for full V6 media checks. OMV shows preparation
 health and admission separately from verification passes. See the catalogue guide
 and restore instructions for the private configuration and systemd units.
 
-Worker package availability is separate from deployed acceptance: the stable fleet is 0.4.4 pending the corrected 0.4.9 canary. The 0.4.6/0.4.7 canaries exposed a copied-file permission fault; 0.4.9 normalizes runtime source permissions and adds an image-user import gate.
+Worker package availability is separate from deployed acceptance: the stable fleet is 0.4.4 pending the corrected 0.4.10 canary. The 0.4.6/0.4.7 canaries exposed a copied-file permission fault; 0.4.10 normalizes runtime source permissions and adds an image-user import gate.
+
+Worker 0.4.10 additionally bounds first-sweep execution to four minutes, independently of source discovery and queue waiting, and tracks exact-request progress for a 45-second probe/decode stall watchdog. Deployment acceptance is measured across the eight-worker fleet with retained rollback containers; the package version alone is not proof of a completed rollout.

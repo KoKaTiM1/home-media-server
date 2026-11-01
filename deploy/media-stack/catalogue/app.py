@@ -1736,7 +1736,7 @@ def resolve(key,deadline=None):
                 except Exception:pass
                 if not status.get('file_stats'):time.sleep(min(2,remaining(2)))
             if not status.get('file_stats'):
-                if deadline and time.monotonic()>=deadline:raise Checkpoint('Metadata checkpoint')
+                if deadline and time.monotonic()>=deadline:raise Checkpoint('Metadata checkpoint','preparation_budget')
                 if background and time.time()-metadata_started<METADATA_SECONDS:
                     metadata_pending=True;deferred_metadata+=1
                     remember('metadata-pending:'+key,True,900)
@@ -1746,7 +1746,7 @@ def resolve(key,deadline=None):
                     if deferred_metadata>=2:
                         from verification_remote import producer_phase
                         producer_phase(globals(),key,'waiting for source metadata')
-                        raise Checkpoint('Torrent metadata pending; retry other titles')
+                        raise Checkpoint('Torrent metadata pending; retry other titles','metadata_pending')
                     continue
                 raise SourceStalled('Metadata unavailable')
             if status.get('hash',infohash).lower()!=infohash:raise SourceFailure('Torrent identity changed')
@@ -1781,7 +1781,7 @@ def resolve(key,deadline=None):
     if metadata_pending:
         from verification_remote import producer_phase
         producer_phase(globals(),key,'waiting for source metadata')
-        raise Checkpoint('Torrent metadata pending; retry other titles')
+        raise Checkpoint('Torrent metadata pending; retry other titles','metadata_pending')
     raise SourceFailure('No working compatible torrent source available')
 
 
@@ -2074,12 +2074,14 @@ def prepared(key,background=False,audio_index=None,cancel=None,source_id=None):
             raise
         except (Checkpoint,TimeoutError,subprocess.TimeoutExpired,ClientCancelled,sqlite3.OperationalError) as error:
             if isinstance(error,sqlite3.OperationalError):
-                raise Checkpoint('Catalogue database is temporarily busy') from None
+                error=Checkpoint('Catalogue database is temporarily busy','coordinator_database');error.failure_category='coordinator';raise error from None
             if not speculative:
                 F.enqueue(key,200)
                 REL.checkpoint(key,state='checkpoint',message='Preparation continues in background; retry Play later',audio_index=audio_index)
             if isinstance(error,ClientCancelled) or (cancel and cancel()):raise ClientCancelled('Client disconnected') from None
-            raise Checkpoint('Preparation continues in background') from None
+            if isinstance(error,Checkpoint):raise
+            code='subprocess_timeout' if isinstance(error,subprocess.TimeoutExpired) else 'preparation_budget'
+            raise Checkpoint('Preparation continues in background',code) from None
         finally:lock.release()
 
 

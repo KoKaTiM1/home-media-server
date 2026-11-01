@@ -11,8 +11,8 @@ import tempfile
 import zipfile
 
 ROOT=Path(__file__).resolve().parent
-VERSION='0.4.9'
-IMAGE_VERSION='0.4.9'
+VERSION='0.4.10'
+IMAGE_VERSION='0.4.10'
 IMAGES=('home-media-verification-worker:'+IMAGE_VERSION,
         'home-media-verification-torrserver:0.3.0')
 FILES=('worker.ps1','START-HERE.txt','README.md','config.example.json',
@@ -22,7 +22,7 @@ IMAGE_SMOKE="""import os,pathlib
 assert os.getuid()==10001
 for p in pathlib.Path('/worker').glob('*.py'):
     p.read_bytes()
-import verification_worker,verification_title,local_verifier
+import verification_worker,verification_title,local_verifier,local_progress
 print('PASS: runtime user can read and import worker modules')
 """
 
@@ -32,7 +32,7 @@ def digest(path):
         for chunk in iter(lambda:source.read(1024*1024),b''):value.update(chunk)
     return value.hexdigest()
 
-def build(destination=Path('<SERVICE_HOME>/verification-worker-v0.4.9.zip')):
+def build(destination=Path('<SERVICE_HOME>/verification-worker-v0.4.10.zip')):
     subprocess.run(['docker','run','--rm','--network','none','--read-only','--cap-drop','ALL','--security-opt','no-new-privileges','--entrypoint','python',IMAGES[0],'-c',IMAGE_SMOKE],check=True)
     with tempfile.TemporaryDirectory(prefix='verification-worker-package-') as temporary:
         temporary=Path(temporary);folder=temporary/'HomeMediaVerificationWorker';folder.mkdir()

@@ -51,6 +51,7 @@ def final_event(row,version,phases,accepted=None):
             'worker_version':version if isinstance(version,str) and re.fullmatch(r'\d{1,3}\.\d{1,3}\.\d{1,3}',version) else 'legacy',
             'outcome':outcome,'category':row['failure_category'],'code':row['checkpoint_code'] or row['cancel_code'],
             'failure_type':row['failure_type'],'phase':row['phase'],'provider':provider,'source_hash':source_hash,'source_id':row['sid'],
+            'execution_budget_seconds':row['execution_seconds'],'execution_profile':'first_sweep' if params.get('execution_policy',{}).get('profile')=='first_sweep' else 'legacy',
             'queue_seconds':round(max(0,(claimed or finished)-created),3),'execution_seconds':round(max(0,finished-claimed),3) if claimed else 0,
             'active_seconds':row['active_seconds'],'lock_wait_seconds':row['lock_wait_seconds'],'phase_seconds':json.loads(row['worker_phase_seconds']) or dict(phases),'phase_timing':'worker_reported' if json.loads(row['worker_phase_seconds']) else 'coordinator_observed'}
 

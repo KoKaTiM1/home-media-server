@@ -13,7 +13,7 @@ import time
 SAFE_DIAGNOSTIC_CODES=frozenset((
     'range_mismatch','speed_window_timeout','speed_range_truncated','speed_startup_timeout','speed_read_timeout','speed_throughput_low','speed_sustained_low','missing_media_size','cache_attribution','uncached_range_budget',
     'speed_work_budget','local_work_budget','local_output_bound','local_transport',
-    'unclassified','ffmpeg_resource','ffmpeg_transport','ffmpeg_io',
+    'probe_stalled','decode_stalled','metadata_pending','preparation_budget','subprocess_timeout','unclassified','ffmpeg_resource','ffmpeg_transport','ffmpeg_io',
     'ffmpeg_decoder_missing','ffmpeg_stream_mapping','ffmpeg_missing_index',
     'ffmpeg_invalid_data','ffmpeg_decode_error','ffmpeg_truncated_input',
     'ffmpeg_signal_exit','ffmpeg_nonzero_exit','ffmpeg_stderr_exit'))
@@ -58,13 +58,14 @@ def verify(payload,state,output,budget_seconds=470):
     import app as a
     from verification_title import validate_task
     from verification_media import execute,validate_result
-    from reliability import Reliability,Checkpoint,DecodeFailure
+    from reliability import Reliability,Checkpoint,DecodeFailure,SourceStalled
+    from local_progress import ProgressProxy
     validate_task(payload);key=payload['key'];state.mkdir(parents=True,exist_ok=True)
     a.DATA=state;a.TORR=os.environ.get('LOCAL_TORRSERVER_URL','http://home-media-verification-torrserver:8090')
     a.torr_headers=lambda:{}
     diagnostic={};lock_wait_seconds=0.0;run_started=time.monotonic()
     def record_failure(error,stage,selected=None):
-        diagnostic.update(failure_diagnostic(error,stage,selected))
+        diagnostic.clear();diagnostic.update(failure_diagnostic(error,stage,selected))
     current_phase='torrent resolution';phase_started=time.monotonic();phase_totals={}
     progress=state/'progress.json'
     def phase(name):
@@ -86,7 +87,7 @@ def verify(payload,state,output,budget_seconds=470):
             except Exception as error:
                 selected=args[1] if len(args)>1 else kwargs.get('selected')
                 record_failure(error,current_phase,selected);raise
-        def source_url(self,route,key,selected,progress=None):return a.upstream(selected)
+        def source_url(self,route,key,selected,progress=None):return proxy.source(a.upstream(selected),selected['length'])
         @contextmanager
         def lock(self,name):
             nonlocal lock_wait_seconds
@@ -111,14 +112,19 @@ def verify(payload,state,output,budget_seconds=470):
             return super().checkpoint(key,**details)
         def run(self,command,key,name,selected,token,end):
             phase(name)
+            operation=proxy.operation(command)
+            if operation:operation.last=time.monotonic()
             with subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.PIPE) as proc:
                 try:
                     while True:
                         a.remaining(1)
                         if time.monotonic()>=min(end,deadline):raise Checkpoint('Local verification budget','local_work_budget')
+                        if operation and operation.stalled():
+                            error=SourceStalled('Selected request stopped progressing');error.code='probe_stalled' if name=='video probe' else 'decode_stalled';raise error
                         try:
                             out,err=proc.communicate(timeout=.5)
                             if len(out)>1024*1024:raise Checkpoint('Local output bound','local_output_bound')
+                            if operation and operation.error and (operation.error=='range_mismatch' or proc.returncode or err):raise Checkpoint('Selected request rejected',operation.error)
                             diagnostic_code=ffmpeg_failure_code(proc.returncode,err)
                             if diagnostic_code in ('ffmpeg_resource','ffmpeg_transport','ffmpeg_io') or proc.returncode<0:raise Checkpoint('Local resource/transport checkpoint',diagnostic_code)
                             if proc.returncode or err:
@@ -128,12 +134,13 @@ def verify(payload,state,output,budget_seconds=470):
                 except Exception as error:
                     record_failure(error,name);raise
                 finally:
+                    if operation:operation.stop.set()
                     if proc.poll() is None:proc.kill()
                     proc.communicate()
         def sample(self,key,selected,info,audio_index,conversion,position,seconds,end):
             video=next(s for s in info['streams'] if s.get('codec_type')=='video' and not s.get('disposition',{}).get('attached_pic'))
             params={'position':position,'seconds':seconds,'video_index':video['index'],'video_codec':video['codec_name'],'audio_index':audio_index,'conversion':conversion}
-            value=execute('sample',params,a.upstream(selected),lambda cmd,name:self.run(cmd,key,name,selected,None,end),state)
+            value=execute('sample',params,self.source_url('raw',key,selected),lambda cmd,name:self.run(cmd,key,name,selected,None,end),state)
             evidence=validate_result('sample',params,value)
             raw[str(position)]={'params':params,'data':value}
             tmp=raw_path.with_suffix('.tmp');tmp.write_text(json.dumps(raw));tmp.replace(raw_path)
@@ -150,6 +157,7 @@ def verify(payload,state,output,budget_seconds=470):
         db.execute('INSERT OR IGNORE INTO validation(key,state,proof,reason) VALUES (?,?,?,?)',(key,prior.get('state','pending'),json.dumps(prior['proof']) if prior.get('proof') else None,prior.get('reason','')))
         if prior.get('requested'):db.execute('INSERT OR IGNORE INTO manual_rechecks(key,requested,status) VALUES (?,?,?)',(key,prior['requested'],'pending'))
     # Start metadata retrieval without any connection to Debian's torrent engine.
+    proxy=ProgressProxy()
     phase('torrent resolution')
     try:
         a.prepared(key,background=True)
@@ -164,8 +172,9 @@ def verify(payload,state,output,budget_seconds=470):
         # Only bounded categories/type names cross the PC boundary.
         if time.monotonic()>=deadline:
             record_failure(Checkpoint('Local verification budget','local_work_budget'),current_phase)
-        elif not diagnostic:record_failure(error,current_phase)
+        elif not diagnostic or diagnostic.get('failure_type')!=type(error).__name__ or diagnostic.get('code')!=getattr(error,'code','unclassified'):record_failure(error,current_phase)
         result={'status':'checkpoint','reason':'transport','diagnostic':diagnostic,'data':{'backend':'windows-torrent'}}
+    finally:proxy.close()
     phase_totals[current_phase]=phase_totals.get(current_phase,0)+time.monotonic()-phase_started
     result['metrics']={'phase_seconds':{k:round(v,3) for k,v in phase_totals.items()},'lock_wait_seconds':round(lock_wait_seconds,3),'active_seconds':round(max(0,time.monotonic()-run_started-lock_wait_seconds),3)}
     tmp=output.with_suffix('.tmp');tmp.write_text(json.dumps(result));tmp.replace(output)

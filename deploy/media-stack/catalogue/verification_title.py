@@ -41,6 +41,8 @@ def validate_task(p):
         if c.get('torrentUrl') not in (None,'https://webtorrent.io/torrents/big-buck-bunny.torrent'):raise ValueError('Invalid publisher source')
         x=c.get('_exact')
         if x and (x.get('hash')!=c['infoHash'] or type(x.get('index')) is not int or x['index']<1 or type(x.get('length')) is not int or x['length']<=0 or not isinstance(x.get('filename'),str)):raise ValueError('Invalid exact file')
+    policy=p.get('execution_policy')
+    if policy is not None and policy!={'profile':'first_sweep','active_seconds':240}:raise ValueError('Invalid execution policy')
     if len(json.dumps(p).encode())>256*1024:raise ValueError('Title job too large')
 
 def payload(g,key):
@@ -96,6 +98,7 @@ def payload(g,key):
     provider=next(iter(providers)) if len(providers)==1 else 'mixed' if providers else 'none'
     p={'schema':1,'key':key,'meta':meta,'aliases':names,'candidates':candidates,'provider':provider,
        'prior':{'state':r[0] if r else 'pending','proof':json.loads(r[1]) if r and r[1] else None,'reason':r[2] if r else '', 'requested':m[0] if m else 0}}
+    if getattr(g['BUDGET'],'first_sweep_attempt',False):p['execution_policy']={'profile':'first_sweep','active_seconds':240}
     validate_task(p);return p
 
 def audio_selection(info):
@@ -199,20 +202,21 @@ def _execute_title(g,key,cancel,execution_seconds):
     now=time.monotonic();remaining_budget=max(1,deadline-now)
     execution_reserve=min(MIN_LOCAL_EXECUTION_SECONDS,max(1,remaining_budget/2))
     source_budget=240 if getattr(g['BUDGET'],'first_sweep_attempt',False) else SOURCE_DISCOVERY_WAIT_SECONDS
-    source_deadline=min(now+source_budget,deadline-execution_reserve)
+    source_deadline=now+source_budget if getattr(g['BUDGET'],'first_sweep_attempt',False) else min(now+source_budget,deadline-execution_reserve)
     if source_deadline<=time.monotonic():raise Checkpoint('Local source discovery budget exhausted')
     with g['validation_attempt'](True),g['request_budget'](source_deadline,cancel):p=payload(g,key)
     producer_phase(g,key,'source preparation',p.get('provider','none'))
     started=time.time()
-    fallback=False;job=None;consumed=False;failure_category="transport";cancel_code="controller_error"
+    fallback=False;job=None;consumed=False;failure_category="transport";failure_code="unclassified";cancel_code="controller_error"
     # Queue waiting has its own bounded window. Active execution remains capped
     # by the original remaining per-attempt budget after source preparation.
     queue_deadline=time.monotonic()+240
     execution_started=False
+    if p.get('execution_policy',{}).get('profile')=='first_sweep':g['BUDGET'].worker_deadline=queue_deadline
     with g['validation_attempt'](True),g['request_budget'](queue_deadline,cancel):
         try:
             sid=hashlib.sha256(json.dumps(p,sort_keys=True).encode()).hexdigest()
-            job_seconds=max(1,min(execution_seconds,int(deadline-time.monotonic())))
+            job_seconds=270 if p.get('execution_policy',{}).get('profile')=='first_sweep' else max(1,min(execution_seconds,int(deadline-time.monotonic())))
             try:job=q.submit(key,sid,OPERATION,p,'',240,execution_seconds=job_seconds)
             except WorkerWait:return False
             producer_phase(g,key,'windows local torrent')
@@ -233,6 +237,7 @@ def _execute_title(g,key,cancel,execution_seconds):
                     if result['status']!='ok':
                         diagnostic=result.get('diagnostic',{})
                         failure_category=diagnostic.get('category','transport') if isinstance(diagnostic,dict) else 'transport'
+                        failure_code=(diagnostic.get('code') or 'unclassified') if isinstance(diagnostic,dict) else 'unclassified'
                         if result.get('reason')=='interrupted':raise Checkpoint('Verification interrupted')
                         # A speed-rejected Torrentio-only list may benefit from
                         # the existing paced fallback on the server's next
@@ -288,7 +293,7 @@ def _execute_title(g,key,cancel,execution_seconds):
         q.count('windows_local_server_fallbacks');producer_phase(g,key,'server fallback')
         if not q.setting_read('enabled',False):
             q.count('windows_local_fallback_deferred')
-            raise LocalTitleCheckpoint(failure_category)
+            raise LocalTitleCheckpoint(failure_category,failure_code)
         old=g['BUDGET'].remote_verification;g['BUDGET'].remote_verification=False
         try:
             with g['REL'].lock('windows-local-server-fallback'):

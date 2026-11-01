@@ -1,5 +1,5 @@
-Launcher package 0.4.9; verifier image 0.4.9. Use UpdateLane for a one-worker canary.
-Windows verification worker 0.4.9; previous package behavior and V6 proof rules retained.
+Launcher package 0.4.10; verifier image 0.4.10. Use UpdateLane for a one-worker canary.
+Windows verification worker 0.4.10; previous package behavior and V6 proof rules retained.
 
 Extract this package over the existing HomeMediaVerificationWorker folder.
 Preserve ALL config/, data*/ and torrent-state*/ directories.

@@ -1,6 +1,6 @@
 # Windows V6 verification workers
 
-Candidate launcher package **0.4.9** uses verifier image **0.4.9**. The accepted fleet remains on 0.4.4 until the corrected canary passes. Verifiers
+Candidate launcher package **0.4.10** uses verifier image **0.4.10**. The accepted fleet remains on 0.4.4 until the corrected canary passes. Verifiers
 run with Docker `--init` to reap orphaned decoder children after cancellations.
 Start/Update automatically drains and recreates containers with a mismatched
 image or missing init while preserving identities, config, data and backend state.
@@ -106,7 +106,7 @@ separate measurements. No raw error text or source URLs appear in these metrics.
 
 Build the worker Dockerfile with an allowlisted context containing catalogue/*.py
 and the verifier sources; exclude secrets and runtime data. package.py produces
-verification-worker-v0.4.9.zip from the worker 0.4.9 image and torrent backend 0.3.0.
+verification-worker-v0.4.10.zip from the worker 0.4.10 image and torrent backend 0.3.0.
 The archive contains exactly four CMD launchers and no enrolled data or credentials.
 On restore, install the coordinator and resource gate, provision private TLS/token
 configuration, then copy the package to Windows and run Update. The topology is
@@ -162,7 +162,7 @@ sample work. Expiry produces a structured local_work_budget checkpoint with
 its current phase before the parent deadline, preserving the existing receipt
 margin. V6 proof requirements, candidate alternatives and retry policy are unchanged.
 
-## Runtime permissions and durable diagnostics (0.4.9 candidate)
+## Runtime permissions and durable diagnostics (0.4.10 candidate)
 
 The image normalizes copied Python sources to mode 0644 before dropping to user 10001. The publication gate builds with deliberately restrictive source modes and tests imports as that user; package creation repeats the smoke check on the actual release image. Local import/permission faults become acknowledged infrastructure checkpoints, rather than misleading connection retries. Transport retries preserve their current task/result and log fixed request/endpoint labels without addresses or exception text.
 
@@ -174,8 +174,14 @@ The diagnostic exporter is a local service with no capabilities or network acces
 
 Infrastructure startup faults, controller expiry, database faults and viewing interruptions retain an untouched first-sweep item in its queue with a short scheduling cooldown. They do not finish its first attempt or alter an accepted proof. Actual source rejections remain recorded/deferred under the existing sweep policy.
 
-## Stay on the reachable coordinator path (0.4.9 candidate)
+## Stay on the reachable coordinator path (0.4.10 candidate)
 
 Each worker initially tries its configured LAN origin. If that connection fails, it tries the configured fallback. After a pinned connection succeeds, later requests keep using that path until a network/connection failure, then try the other path. There are no periodic LAN probes while Tailscale works. Turning off Tailscale after LAN is repaired triggers the reverse switch. A worker restart begins with LAN again. The original origin identity, worker data, tokens and TLS certificate pin remain unchanged; no new configuration or enrollment is required.
 
 A request failure retains the task/result for the existing retry path; requests are not silently replayed. HTTP authentication/protocol errors do not trigger a network-path switch. If both origins fail, the existing 15-second retry wait prevents a busy loop. Local status.json records coordinator_endpoint and the console logs a bounded primary/fallback label when it changes, without an address.
+
+## Request progress and initial-sweep execution (0.4.10 candidate)
+
+Windows probe/decode reads use an ephemeral loopback proxy scoped to each exact file request. Only newly delivered byte ranges reset the 45-second no-progress watchdog; duplicate ranges and other readers do not. Cancelling an operation closes its own upstream read and subprocess. V6 speed measurements continue on the direct path. Initial-sweep jobs carry an optional bounded execution policy: 240 seconds after claim plus a separate 30-second receipt margin, independent of provider discovery and queue waiting. Jobs without that policy retain legacy behavior. No V6 sample, speed, audio or identity requirements are relaxed. Specific checkpoint codes survive preparation wrappers; configured execution limits and measured elapsed time remain distinct.
+
+The 0.4.10 full-fleet rollout requires the image fixtures and repository gate first. Retain each lane's known 0.4.4 container for rollback; observe all eight candidate workers together rather than waiting an hour per lane. Ordinary source rejections remain sweep outcomes; infrastructure, acknowledgement, process or resource regressions require rollback and investigation.
