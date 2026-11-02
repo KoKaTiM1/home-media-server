@@ -1809,7 +1809,10 @@ class Features:
                         # handler runs. Keep the first-sweep item queued, but
                         # let the provider FIFO drain other titles before this
                         # same oldest candidate is eligible again.
-                        retry_after=900 if reason=='queue_timeout' else 300 if reason=='cooldown' else 30
+                        if reason=='capacity':retry_after=getattr(error,'retry_after',None) or 30
+                        elif reason=='queue_timeout':retry_after=900
+                        elif reason=='cooldown':retry_after=300
+                        else:retry_after=30
                         with self.db() as conn:
                             conn.execute('INSERT OR REPLACE INTO metadata_waits VALUES (?,?)',(key,time.time()+retry_after))
                         message=('Source provider queue at capacity; title retained for retry'

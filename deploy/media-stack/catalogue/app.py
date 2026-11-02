@@ -247,13 +247,65 @@ def remember(key, value, ttl):
     return value
 
 
+def prune_expired_cache(limit=20000,batch_size=500,now=None):
+    """Delete expired temporary cache rows in bounded SQLite transactions.
+
+    Verification, retry, playback, and audit state live in separate tables and
+    are never selected by this maintenance routine. SQLite reuses the freed
+    pages; this routine deliberately does not run VACUUM or rewrite the DB.
+    """
+    if type(limit) is not int or not 1<=limit<=50000:
+        raise ValueError('Cache prune limit must be between 1 and 50000')
+    if type(batch_size) is not int or not 1<=batch_size<=1000:
+        raise ValueError('Cache prune batch size must be between 1 and 1000')
+    now=time.time() if now is None else float(now)
+    DATA.mkdir(parents=True,exist_ok=True)
+    with (DATA/'cache-prune.lock').open('a') as lock:
+        try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError:return 0
+        conn=db()
+        try:
+            conn.execute('PRAGMA busy_timeout=2000')
+            # This one-time index makes both batch selection and later daily
+            # runs bounded by expired rows instead of rescanning the cache.
+            conn.execute('CREATE INDEX IF NOT EXISTS cache_expiry ON cache(expires) WHERE expires IS NOT NULL')
+            conn.commit()
+            deleted=0
+            while deleted<limit:
+                count=min(batch_size,limit-deleted)
+                conn.execute('BEGIN IMMEDIATE')
+                rowids=[row[0] for row in conn.execute(
+                    'SELECT rowid FROM cache WHERE expires IS NOT NULL AND expires<=? ORDER BY expires,rowid LIMIT ?',
+                    (now,count)).fetchall()]
+                if not rowids:
+                    conn.commit();break
+                before=conn.total_changes
+                conn.executemany('DELETE FROM cache WHERE rowid=?',((rowid,) for rowid in rowids))
+                changed=conn.total_changes-before
+                conn.commit()
+                deleted+=changed
+            return deleted
+        finally:conn.close()
+
+
 class SourceProviderWait(Checkpoint):
-    def __init__(self,message,provider=None,reason=None):
-        super().__init__(message);self.provider=provider;self.reason=reason
+    def __init__(self,message,provider=None,reason=None,retry_after=None):
+        super().__init__(message);self.provider=provider;self.reason=reason;self.retry_after=retry_after
+
+
+def provider_capacity_retry_after(queue_slots,spacing_seconds=15,jitter_seconds=0):
+    """Estimate how long an overflow caller should wait for a paced FIFO."""
+    if type(queue_slots) is not int or not 1<=queue_slots<=32:
+        raise ValueError('Invalid provider queue capacity')
+    if type(spacing_seconds) is not int or spacing_seconds<1:
+        raise ValueError('Invalid provider pacing interval')
+    if type(jitter_seconds) is not int or not 0<=jitter_seconds<=15:
+        raise ValueError('Invalid provider retry jitter')
+    return max(30,queue_slots*spacing_seconds)+jitter_seconds
 
 
 @contextmanager
-def serialized_provider_slot(lock_path,control_key,priority=0,queue_slots=None):
+def serialized_provider_slot(lock_path,control_key,priority=0,queue_slots=None,queue_spacing_seconds=15):
     # All source providers serialize across processes. Foreground calls fail
     # fast; background callers take a filesystem ticket so the 16 producer
     # lanes cannot repeatedly race one another for the next provider slot.
@@ -339,7 +391,13 @@ def serialized_provider_slot(lock_path,control_key,priority=0,queue_slots=None):
             # promptly so it can prepare other titles while this queue drains.
             # Priority affects service order, never evicts admitted callers.
             if queue_slots is not None and ticket not in sorted(entries,key=arrival_order)[:queue_slots]:
-                raise SourceProviderWait('Source provider queue is full',control_key,'capacity')
+                # The caller was never admitted to the provider FIFO. Let the
+                # admitted slots drain before retrying instead of waking every
+                # 30 seconds into the same full queue. Hash only the random
+                # ticket name so simultaneous overflow callers spread out.
+                jitter=int.from_bytes(hashlib.sha256((ticket.name if ticket else control_key).encode()).digest()[:2],'big')%16
+                retry_after=provider_capacity_retry_after(queue_slots,queue_spacing_seconds,jitter)
+                raise SourceProviderWait('Source provider queue is full',control_key,'capacity',retry_after)
             priority_state=queue_dir/'priority-served'
             try:priority_served=priority_state.read_text().strip()=='1'
             except OSError:priority_served=False
@@ -735,30 +793,39 @@ def metadata_prepare(slot):
     with (DATA/('metadata-prepare-'+str(slot)+'.lock')).open('a') as lock:
         try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:raise RuntimeError('Metadata preparation slot is still stopping') from None
-        stop.unlink(missing_ok=True);next_session=0;busy=True
+        stop.unlink(missing_ok=True);next_session=0;busy=True;last_status=0;last_phase=None
         while not stop.exists():
             cfg=metadata_pool_config()
             if not cfg['enabled'] or slot>cfg['concurrency']:return
-            phase='idle'
+            phase='idle';sleep_for=1
             try:
                 if time.monotonic()>=next_session:
                     busy=F.foreground_busy() or any(x.get('NowPlayingItem') for x in jf('/Sessions',timeout=1))
                     next_session=time.monotonic()+5
-                if busy or F.foreground_busy():phase='playback pause'
+                if busy or F.foreground_busy():phase='playback pause';sleep_for=5
                 else:
                     metadata_import()
                     F.resume_metadata_dependencies()
-                    with F.db() as conn:conn.execute('INSERT OR REPLACE INTO metadata_preparation_workers VALUES (?,?,?)',(slot,time.time(),'fetching metadata'))
                     fetched=fetch_waiting_metadata(metadata_coordinator(DATA))
                     metadata_import()
-                    phase='metadata imported' if fetched else 'provider or queue wait'
+                    if fetched is True:phase='metadata imported';sleep_for=1
+                    elif fetched is False:phase='provider or queue wait';sleep_for=3
+                    else:phase='idle';sleep_for=10
             except Exception as error:
-                phase='retry '+type(error).__name__
+                phase='retry '+type(error).__name__;sleep_for=3
                 log('Metadata pool checkpoint '+type(error).__name__)
                 next_session=0
-            with F.db() as conn:
-                conn.execute('INSERT OR REPLACE INTO metadata_preparation_workers VALUES (?,?,?)',(slot,time.time(),phase))
-            time.sleep(1)
+            # The pool's provider slot is paced at three seconds. When there
+            # is no prerequisite to fetch, avoid four idle workers repeatedly
+            # reopening the catalogue and writing heartbeats every second.
+            # Publish phase changes immediately and refresh idle heartbeats
+            # every ten seconds, below the monitor's stale-worker threshold.
+            now=time.monotonic()
+            if phase!=last_phase or now-last_status>=10:
+                with F.db() as conn:
+                    conn.execute('INSERT OR REPLACE INTO metadata_preparation_workers VALUES (?,?,?)',(slot,time.time(),phase))
+                last_status=now;last_phase=phase
+            time.sleep(sleep_for)
         with F.db() as conn:conn.execute('DELETE FROM metadata_preparation_workers WHERE slot=?',(slot,))
 
 
@@ -1363,7 +1430,8 @@ def mediafusion_streams(key,priority=0):
     if saved is not None:return saved
     slots=cfg.get('mediafusion_queue_slots')
     if slots is not None and (type(slots) is not int or not 1<=slots<=32):raise Checkpoint('Invalid fallback queue capacity')
-    with serialized_provider_slot(DATA/'mediafusion-provider.lock','mediafusion-provider-control',priority=priority,queue_slots=slots):
+    with serialized_provider_slot(DATA/'mediafusion-provider.lock','mediafusion-provider-control',priority=priority,
+                                  queue_slots=slots,queue_spacing_seconds=15):
         kind,imdb,*parts=key.split(':');ident=imdb+(':'+':'.join(parts) if parts else '')
         try:
             result=fetch(base+'/stream/'+kind+'/'+ident+'.json',timeout=15)
@@ -2679,11 +2747,12 @@ def main():
     # its native metadata and downloaded sidecar subtitles beside STRM files.
     os.umask(0o002)
     parser=argparse.ArgumentParser()
-    parser.add_argument('command',choices=('serve','sync','collections','badges','trailers','discovery-sync','availability','downloads','imdb-sync','metadata-import','metadata-prepare','metadata-prepare-stop','remote-availability','embedded-subtitles','hebrew-metadata','torrent-metadata','russian-audio'),default='serve',nargs='?')
+    parser.add_argument('command',choices=('serve','sync','collections','badges','trailers','discovery-sync','availability','downloads','imdb-sync','metadata-import','metadata-prepare','metadata-prepare-stop','remote-availability','embedded-subtitles','hebrew-metadata','torrent-metadata','russian-audio','cache-prune'),default='serve',nargs='?')
     parser.add_argument('--movies',type=int,default=1000)
     parser.add_argument('--shows',type=int,default=200)
     parser.add_argument('--slot',type=int,choices=range(1,33),default=1)
     parser.add_argument('--limit',type=int,default=8)
+    parser.add_argument('--batch-size',type=int,default=500)
     args=parser.parse_args()
     BUDGET.metadata_background=args.command!='serve'
     if args.command=='metadata-prepare-stop':
@@ -2701,6 +2770,7 @@ def main():
     if args.command=='embedded-subtitles': return log('Embedded subtitle work steps: '+str(EMBED.work()))
     if args.command=='torrent-metadata':return log('Torrent metadata retained: '+str(backfill_torrent_metadata()))
     if args.command=='russian-audio':return log('Russian-audio worker checked one title: '+str(RUSSIAN.work()))
+    if args.command=='cache-prune':return log('Expired temporary cache rows pruned: '+str(prune_expired_cache(limit=args.limit,batch_size=args.batch_size)))
     if args.command=='hebrew-metadata': return F.refresh_hebrew_metadata(limit=args.limit)
     if args.command=='remote-availability': return F.warm_availability(remote=True,slot=args.slot)
     if args.command=='downloads': return F.manage_downloads()
