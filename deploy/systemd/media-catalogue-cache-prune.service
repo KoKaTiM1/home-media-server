@@ -1,0 +1,13 @@
+[Unit]
+Description=Prune expired temporary catalogue cache rows in bounded batches
+Requires=media-stack.service
+After=media-stack.service
+RequiresMountsFor=/srv/dev-disk-by-uuid-<APPDATA_FILESYSTEM_UUID>
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker exec catalogue-bridge python /app/app.py cache-prune --limit 20000 --batch-size 500
+TimeoutStartSec=300s
+Nice=19
+IOSchedulingClass=idle
+IOSchedulingPriority=7

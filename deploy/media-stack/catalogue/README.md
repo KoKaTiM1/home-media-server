@@ -742,7 +742,7 @@ before Windows dispatch; they do not indicate a decoder failure.
 
 ### Separate metadata preparation pool
 
-Two server slots fetch missing catalogue metadata continuously, with the existing
+Up to four server slots fetch missing catalogue metadata, with the existing
 shared three-second provider spacing and provider cooldowns. Background source
 producers queue missing metadata rather than competing to fetch it themselves.
 Each durable receipt is imported before ready work resumes. The eight optional
@@ -755,8 +755,12 @@ watermark of 256 distinct metadata parents and a low watermark of 128. A larger
 existing backlog is retained and drained before ordinary missing-metadata
 admission reopens. Cached/resumed work and explicit manual rechecks can continue.
 Catalogue ingestion remains enabled; waiting admission is not a negative check.
+When no prerequisite is ready, a slot backs off for ten seconds and refreshes
+its status at that interval; provider/queue waits poll at three seconds. This
+reduces idle SQLite heartbeats and repeated metadata-import checks without
+changing the shared provider pacing or delaying active metadata fetches.
 
-Enable `media-metadata-prepare@1.service` and `media-metadata-prepare@2.service`.
+Enable one `media-metadata-prepare@N.service` instance for each configured slot.
 The existing import timer remains enabled for seeding, durable import replay and
 reconciliation, and skips its fetch loop while the pool is enabled. Slot processes
 use per-slot locks and cooperative stop files; systemd retries failures. Playback
@@ -778,7 +782,11 @@ Fallback calls share their own process lock, 15-second spacing, Retry-After-awar
 
 ### Optional fallback queue admission
 
-The private `source-providers.json` may set `mediafusion_queue_slots` to an integer from 1 to 32. Omit the setting to retain the existing unrestricted waiter queue. A proposed controlled value is 8 for a 16-producer installation; it requires a measured live comparison before acceptance. The limit counts background active and waiting tickets. Already admitted callers keep their place; priority requests cannot evict them. Overflow returns a scheduling deferral, retains any primary-negative cache, and leaves the first-sweep item queued for its existing short retry. It does not mark the source unavailable or finish its verification attempt. Provider spacing, cooldown, foreground fail-fast behavior and all V6 evidence checks are preserved. Removing the setting restores unrestricted admission.
+The private `source-providers.json` may set `mediafusion_queue_slots` to an integer from 1 to 32. The current deployment uses eight admitted tickets. The limit counts background active and waiting tickets. Already admitted callers keep their place; priority requests cannot evict them. Overflow returns a scheduling deferral, retains any primary-negative cache, and leaves the first-sweep item queued. Its next eligibility is based on the configured queue depth and 15-second provider spacing (currently 120–135 seconds at eight slots), rather than repeatedly retrying after 30 seconds while the same queue is likely full. This is not a media failure and does not finish the verification attempt. Provider spacing, cooldown, foreground fail-fast behavior and all V6 evidence checks are preserved. Removing the setting restores unrestricted admission.
+
+### Expired cache maintenance
+
+`cache-prune` removes only rows from the temporary `cache` table whose expiry has passed. It creates a partial expiry index and deletes at most 20,000 rows per run in batches of 500. The daily low-priority systemd timer is separate from completed-download cleanup. Verification proofs, validation state, sweep history, retry state, playback data, and live cache rows are not pruned. Freed SQLite pages are reused; routine maintenance does not run `VACUUM` or shrink/rewrite the database file.
 
 ## Durable verification receipts
 
