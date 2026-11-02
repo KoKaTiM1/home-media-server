@@ -407,6 +407,62 @@ class TitleTests(unittest.TestCase):
             with self.assertRaises(Checkpoint):execute_title(a.__dict__,KEY)
         prepared.assert_not_called()
         self.assertEqual(self.q.status()['totals'].get('windows_local_fallback_deferred'),1)
+    def fallback_fixture(self,first_sweep,cancel=None):
+        from contextlib import ExitStack
+        stack=ExitStack();self.addCleanup(stack.close)
+        stack.enter_context(patch.object(a.BUDGET,'remote_verification',True,create=True))
+        stack.enter_context(patch.object(a.BUDGET,'first_sweep_attempt',first_sweep,create=True))
+        stack.enter_context(patch.object(a.BUDGET,'deadline',None,create=True))
+        stack.enter_context(patch.object(a.BUDGET,'cancel',None,create=True))
+        stack.enter_context(patch.object(a.BUDGET,'worker_deadline',time.monotonic()+5,create=True))
+        stack.enter_context(patch('verification_remote.jobs',return_value=self.q))
+        stack.enter_context(patch('verification_title.payload',return_value=self.payload))
+        stack.enter_context(patch.object(self.q,'poll',return_value=('result',{'status':'checkpoint','reason':'transport'})))
+        return stack
+
+    def hold_fallback_slot(self):
+        import hashlib,fcntl
+        folder=a.DATA/'preparation-locks';folder.mkdir(parents=True,exist_ok=True)
+        handle=(folder/hashlib.sha256(b'windows-local-server-fallback').hexdigest()).open('a')
+        fcntl.flock(handle,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        self.addCleanup(handle.close)
+        return handle
+
+    def test_first_sweep_busy_fallback_defers_without_running_preparation(self):
+        from verification_diagnostics import classify_error
+        self.fallback_fixture(True);self.hold_fallback_slot()
+        with patch.object(a,'prepared') as prepared:
+            started=time.monotonic()
+            with self.assertRaises(Checkpoint) as caught:execute_title(a.__dict__,KEY)
+        self.assertLess(time.monotonic()-started,1)
+        self.assertEqual(classify_error(caught.exception)['code'],'preparation_lock_busy')
+        self.assertEqual(classify_error(caught.exception)['category'],'coordinator')
+        prepared.assert_not_called()
+        self.assertTrue(a.BUDGET.remote_verification)
+        self.assertIsNone(a.BUDGET.cancel)
+
+    def test_fallback_lock_wait_keeps_claim_callback_active(self):
+        import fcntl
+        self.fallback_fixture(False);handle=self.hold_fallback_slot();checks=[]
+        # Release independently so the regression also finishes on old code.
+        timer=threading.Timer(.5,lambda:fcntl.flock(handle,fcntl.LOCK_UN));timer.start()
+        self.addCleanup(timer.join)
+        def cancelled():checks.append(time.monotonic());return len(checks)>=3
+        with patch.object(a,'prepared') as prepared:
+            with self.assertRaises(a.ClientCancelled):execute_title(a.__dict__,KEY,cancelled)
+        self.assertGreaterEqual(len(checks),3);prepared.assert_not_called()
+        self.assertIsNone(a.BUDGET.cancel);self.assertIsNone(a.BUDGET.deadline)
+
+    def test_free_fallback_retains_granted_budget_and_callback(self):
+        self.fallback_fixture(True);cancel=lambda:False;observed={}
+        def prepared(*args,**kwargs):
+            observed.update(cancel=a.BUDGET.cancel,deadline=a.BUDGET.deadline)
+        with patch.object(a,'prepared',side_effect=prepared):
+            self.assertTrue(execute_title(a.__dict__,KEY,cancel))
+        self.assertIs(observed['cancel'],cancel)
+        self.assertLessEqual(observed['deadline'],a.BUDGET.worker_deadline)
+        self.assertIsNone(a.BUDGET.cancel);self.assertTrue(a.BUDGET.remote_verification)
+
     def test_unknown_publisher_and_hash_rejected(self):
         for c in ({'infoHash':'invalid'}, {'infoHash':HASH,'torrentUrl':'http://private.invalid/secret'}):
             p=copy.deepcopy(self.payload);p['candidates']=[c]

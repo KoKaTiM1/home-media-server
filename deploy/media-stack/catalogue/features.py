@@ -1845,11 +1845,11 @@ class Features:
                         checked+=1
                         continue
                     interruption=tuple(self.g[name] for name in ('ClientCancelled','PlaybackBusy') if isinstance(self.g.get(name),type))
-                    infrastructure=(getattr(error,'failure_category',None) in ('coordinator','resource','validation')
+                    infrastructure=(getattr(error,'code',None)!='preparation_lock_busy' and (getattr(error,'failure_category',None) in ('coordinator','resource','validation')
                                     or isinstance(error,sqlite3.OperationalError)
                                     or interruption and isinstance(error,interruption)
                                     or type(error).__name__=='ResourceCheckpoint'
-                                    or bool(getattr(budget,'remote_cancel_code','')))
+                                    or bool(getattr(budget,'remote_cancel_code',''))))
                     if sweep_attempt and infrastructure:
                         self.requeue_first_sweep_infrastructure(key)
                         sweep_attempt=False;budget.worker_deadline=previous_attempt_deadline

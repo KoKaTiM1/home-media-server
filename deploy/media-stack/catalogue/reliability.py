@@ -87,13 +87,18 @@ class Reliability:
         return conn
 
     @contextmanager
-    def lock(self,key):
+    def lock(self,key,wait=True):
         folder=self.g['DATA']/'preparation-locks';folder.mkdir(parents=True,exist_ok=True)
         with (folder/hashlib.sha256(key.encode()).hexdigest()).open('a') as handle:
             while True:
                 self.g['remaining'](1)
                 try:fcntl.flock(handle,fcntl.LOCK_EX|fcntl.LOCK_NB);break
-                except BlockingIOError:time.sleep(.1)
+                except BlockingIOError:
+                    if not wait:
+                        error=Checkpoint("Preparation lock busy","preparation_lock_busy")
+                        error.failure_category="coordinator"
+                        raise error
+                    time.sleep(.1)
             try:yield
             finally:fcntl.flock(handle,fcntl.LOCK_UN)
 

@@ -322,8 +322,11 @@ def _execute_title(g,key,cancel,execution_seconds):
             raise LocalTitleCheckpoint(failure_category,failure_code)
         old=g['BUDGET'].remote_verification;g['BUDGET'].remote_verification=False
         try:
-            with g['REL'].lock('windows-local-server-fallback'):
-                g['prepared'](key,background=True,cancel=cancel)
+            # Keep claim renewal and the granted deadline active during admission.
+            # Initial-sweep producers move on promptly when fallback is occupied.
+            with g['request_budget'](deadline,cancel):
+                with g['REL'].lock('windows-local-server-fallback',wait=not getattr(g['BUDGET'],'first_sweep_attempt',False)):
+                    g['prepared'](key,background=True,cancel=cancel)
         finally:g['BUDGET'].remote_verification=old
         return True
     return False

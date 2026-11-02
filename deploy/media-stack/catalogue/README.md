@@ -676,6 +676,8 @@ consume a second metadata wait immediately. The candidate becomes eligible
 again after the cooldown; later verification profiles still receive the full
 candidate list. This changes scheduling only, not V6 evidence or acceptance.
 
+Debian fallback admission keeps the current deadline and title-claim renewal active. During the initial sweep, an occupied fallback slot produces a `preparation_lock_busy` deferred outcome immediately, allowing that producer to prepare another Windows title. The ordinary retry schedule retains the deferred title; a free fallback slot still permits one guarded Debian attempt.
+
 Windows-local V6 can run continuously when explicitly enabled. It is not limited
 by a finite pilot quota; existing host-memory, bridge-memory, OOM/restart,
 worker/backend-health and configured active-job gates remain authoritative. Outcomes

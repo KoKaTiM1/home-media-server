@@ -89,6 +89,16 @@ class InfrastructureSweepTests(unittest.TestCase):
             r=c.execute('select outcome,finished,due from verification_sweep_attempts where key=?',(key,)).fetchone();self.assertEqual(r[0:2],('queued',0));self.assertGreater(r[2],time.time())
             self.assertEqual(c.execute('select attempts from validation where key=?',(key,)).fetchone()[0],0)
             self.assertEqual(json.loads(c.execute('select payload from verification_attempt_outbox').fetchone()[0])['scope'],'preparation')
+    def test_busy_fallback_finishes_sweep_attempt_with_durable_retry(self):
+        from verification_title import LocalTitleCheckpoint
+        a=self.run_interrupted_attempt(LocalTitleCheckpoint('coordinator','preparation_lock_busy'))
+        with a.F.db() as c:
+            self.assertEqual(c.execute('select outcome from verification_sweep_attempts').fetchone()[0],'deferred')
+            event=json.loads(c.execute('select payload from verification_attempt_outbox').fetchone()[0])
+            self.assertEqual((event['scope'],event['code']),('first_sweep','preparation_lock_busy'))
+            self.assertGreater(c.execute('select next_retry from verification_retry_waits').fetchone()[0],time.time())
+            self.assertEqual(c.execute('select attempts from validation').fetchone()[0],0)
+
     def test_actual_speed_rejection_finishes_first_attempt_as_deferred(self):
         from verification_title import LocalTitleCheckpoint
         a=self.run_interrupted_attempt(LocalTitleCheckpoint('speed_rejected','speed_throughput_low'))
