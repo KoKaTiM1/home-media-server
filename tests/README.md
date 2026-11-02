@@ -38,9 +38,18 @@ Tests cannot establish physical TV playback or every torrent's availability;
 keep those acceptance checks in the relevant GitHub issue.
 
 Current automated scope: Python catalogue, verification protocol/media helpers,
-OMV monitor, cleanup, metadata helper and export privacy. C# plugin builds,
-Go/TorrServer patches and physical-client acceptance
-remain separate checks; this gate does not claim to cover them.
+OMV monitor, cleanup, metadata helper and export privacy; the .NET Jellyfin
+plugin behavioral console checks; and the pinned TorrServer patch tests plus
+binary build. Plugin package versions are locked, restore uses a pinned .NET 9
+SDK image, and tests run with network disabled after restore. The TorrServer
+check builds only the Dockerfile's `builder` stage: it tests the checked-in patch
+against the exact pinned upstream commit and does not deploy or start a service.
+Both checks run on the disposable source snapshot. Redacted host/library values
+are substituted with documentation-only fixture values inside the throwaway
+plugin build, never written back to the repository or deployed.
+
+Physical-client acceptance remains outside this gate; passing source tests do
+not certify TV playback or every torrent's availability.
 
 The gate also runs real cancelled-process-group/reaping regression coverage and
 the Windows PowerShell launcher mock suite in isolated containers. The latter

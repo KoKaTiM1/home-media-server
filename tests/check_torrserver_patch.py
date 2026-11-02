@@ -1,0 +1,32 @@
+#!/usr/bin/env python3
+"""Run the pinned TorrServer patch tests and compile without deploying it."""
+import argparse
+import pathlib
+import subprocess
+import uuid
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repository", type=pathlib.Path, required=True)
+    args = parser.parse_args()
+    context = args.repository.resolve() / "deploy/media-stack/torrserver"
+    dockerfile = context / "Dockerfile"
+    if not dockerfile.is_file():
+        parser.error(f"Missing TorrServer Dockerfile: {dockerfile}")
+
+    tag = f"media-torrserver-regression:{uuid.uuid4().hex}"
+    command = [
+        "docker", "build", "--pull=false", "--target", "builder", "--tag", tag,
+        "--file", str(dockerfile), str(context),
+    ]
+    try:
+        result = subprocess.run(command, check=False)
+        return result.returncode
+    finally:
+        subprocess.run(["docker", "image", "rm", "--force", tag],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

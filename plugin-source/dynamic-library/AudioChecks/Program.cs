@@ -24,7 +24,7 @@ Check(localized.Name=="שם בעברית" && localized.Overview=="תיאור ב�
 Console.WriteLine("PASS: cached Hebrew fields independently preserve English fallback, poster, identity and user state");
 static MediaSourceInfo Source(string profile) => new()
 {
-    Id = "fixture-source", Path = "http://<SERVER_LAN_IP>:8092/play/movie:tt1254207?fixture=1", Name = "Fixture",
+    Id = "fixture-source", Path = "http://example.invalid:8092/play/movie:tt1254207?fixture=1", Name = "Fixture",
     SupportsDirectPlay = true, DefaultAudioStreamIndex = 1, DefaultSubtitleStreamIndex = 2,
     MediaStreams = new List<MediaStream> {
         new() { Index = 0, Type = MediaStreamType.Video, Codec = "h264" },
@@ -163,8 +163,8 @@ Console.WriteLine("PASS: LC direct, Main audio-only HLS, authorization, device c
 // creation against the real library interface without touching a real DB.
 var proxy = DispatchProxy.Create<ILibraryManager, LibraryProxy>();
 var backing = (LibraryProxy)(object)proxy;
-var rootMovie = Guid.Parse("<ONLINE_MOVIES_LIBRARY_ID>");
-var rootShow = Guid.Parse("<ONLINE_SHOWS_LIBRARY_ID>");
+var rootMovie = Guid.Parse("11111111-1111-4111-8111-111111111111");
+var rootShow = Guid.Parse("22222222-2222-4222-8222-222222222222");
 backing.Items[rootMovie] = new Folder { Id = rootMovie, Name = "Movies" };
 backing.Items[rootShow] = new Folder { Id = rootShow, Name = "Shows" };
 var fixture = "/catalogue/movies/tt00000000/movie.strm";

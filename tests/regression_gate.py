@@ -2,6 +2,9 @@
 """Run public snapshot regressions in a container without production access."""
 import argparse, datetime, fcntl, hashlib, json, os, pathlib, subprocess, sys, tarfile, tempfile, time
 
+PLUGIN_SDK = 'mcr.microsoft.com/dotnet/sdk@sha256:d9ad72f6b3eb5d61adb158db510ae1c3098c12c92d23ab8da833418275f1c652'
+TORRSERVER_GO_BASE = 'golang@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414'
+
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--repository',type=pathlib.Path,required=True)
@@ -27,12 +30,13 @@ def main():
             image_id=subprocess.check_output(['docker','image','inspect',a.image,'--format','{{.Id}}'],text=True).strip()
             latest=a.report_dir/'latest.json'
             prior=json.loads(latest.read_text()) if latest.exists() else {}
-            if prior.get('passed') and prior.get('fingerprint')==fingerprint and prior.get('image_id')==image_id:
+            gate_profile={'python_test_image':image_id,'plugin_sdk':PLUGIN_SDK,'torrserver_go_base':TORRSERVER_GO_BASE}
+            if prior.get('passed') and prior.get('fingerprint')==fingerprint and prior.get('gate_profile')==gate_profile:
                 prior['commit']=commit;temp=latest.with_suffix('.tmp');temp.write_text(json.dumps(prior,indent=2)+'\n');temp.replace(latest)
                 print('PASS: exact source and test image already tested; report '+prior['report_directory']);return 0
             stamp=datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
             report=a.report_dir/stamp;report.mkdir(mode=0o700)
-            suites=[('catalogue','deploy/media-stack/catalogue'),('cleanup','deploy/media-stack'),('monitor','deploy/media-stack/omv-monitor'),('metadata-worker','deploy/media-stack/metadata-worker/checks'),('privacy','backup')]
+            suites=[('catalogue','deploy/media-stack/catalogue'),('cleanup','deploy/media-stack'),('monitor','deploy/media-stack/omv-monitor'),('metadata-worker','deploy/media-stack/metadata-worker/checks'),('privacy','backup'),('gate-tools','tests')]
             results=[]
             for name,relative in suites:
                 folder=root/relative
@@ -59,7 +63,16 @@ def main():
                     except subprocess.TimeoutExpired:rc=124;log.write('\nGate timeout\n')
                 results.append({'suite':name,'exit_code':rc,'seconds':round(time.monotonic()-started,2)})
                 print(name+': '+('PASS' if rc==0 else 'FAIL'),flush=True)
-            result={'fingerprint':fingerprint,'image_id':image_id,'time':stamp,'commit':commit,'passed':all(r['exit_code']==0 for r in results),'suites':results,'report_directory':str(report)}
+            external=[('jellyfin-plugin',[sys.executable,str(root/'tests/check_plugin.py'),'--repository',str(root)]),
+                      ('torrserver-patch',[sys.executable,str(root/'tests/check_torrserver_patch.py'),'--repository',str(root)])]
+            for name,command in external:
+                started=time.monotonic()
+                with (report/(name+'.log')).open('w') as log:
+                    try:rc=subprocess.run(command,stdout=log,stderr=subprocess.STDOUT,timeout=1800).returncode
+                    except subprocess.TimeoutExpired:rc=124;log.write('\nGate timeout\n')
+                results.append({'suite':name,'exit_code':rc,'seconds':round(time.monotonic()-started,2)})
+                print(name+': '+('PASS' if rc==0 else 'FAIL'),flush=True)
+            result={'fingerprint':fingerprint,'gate_profile':gate_profile,'time':stamp,'commit':commit,'passed':all(r['exit_code']==0 for r in results),'suites':results,'report_directory':str(report)}
             for file in (report/'result.json',a.report_dir/'latest.json'):
                 temp=file.with_suffix('.tmp');temp.write_text(json.dumps(result,indent=2)+'\n');temp.replace(file)
             print('Report: '+str(report/'result.json'))
