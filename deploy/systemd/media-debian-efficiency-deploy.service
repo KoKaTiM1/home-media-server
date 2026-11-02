@@ -1,0 +1,19 @@
+[Unit]
+Description=Wait for the verified worker observation, then safely deploy catalogue efficiency changes
+Wants=network-online.target
+After=network-online.target docker.service media-stack.service
+Requires=media-stack.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -u /root/debian-worker-efficiency-private/deploy_after_observation.py
+Restart=no
+TimeoutStartSec=infinity
+TimeoutStopSec=5min
+KillSignal=SIGTERM
+Nice=19
+IOSchedulingClass=idle
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+[Install]
+WantedBy=multi-user.target

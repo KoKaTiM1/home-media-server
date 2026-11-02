@@ -2,7 +2,7 @@
 Description=Prune expired temporary catalogue cache rows in bounded batches
 Requires=media-stack.service
 After=media-stack.service
-RequiresMountsFor=/srv/dev-disk-by-uuid-<APPDATA_FILESYSTEM_UUID>
+RequiresMountsFor=/srv/dev-disk-by-uuid-/srv/dev-disk-by-uuid-<APPDATA_FILESYSTEM_UUID>
 
 [Service]
 Type=oneshot

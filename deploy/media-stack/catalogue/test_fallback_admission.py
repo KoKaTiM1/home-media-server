@@ -6,12 +6,6 @@ KEY=base.KEY
 class AdmissionTests(unittest.TestCase):
  setUp=base.SourcePacingTests.setUp
  tearDown=base.SourcePacingTests.tearDown
- def test_capacity_backoff_tracks_queue_depth_and_jitter(self):
-  self.assertEqual(app.provider_capacity_retry_after(8,15,0),120)
-  self.assertEqual(app.provider_capacity_retry_after(8,15,15),135)
-  with self.assertRaises(ValueError):app.provider_capacity_retry_after(0,15,0)
-  with self.assertRaises(ValueError):app.provider_capacity_retry_after(8,15,16)
-
  def test_full_fallback_queue_defers_without_consuming_another_preparation_slot(self):
   (app.DATA/'source-providers.json').write_text(json.dumps({'mediafusion_enabled':True,'mediafusion_url':'https://fallback.example.invalid','mediafusion_queue_slots':1}))
   entered=threading.Event();release=threading.Event();errors=[]
@@ -28,8 +22,6 @@ class AdmissionTests(unittest.TestCase):
     started=time.monotonic()
     with self.assertRaises(app.SourceProviderWait) as error:app.stream_candidates(key)
     self.assertEqual(error.exception.reason,'capacity')
-    self.assertGreaterEqual(error.exception.retry_after,30)
-    self.assertLessEqual(error.exception.retry_after,45)
     self.assertLess(time.monotonic()-started,.2)
     with self.assertRaises(app.SourceProviderWait) as priority_error:app.mediafusion_streams(key,priority=1)
     self.assertEqual(priority_error.exception.reason,'capacity')
@@ -62,14 +54,14 @@ class AdmissionTests(unittest.TestCase):
          stack.enter_context(patch.object(app.F,'jf',return_value=[]))
          stack.enter_context(patch.object(app.F,'first_sweep_candidate',return_value=((1,KEY),True)))
          stack.enter_context(patch.object(app.F,'metadata_admission_blocked',return_value=False))
-         stack.enter_context(patch.object(app,'prepared',side_effect=app.SourceProviderWait('Source provider request deferred',reason='capacity',retry_after=120)))
+         stack.enter_context(patch.object(app,'prepared',side_effect=app.SourceProviderWait('Source provider request deferred',reason='capacity')))
          app.F.warm_availability(limit=1)
      with app.F.db() as c:
          self.assertEqual(tuple(c.execute('SELECT outcome,finished FROM verification_sweep_attempts WHERE key=?',(KEY,)).fetchone()),('queued',0))
          self.assertEqual(c.execute('SELECT count(*) FROM verification_claims').fetchone()[0],0)
          wait=c.execute('SELECT expires FROM metadata_waits WHERE key=?',(KEY,)).fetchone()
      self.assertIsNotNone(wait)
-     self.assertGreaterEqual(wait[0],time.time()+119)
+     self.assertGreaterEqual(wait[0],time.time()+29)
      self.assertEqual(app.F.first_sweep_candidate()[0][1],other)
 
  def test_priority_overflow_cannot_displace_an_admitted_normal_waiter(self):

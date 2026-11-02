@@ -47,6 +47,7 @@ def validate_task(p):
 
 def payload(g,key):
     kind,imdb,*_=key.split(':')
+    first_sweep=bool(getattr(g['BUDGET'],'first_sweep_attempt',False))
     # Capture before stream_candidates can consume the fallback marker while
     # fetching/merging MediaFusion results.
     fallback_marker=g['cached']('mediafusion-needed:'+key) if getattr(g['BUDGET'],'validation_background',False) else None
@@ -83,7 +84,11 @@ def payload(g,key):
             e=c['_exact'];x['_exact']={k:e[k] for k in ('hash','index','filename','length')}
             x['_exact']['link']=x.get('torrentUrl') or magnet(h)
         candidates.append(x)
-        if len(candidates)>=20:break
+        # During the initial catalogue sweep, let the Windows verifier spend
+        # its bounded metadata wait on the best-ranked source only. If it
+        # cannot resolve, the Debian fallback can immediately try the next
+        # source instead of repeating the same long wait on the PC.
+        if len(candidates)>=(1 if first_sweep else 20):break
     if fallback_marker:
         # After a source failed V6 speed validation, try newly discovered
         # fallback candidates before older cached primaries on background work.
@@ -98,8 +103,27 @@ def payload(g,key):
     provider=next(iter(providers)) if len(providers)==1 else 'mixed' if providers else 'none'
     p={'schema':1,'key':key,'meta':meta,'aliases':names,'candidates':candidates,'provider':provider,
        'prior':{'state':r[0] if r else 'pending','proof':json.loads(r[1]) if r and r[1] else None,'reason':r[2] if r else '', 'requested':m[0] if m else 0}}
-    if getattr(g['BUDGET'],'first_sweep_attempt',False):p['execution_policy']={'profile':'first_sweep','active_seconds':240}
+    if first_sweep:p['execution_policy']={'profile':'first_sweep','active_seconds':240}
     validate_task(p);return p
+
+def defer_local_metadata_source(g,key,p,diagnostic):
+    """Avoid immediately repeating a Windows metadata-pending source on Debian.
+
+    Older worker images report only the bounded failure code. First-sweep
+    payloads contain one candidate, so its hash is an unambiguous attribution;
+    newer diagnostics may also name an assigned candidate explicitly.
+    """
+    if not isinstance(diagnostic,dict) or diagnostic.get('code')!='metadata_pending':return False
+    candidates=p.get('candidates',[])
+    assigned={c.get('infoHash') for c in candidates if isinstance(c,dict)}
+    source_hash=diagnostic.get('source_hash')
+    if source_hash is None:
+        if len(assigned)!=1:return False
+        source_hash=next(iter(assigned))
+    elif not isinstance(source_hash,str) or source_hash not in assigned:return False
+    if not re.fullmatch(r'[a-f0-9]{40}',source_hash):return False
+    g['remember']('source-excluded:'+key+':'+source_hash,True,300)
+    return True
 
 def audio_selection(info):
     video=next((s for s in info.get('streams',[]) if s.get('codec_type')=='video' and not s.get('disposition',{}).get('attached_pic')),None)
@@ -238,6 +262,7 @@ def _execute_title(g,key,cancel,execution_seconds):
                         diagnostic=result.get('diagnostic',{})
                         failure_category=diagnostic.get('category','transport') if isinstance(diagnostic,dict) else 'transport'
                         failure_code=(diagnostic.get('code') or 'unclassified') if isinstance(diagnostic,dict) else 'unclassified'
+                        if failure_code=='metadata_pending':defer_local_metadata_source(g,key,p,diagnostic)
                         if result.get('reason')=='interrupted':raise Checkpoint('Verification interrupted')
                         # A speed-rejected Torrentio-only list may benefit from
                         # the existing paced fallback on the server's next

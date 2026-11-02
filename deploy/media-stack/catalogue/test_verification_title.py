@@ -16,7 +16,7 @@ import unittest
 from unittest.mock import patch
 from test_app import a
 from verification_jobs import DecodeJobs,WorkerWait
-from verification_title import payload,validate_evidence,validate_task,execute_title,controller_fault
+from verification_title import payload,validate_evidence,validate_task,execute_title,controller_fault,defer_local_metadata_source
 from reliability import Checkpoint
 
 KEY='movie:tt0000001';HASH='a'*40
@@ -39,6 +39,32 @@ class TitleTests(unittest.TestCase):
         validate_task(result)
         result['execution_policy']['active_seconds']=999
         with self.assertRaises(ValueError):validate_task(result)
+
+    def test_first_sweep_windows_payload_limits_local_attempt_to_best_source(self):
+        candidates=[
+            {'infoHash':HASH,'title':'Fixture 2026 1080p','behaviorHints':{'filename':'Fixture.2026.mp4'}},
+            {'infoHash':'b'*40,'title':'Fixture 2026 720p','behaviorHints':{'filename':'Fixture.2026.mp4'}},
+        ]
+        with patch.object(a.BUDGET,'first_sweep_attempt',True,create=True),\
+             patch.object(a,'metadata',return_value=self.meta),\
+             patch.object(a,'verification_candidates',return_value=candidates):
+            first=payload(a.__dict__,KEY)
+        self.assertEqual([c['infoHash'] for c in first['candidates']],[HASH])
+        with patch.object(a.BUDGET,'first_sweep_attempt',False,create=True),\
+             patch.object(a,'metadata',return_value=self.meta),\
+             patch.object(a,'verification_candidates',return_value=candidates):
+            later=payload(a.__dict__,KEY)
+        self.assertEqual([c['infoHash'] for c in later['candidates']],[HASH,'b'*40])
+
+    def test_metadata_pending_excludes_only_an_assigned_source_for_fallback(self):
+        remembered=[]
+        context={**a.__dict__,'remember':lambda *args:remembered.append(args)}
+        p={'candidates':[{'infoHash':HASH}]}
+        self.assertTrue(defer_local_metadata_source(context,KEY,p,{'code':'metadata_pending'}))
+        self.assertEqual(remembered,[('source-excluded:'+KEY+':'+HASH,True,300)])
+        self.assertFalse(defer_local_metadata_source(context,KEY,{'candidates':[{'infoHash':HASH},{'infoHash':'b'*40}]},{'code':'metadata_pending'}))
+        self.assertFalse(defer_local_metadata_source(context,KEY,p,{'code':'metadata_pending','source_hash':'c'*40}))
+        self.assertEqual(len(remembered),1)
 
     def test_first_sweep_preparation_time_does_not_consume_execution_budget(self):
         import copy

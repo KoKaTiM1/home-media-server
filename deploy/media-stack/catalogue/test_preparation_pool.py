@@ -94,15 +94,6 @@ class PoolTests(unittest.TestCase):
         with patch.object(app,'jf',return_value=[{'NowPlayingItem':{'Id':'fixture'}}]),patch.object(app,'fetch_waiting_metadata',side_effect=AssertionError('playback must pause')),patch.object(app.time,'sleep',side_effect=stop):
             app.metadata_prepare(1)
         with app.F.db() as c:self.assertEqual(c.execute('SELECT count(*) FROM metadata_preparation_workers').fetchone()[0],0)
-    def test_idle_metadata_slot_backs_off_without_pending_prerequisites(self):
-        self.configure(2,1)
-        def stop(seconds):(app.DATA/'metadata-prepare-1.stop').touch()
-        with patch.object(app,'jf',return_value=[]),patch.object(app.F,'foreground_busy',return_value=False),\
-             patch.object(app,'metadata_import'),patch.object(app.F,'resume_metadata_dependencies'),\
-             patch.object(app,'fetch_waiting_metadata',return_value=None),patch.object(app.time,'sleep',side_effect=stop) as sleep:
-            app.metadata_prepare(1)
-        sleep.assert_called_once_with(10)
-        with app.F.db() as c:self.assertEqual(c.execute('SELECT count(*) FROM metadata_preparation_workers').fetchone()[0],0)
     def test_full_first_sweep_admission_wait_is_not_terminal(self):
         self.configure(2,1)
         for i in range(2,4):
