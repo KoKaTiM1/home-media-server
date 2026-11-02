@@ -1,7 +1,7 @@
 # Home media catalogue
 
 Current deployed behavior, reviewed 2026-10-30 against Dynamic Library
-**1.4.0.28**, Jellyfin **10.11.11**, the bridge and systemd units. This is the
+**1.4.0.29**, Jellyfin **10.11.11**, the bridge and systemd units. This is the
 current operating guide, rather than a chronological list of old features.
 The installed WizdomSubs Downloader version is **0.2.0.0**.
 

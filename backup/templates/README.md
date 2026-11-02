@@ -44,7 +44,7 @@ Use the Windows worker guide for its configurable resource requirements.
 
 ## Current deployment — checked 2026-10-30
 
-Jellyfin 10.11.11 runs the modified Dynamic Library plugin **1.4.0.28** and
+Jellyfin 10.11.11 runs the modified Dynamic Library plugin **1.4.0.29** and
 WizdomSubs Downloader **0.2.0.0**. The features below describe current code and
 deployed service behavior; client compatibility and torrent availability remain
 source- and device-dependent.
@@ -98,7 +98,7 @@ The [worker-monitor guide](deploy/media-stack/omv-monitor/README.md) and
 [phone-layout guide](deploy/media-stack/omv-mobile/README.md) describe the installed
 OMV extensions. `RESTORE.md` includes all seven worker schedules and startup steps.
 
-Jellyfin is pinned to 10.11.11; the modified Dynamic Library is 1.4.0.28.
+Jellyfin is pinned to 10.11.11; the modified Dynamic Library is 1.4.0.29.
 The modified plugin must be built from this repository's configured source;
 installing an upstream release does not include these server-specific features.
 Its [plugin README](plugin-source/dynamic-library/README.md) describes this fork;

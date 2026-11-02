@@ -91,7 +91,7 @@ manifests; do not simulate watched flags to test cleanup on real files.
    docker build -t home-media-catalogue:1 /opt/media-stack/catalogue
    ```
 
-5. Build the modified Dynamic Library version 1.4.0.28 from the configured
+5. Build the modified Dynamic Library version 1.4.0.29 from the configured
    source, then install its DLL and the public `meta.json` into
    `appdata/jellyfin/config/plugins/DynamicLibrary/` while Jellyfin is stopped.
    It was tested with Jellyfin 10.11.11. Install Wizdom from its publisher or
@@ -283,7 +283,7 @@ backup on the same disk does not protect against losing that disk.
 
 ## Favorites and timeout verification
 
-The deployed Dynamic Library 1.4.0.28 preserves unavailable titles in explicit Favorites
+The deployed Dynamic Library 1.4.0.29 preserves unavailable titles in explicit Favorites
 queries without exposing them in normal online browse/search. Verify an existing
 unavailable favorite remains visible and that Play still returns a compatible
 source or explicit failure. Preserve user hearts/watch history during recovery.
@@ -363,7 +363,7 @@ verify the reported key becomes pending/priority1000 with no retry delay.
 ## V6 verification recovery
 
 The bridge image must include `catalogue/reliability.py` alongside `app.py` and
-`features.py`; build with the supplied Dockerfile. Dynamic Library 1.4.0.28
+`features.py`; build with the supplied Dockerfile. Dynamic Library 1.4.0.29
 requires the bridge's signed exact-source `PlaybackUrl` in prepared responses.
 Restore these together. No new external credentials or inbound ports are needed.
 

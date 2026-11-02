@@ -1,7 +1,7 @@
 # Home media server — modified Dynamic Library plugin
 
 This is the modified plugin used by **home-media-server**, currently
-**1.4.0.28**, tested with **Jellyfin 10.11.11**. Its active configuration uses
+**1.4.0.29**, tested with **Jellyfin 10.11.11**. Its active configuration uses
 the project's local catalogue bridge. The generic upstream feature list does
 not describe which providers or services this deployment uses.
 
@@ -77,3 +77,5 @@ are preserved, and subtitle delivery remains relative to Jellyfin. Native HLS
 retains the internally registered bridge source. On reinstall or Tailscale
 identity rotation, regenerate the private host list from `tailscale status --json`
 and restore the TCP forward. Tailscale clients need permission for both ports.
+
+First-open catalogue movie details await source lookup before registering the native movie ID. This covers catalogue STRM files materialized during the first details visit and preserves the existing item identity and user state. The plugin gate exercises this previously absent-file case against the real registration path.

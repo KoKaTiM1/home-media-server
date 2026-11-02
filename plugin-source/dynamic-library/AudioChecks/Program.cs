@@ -247,6 +247,8 @@ remoteContext.Request.Host = new Microsoft.AspNetCore.Http.HostString("local.exa
 if (HomeConnectionPaths.Rewrite(boundMedia, remoteContext.Request, new[] { "remote.example.invalid" }) != boundMedia) throw new Exception("LAN source changed");
 Console.WriteLine("Connection routing checks passed");
 
+await FirstOpenChecks.Run();
+
 public class LibraryProxy : DispatchProxy
 {
     public Dictionary<Guid,BaseItem> Items { get; } = new();

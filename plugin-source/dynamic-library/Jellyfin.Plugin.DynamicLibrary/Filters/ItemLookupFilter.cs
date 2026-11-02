@@ -419,11 +419,8 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
         }
 
         // For movies, also populate AIOStreams MediaSources if configured (after enrichment)
-        EnsureHomeCatalogueItem(cachedItem);
-        if (cachedItem.Type == BaseItemKind.Movie)
-        {
-            await PopulateAIOStreamsMediaSourcesAsync(cachedItem, context.HttpContext.RequestAborted);
-        }
+        await CompleteCatalogueDetailsAsync(cachedItem, PopulateAIOStreamsMediaSourcesAsync,
+            EnsureHomeCatalogueItem, context.HttpContext.RequestAborted);
 
         // For persisted items also in cache, use real UserData from database
         // (cached items have hardcoded PlaybackPositionTicks = 0 from SearchResultFactory)
@@ -454,6 +451,18 @@ public class ItemLookupFilter : IAsyncActionFilter, IOrderedFilter
 
         // Return our cached item directly
         context.Result = new OkObjectResult(cachedItem);
+    }
+
+    // Source lookup may create the catalogue STRM on the first details visit.
+    // Register its stable native ID only after that awaited lookup has completed.
+    public static async Task CompleteCatalogueDetailsAsync(BaseItemDto item,
+        Func<BaseItemDto, CancellationToken, Task> populateSources,
+        Action<BaseItemDto> registerItem, CancellationToken cancellationToken)
+    {
+        if (item.Type == BaseItemKind.Movie)
+            await populateSources(item, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        registerItem(item);
     }
 
     // Search DTO IDs match the eventual native catalogue file IDs. Register an
