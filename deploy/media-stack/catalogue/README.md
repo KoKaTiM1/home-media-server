@@ -91,7 +91,7 @@ controls provide Fit, Auto crop and Stretch; those are client controls.
 ## Playback and audio
 
 Sources favor H.264 1080p/720p and healthier reported swarms. Explicit zero-seed
-listings, 4K, HEVC/AV1, camera releases and archive/ISO payloads are excluded.
+listings, 4K, AV1, HEVC Main10/HDR, camera releases and archive/ISO payloads are excluded.
 Actual video/audio are probed. Episodes must match season/episode or an explicit
 unambiguous file index; movie packs require an explicit index. Selected video
 must be compatible with the client: this catalogue does not encode or scale it.
@@ -781,7 +781,7 @@ Optional MediaFusion fallback: private `/data/source-providers.json` enables an 
 
 The OMV Media workers progress page reports the provider for the active Windows title: Torrentio, MediaFusion fallback, a mixed candidate set, another explicit source, or None when no accepted provider candidate is available. Older saved Torrentio selections are labeled Torrentio; explicit fallback attribution is retained with newly selected sources. On a Windows-local job the live value starts as the candidate set, then changes to the exact selected provider when the result returns.
 
-Fallback calls share their own process lock, 15-second spacing, Retry-After-aware HTTP cooldown and persistent positive/negative cache. Public endpoint coverage and rate limits may change. Neither provider outages nor pacing waits create accepted media proof. The Windows protocol/image is unchanged because Debian sends normalized candidate hashes through the existing job schema. Successful source discovery is not physical playback or a full V6 pass. HEVC/AV1 policy is unchanged pending the tracked TV test.
+Fallback calls share their own process lock, 15-second spacing, Retry-After-aware HTTP cooldown and persistent positive/negative cache. Public endpoint coverage and rate limits may change. Neither provider outages nor pacing waits create accepted media proof. The Windows protocol/image is unchanged because Debian sends normalized candidate hashes through the existing job schema. Successful source discovery is not physical playback or a full V6 pass. HEVC Main 8-bit SDR up to 1080p is eligible after the owner TV picture/audio test; AV1, Main10/HDR and 4K stay excluded. Replay/seek stalling remains tracked in issue #6.
 
 
 ### Optional fallback queue admission
@@ -793,3 +793,8 @@ The private `source-providers.json` may set `mediafusion_queue_slots` to an inte
 The private diagnostics exporter keeps Windows job receipts separate from whole-title first-sweep completions and prerequisite waits. Completion transactions retain an outbox record until the compact ledger commits it. Latest outcome and cumulative reason counts persist for the sweep lifetime; detailed history retains three attempts per title per scope. Receipt IDs remain durable for replay deduplication. Old source URLs, credentials and decoder output are excluded. Historical worker receipts without version/source detail are marked legacy/unknown rather than inferred from the current worker.
 
 The media-verification-diagnostics timer exports bounded batches every 30 seconds. OMV shows recorded first-sweep completions in the last hour, prerequisite waits, worker operations, and the largest latest outcome buckets. A later successful outcome reduces the corresponding current failure bucket; historical attempts remain counted. Current proof decisions, provider pacing, first-sweep membership and retry policy are unchanged by diagnostics.
+
+
+## HEVC source eligibility — 2026-11-02
+
+The six-hour sync and source providers may admit HEVC/x265 720p/1080p SDR candidates. Actual probe metadata must show HEVC Main, yuv420p 8-bit, at most 1920×1080, with no HDR/Dolby Vision evidence. The shared server/Windows policy rejects unsupported profiles even when a provider filename omits those details. Windows package/image 0.4.11 uses the same policy and sample recipes; every new source still requires the full V6 speed and beginning/later decode evidence. No existing proof is rewritten or retested solely for this addition. HEVC seeking/replay on the TV remains open in issue #6; the short physical fixture confirms picture/audio only. Existing provider caches expire normally, so HEVC becomes eligible as source lookups refresh.

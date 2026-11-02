@@ -91,6 +91,7 @@ services:
       - ./catalogue/verification_diagnostics.py:/app/verification_diagnostics.py:ro
       - ./catalogue/verification_remote.py:/app/verification_remote.py:ro
       - ./catalogue/verification_title.py:/app/verification_title.py:ro
+      - ./catalogue/verification_media.py:/app/verification_media.py:ro
       - ./catalogue/metadata_jobs.py:/app/metadata_jobs.py:ro
       - ./catalogue/embedded_subtitles.py:/app/embedded_subtitles.py:ro
       - ./catalogue/russian_audio.py:/app/russian_audio.py:ro

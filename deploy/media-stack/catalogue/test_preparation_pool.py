@@ -644,9 +644,11 @@ class FallbackTests(unittest.TestCase):
             with self.assertRaises(app.Checkpoint):app.stream_candidates('movie:tt0000001')
         self.assertTrue(any('"provider":"mediafusion"' in event and '"error":"network"' in event for event in events))
         self.assertFalse(any('private upstream detail' in event or 'fallback.example.invalid' in event for event in events))
-    def test_compatibility_filter_keeps_hevc_excluded_pending_tv_test(self):
+    def test_compatibility_filter_accepts_hevc_sdr_after_tv_test(self):
         s=self.stream();s['title']='1080p HEVC x265'
-        self.assertEqual(app.filtered_streams({'streams':[s]}),[])
+        self.assertEqual(len(app.filtered_streams({'streams':[s]})),1)
+        for suffix in ('AV1','10bit','Main10','HDR10','Dolby Vision','DV','2160p'):
+            self.assertEqual(app.filtered_streams({'streams':[{**s,'title':s['title']+' '+suffix}]}),[])
 
     def test_malformed_responses_preserve_unknown_source_state(self):
         with patch.object(app,'fetch',side_effect=ValueError('Malformed upstream JSON')):
@@ -657,7 +659,7 @@ class SourceDiagnosticsTests(unittest.TestCase):
     def test_filter_diagnostics_match_the_existing_candidate_decisions(self):
         accepted={'infoHash':'a'*40,'title':'Example 1080p x264'}
         rows=[accepted,{'infoHash':'bad','title':'Example 1080p'},
-              {'infoHash':'b'*40,'title':'Example 1080p HEVC'},
+              {'infoHash':'b'*40,'title':'Example 1080p AV1'},
               {'infoHash':'c'*40,'title':'Example 1080p CAM'},
               {'infoHash':'d'*40,'title':'Example 480p'},
               {'infoHash':'e'*40,'title':'Example 720p','behaviorHints':{'filename':'Example.iso'}},

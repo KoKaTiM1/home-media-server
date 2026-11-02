@@ -36,6 +36,22 @@ class MissingVideoFrames(RuntimeError): pass
 class MissingSelectedAudio(RuntimeError): pass
 
 
+def validate_video(video):
+    """HEVC TV acceptance covers Main 8-bit SDR up to 1080p only."""
+    codec=video.get('codec_name')
+    if codec not in ('h264','hevc','mpeg4','vp8','vp9'):
+        raise ValueError('Unsupported video codec')
+    if codec=='hevc':
+        if (video.get('profile')!='Main' or video.get('pix_fmt')!='yuv420p'
+                or type(video.get('width')) is not int or not 0<video['width']<=1920
+                or type(video.get('height')) is not int or not 0<video['height']<=1080
+                or video.get('color_transfer') in ('smpte2084','arib-std-b67')
+                or any(any(term in str(x.get('side_data_type','')).lower()
+                           for term in ('mastering display','content light','dovi','dolby vision'))
+                       for x in video.get('side_data_list',[]))):
+            raise ValueError('Unsupported HEVC profile, depth, resolution or HDR')
+
+
 def validate_recipe(operation, params):
     if operation == 'probe':
         if params != {}: raise ValueError('Invalid probe recipe')
@@ -48,7 +64,7 @@ def validate_recipe(operation, params):
         if type(value) is not int or not 0 <= value <= 1000: raise ValueError('Invalid track')
     if params['seconds'] not in (2,6) or type(params['seconds']) is not int: raise ValueError('Invalid sample duration')
     if type(params['position']) not in (int,float) or not math.isfinite(params['position']) or not 0 <= params['position'] <= 7*86400: raise ValueError('Invalid sample position')
-    if params['video_codec'] not in ('h264','mpeg4','vp8','vp9'): raise ValueError('Invalid video codec')
+    if params['video_codec'] not in ('h264','hevc','mpeg4','vp8','vp9'): raise ValueError('Invalid video codec')
     if type(params['conversion']) is not bool or (params['conversion'] and params['audio_index'] is None): raise ValueError('Invalid conversion')
 
 

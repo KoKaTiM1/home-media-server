@@ -34,6 +34,7 @@ from reliability import Reliability, Checkpoint, SourceFailure, DecodeFailure, S
 from embedded_subtitles import EmbeddedSubtitles
 from playback_diagnostics import PlaybackDiagnostics
 from russian_audio import RussianAudio
+from verification_media import validate_video
 
 DATA = Path(os.getenv('CATALOGUE_DATA', '/data'))
 PROVIDER_QUEUE_GENERATION = DATA / 'provider-queue-generation'
@@ -1505,9 +1506,9 @@ def _filter_streams(response,stats=None):
             if stats is not None:stats['invalid_infohash']+=1
             continue
         title=stream.get('title','')+' '+stream.get('name','')
-        if re.search(r'2160|4K|CAM\b|\bTS\b|HDCAM|TELESYNC|AV1|x265|HEVC|H\.265',title,re.I):
+        if re.search(r'2160|4K|CAM\b|\bTS\b|HDCAM|TELESYNC|AV1|10[ ._-]?bit|Main[ ._-]?10|HDR|Dolby[ ._-]?Vision|\bDV\b',title,re.I):
             if stats is not None:
-                stats['unsupported_codec' if re.search(r'AV1|x265|HEVC|H\.265',title,re.I) else 'unsupported_release']+=1
+                stats['unsupported_codec' if re.search(r'AV1|10[ ._-]?bit|Main[ ._-]?10|HDR|Dolby[ ._-]?Vision|\bDV\b',title,re.I) else 'unsupported_release']+=1
             continue
         if not re.search('1080|720',title,re.I):
             if stats is not None:stats['unsupported_resolution']+=1
@@ -2242,8 +2243,8 @@ def prepare_locked(key,background,audio_index,deadline):
             video=next((s for s in info.get('streams',[]) if s.get('codec_type')=='video' and not s.get('disposition',{}).get('attached_pic')),{})
             if video.get('codec_name')=='h264' and video.get('pix_fmt') not in ('yuv420p','yuvj420p'):
                 raise DecodeFailure('Unsupported H264 pixel format')
-            if video.get('codec_name') not in ('h264','mpeg4','vp8','vp9'):
-                raise DecodeFailure('Source requires unsupported video decoding')
+            try:validate_video(video)
+            except ValueError:raise DecodeFailure('Source requires unsupported video decoding') from None
             audio=[t for t in info.get('streams',[]) if t.get('codec_type')=='audio']
             ordered=sorted(audio,key=lambda t:0 if t.get('codec_name')=='aac' and t.get('profile')=='LC' else 1)
             selected_audio=next((t for t in ordered if t['index']==audio_index),None) if audio_index is not None else next((t for lang in ('eng','en','heb','he') for t in ordered if t.get('tags',{}).get('language')==lang),ordered[0] if ordered else None)

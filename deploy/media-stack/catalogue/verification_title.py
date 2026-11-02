@@ -9,7 +9,7 @@ import time
 from urllib.parse import urlencode
 from pathlib import Path
 from reliability import Checkpoint, Reliability, SourceFailure
-from verification_media import validate_result
+from verification_media import validate_result,validate_video
 from verification_jobs import WorkerWait
 
 class EmptyTorrentCandidates(SourceFailure):
@@ -127,7 +127,8 @@ def defer_local_metadata_source(g,key,p,diagnostic):
 
 def audio_selection(info):
     video=next((s for s in info.get('streams',[]) if s.get('codec_type')=='video' and not s.get('disposition',{}).get('attached_pic')),None)
-    if not video or video.get('codec_name') not in ('h264','mpeg4','vp8','vp9') or (video.get('codec_name')=='h264' and video.get('pix_fmt') not in ('yuv420p','yuvj420p')):raise ValueError('Unsupported video')
+    if not video or (video.get('codec_name')=='h264' and video.get('pix_fmt') not in ('yuv420p','yuvj420p')):raise ValueError('Unsupported video')
+    validate_video(video)
     ordered=sorted([s for s in info['streams'] if s.get('codec_type')=='audio'],key=lambda s:0 if s.get('codec_name')=='aac' and s.get('profile')=='LC' else 1)
     audio=next((s for lang in ('eng','en','heb','he') for s in ordered if s.get('tags',{}).get('language')==lang),ordered[0] if ordered else None)
     return video,audio,audio is not None and (audio.get('codec_name')!='aac' or audio.get('profile')!='LC')

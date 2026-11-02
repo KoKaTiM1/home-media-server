@@ -90,7 +90,7 @@ class API:
     def request(self,path,body=None):
         c=self.connection()
         try:
-            data=json.dumps({'protocol':PROTOCOL,'client_version':'0.4.10',**body},allow_nan=False).encode() if body is not None else None
+            data=json.dumps({'protocol':PROTOCOL,'client_version':'0.4.11',**body},allow_nan=False).encode() if body is not None else None
             c.request('POST' if body is not None else 'GET',PREFIX+path,data,{'Authorization':'Bearer '+self.token,'Content-Type':'application/json'})
             response=c.getresponse();raw=response.read(2*1024*1024+1)
             endpoint=getattr(c,'worker_endpoint','unknown')

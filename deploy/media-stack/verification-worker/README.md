@@ -1,6 +1,6 @@
 # Windows V6 verification workers
 
-Candidate launcher package **0.4.10** uses verifier image **0.4.10**. The accepted fleet remains on 0.4.4 until the corrected canary passes. Verifiers
+Launcher package **0.4.11** uses verifier image **0.4.11**. It adds HEVC Main 8-bit SDR verification up to 1080p after the owner TV picture/audio test. Replay/seek acceptance remains tracked separately; HDR, Main10, 4K and AV1 are excluded. Verifiers
 run with Docker `--init` to reap orphaned decoder children after cancellations.
 Start/Update automatically drains and recreates containers with a mismatched
 image or missing init while preserving identities, config, data and backend state.
