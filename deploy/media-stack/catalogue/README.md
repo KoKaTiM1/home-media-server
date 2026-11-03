@@ -714,10 +714,14 @@ priorities apply within that group; the prior discovery ordering resumes
 when no eligible pre-V6 entry is available. Active claims, holds and metadata
 cooldowns still apply. Passed, failed and deferred attempts are not reset.
 
-Foreground playback retains the audio track covered by accepted exact-source
-proof when no audio override is requested. It does not silently switch a saved
-Russian (or other language) track to English and trigger a fresh audit. Explicit
-audio switches and background audits retain their normal verification rules.
+Foreground playback prefers English audio when the exact source contains it.
+If English is absent, the available accepted track remains the fallback; an
+explicit viewer selection overrides the default. Selecting a different track
+reuses current exact-source video/speed evidence and checks that track with
+beginning/later decoding and AAC-LC conversion where needed. Track evidence is
+cached briefly against the entire accepted proof and cannot survive source
+invalidation. It does not replace the canonical audit proof or playback row.
+Background audits continue to perform the full V6 checks.
 
 Posters show a purple **RU** label at the bottom right when the Russian
 alternative is currently available through the same V6 proof and Hebrew

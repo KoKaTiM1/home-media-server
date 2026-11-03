@@ -207,6 +207,12 @@ class ReliabilityTests(unittest.TestCase):
             with self.assertRaises(Checkpoint):a.REL.run(command,KEY,'slice ended',selected,'f'*32,time.monotonic()+.1)
 
     def test_sample_proxy_cancellation_closes_only_its_blocked_upstream(self):
+        self.check_proxy_disconnect('raw',True)
+
+    def test_playback_proxy_cancellation_closes_blocked_torrent_reader(self):
+        self.check_proxy_disconnect('play',False)
+
+    def check_proxy_disconnect(self,route,progress):
         import select,socket
         from http.server import BaseHTTPRequestHandler
         entered=threading.Event();closed=threading.Event()
@@ -225,7 +231,7 @@ class ReliabilityTests(unittest.TestCase):
         selected={'hash':'a'*40,'index':1,'filename':'fixture.mkv','length':123}
         try:
             with patch.object(a,'BASE','http://127.0.0.1:'+str(bridge.server_port)),patch.object(a,'upstream',return_value='http://127.0.0.1:'+str(upstream.server_port)+'/wait'),patch.object(a,'torr_headers',return_value={}):
-                url=a.REL.source_url('raw',KEY,selected,'f'*32)
+                url=a.REL.source_url(route,KEY,selected,'f'*32 if progress else None)
                 client=socket.create_connection(('127.0.0.1',bridge.server_port),timeout=2)
                 client.sendall(('GET '+a.U.urlsplit(url).path+'?'+a.U.urlsplit(url).query+' HTTP/1.1\r\nHost: fixture\r\nConnection: close\r\n\r\n').encode())
                 self.assertTrue(entered.wait(1));client.close()

@@ -15,6 +15,8 @@ INFO={'streams':[{'index':0,'codec_type':'video','codec_name':'h264','pix_fmt':'
 class DurablePlaybackTests(unittest.TestCase):
     def setUp(self):
         fixtures.FeatureTests.setUp(self)
+        for name in ('start_foreground_cleanup','retain_torrent_metadata'):
+            isolated=patch.object(a,name,return_value=None);isolated.start();self.addCleanup(isolated.stop)
         secret=patch.object(a,'signature',return_value='fixture')
         secret.start();self.addCleanup(secret.stop)
 
@@ -44,19 +46,73 @@ class DurablePlaybackTests(unittest.TestCase):
         with a.F.db() as c:current=json.loads(c.execute('SELECT proof FROM validation WHERE key=?',(KEY,)).fetchone()[0])
         self.assertEqual(current,proof,'Playback cannot manufacture a new audit pass')
 
-    def test_saved_russian_audio_survives_english_default_preference(self):
-        proof=self.seed()
+    def add_track(self,language='eng',codec='eac3',index=3):
         with a.F.db() as c:
             saved=json.loads(c.execute('SELECT value FROM playback WHERE key=?',(KEY,)).fetchone()[0])
-            info=saved['verification_info']
-            info['streams'][1]['tags']['language']='rus'
-            info['streams'].append({'index':3,'codec_type':'audio','codec_name':'eac3','profile':'Dolby Digital Plus','tags':{'language':'eng'}})
+            saved['verification_info']['streams'][1]['tags']['language']='fra'
+            saved['verification_info']['streams'].append({'index':index,'codec_type':'audio','codec_name':codec,'tags':{'language':language}})
             c.execute('UPDATE playback SET value=? WHERE key=?',(json.dumps(saved),KEY))
-        with patch.object(a,'resolve',return_value=SELECTED),patch.object(a.REL,'verify',side_effect=AssertionError('Unexpected audio switch/reverification')),patch.object(a,'external_subtitles',return_value=[]):
+
+    def test_english_default_checks_audio_without_retesting_torrent_speed(self):
+        proof=self.seed();self.add_track()
+        with a.F.db() as c:before=c.execute('SELECT value FROM playback WHERE key=?',(KEY,)).fetchone()[0]
+        def sample(key,selected,info,index,conversion,position,seconds,deadline):
+            self.assertEqual(index,3);self.assertTrue(conversion)
+            return {'position':position,'seconds':seconds,'video_frames':60,'audio_frames':100}
+        with patch.object(a,'resolve',return_value=SELECTED),patch.object(a.REL,'sample',side_effect=sample) as samples,patch.object(a.REL,'verify',side_effect=AssertionError('full audit on audio switch')),patch.object(a.REL,'speed_verify',side_effect=AssertionError('speed recheck with active readers')),patch.object(a,'external_subtitles',return_value=[]):
+            result=a.prepared(KEY)
+            again=a.prepared(KEY)
+        self.assertEqual(result['DefaultAudioStreamIndex'],3)
+        self.assertEqual(again['DefaultAudioStreamIndex'],3)
+        self.assertEqual(samples.call_count,2,'Track evidence should be reused for repeated Play')
+        self.assertEqual(result['checked_at'],proof['checked_at'])
+        with a.F.db() as c:
+            self.assertEqual(c.execute('SELECT value FROM playback WHERE key=?',(KEY,)).fetchone()[0],before)
+            self.assertEqual(json.loads(c.execute('SELECT proof FROM validation WHERE key=?',(KEY,)).fetchone()[0]),proof)
+        self.assertIsNotNone(a.durable_playback_evidence(KEY))
+
+    def test_no_english_retains_available_accepted_audio(self):
+        self.seed();self.add_track(language='jpn')
+        with patch.object(a,'resolve',return_value=SELECTED),patch.object(a.REL,'verify',side_effect=AssertionError('full audit')),patch.object(a.REL,'sample',side_effect=AssertionError('unneeded track change')),patch.object(a,'external_subtitles',return_value=[]):
             result=a.prepared(KEY)
         self.assertEqual(result['DefaultAudioStreamIndex'],1)
-        self.assertFalse(result['AudioConversionRequired'])
-        self.assertEqual(result['checked_at'],proof['checked_at'])
+
+    def test_explicit_track_overrides_english_and_does_not_exclude_source_on_failure(self):
+        proof=self.seed();self.add_track()
+        with patch.object(a,'resolve',return_value=SELECTED),patch.object(a.REL,'sample',side_effect=a.DecodeFailure('fixture decode rejection')),patch.object(a.REL,'exclude') as exclude:
+            with self.assertRaises(a.Checkpoint) as raised:a.prepared(KEY,audio_index=3)
+        self.assertEqual(raised.exception.code,'playback_audio_check');exclude.assert_not_called()
+        with a.F.db() as c:self.assertEqual(json.loads(c.execute('SELECT proof FROM validation WHERE key=?',(KEY,)).fetchone()[0]),proof)
+        with patch.object(a,'resolve',return_value=SELECTED),patch.object(a.REL,'sample',side_effect=AssertionError('explicit accepted track')),patch.object(a,'external_subtitles',return_value=[]):
+            result=a.prepared(KEY,audio_index=1)
+        self.assertEqual(result['DefaultAudioStreamIndex'],1)
+
+    def test_audio_cache_cannot_survive_source_invalidation(self):
+        self.seed();self.add_track()
+        with patch.object(a,'resolve',return_value=SELECTED),patch.object(a.REL,'sample',return_value={'position':0,'video_frames':60,'audio_frames':100}),patch.object(a,'external_subtitles',return_value=[]):a.prepared(KEY,audio_index=3)
+        a.REL.exclude(KEY,SELECTED)
+        self.assertIsNone(a.durable_playback_evidence(KEY))
+        with patch.object(a,'resolve',side_effect=a.Checkpoint('must resolve fresh')):
+            with self.assertRaises(a.Checkpoint):a.prepared(KEY,audio_index=3)
+
+    def test_real_selected_english_audio_decodes_without_speed_reaudit(self):
+        from test_reliability import ReliabilityTests
+        selected,info=ReliabilityTests.fixture(self,audio='ac3',multiple=True)
+        info['streams'][1]['tags']={'language':'fra'}
+        info['streams'][2]['tags']={'language':'eng'}
+        proof=a.REL.verify(KEY,selected,info,1,True,time.monotonic()+30)
+        a.finish_preparation(KEY,True,time.monotonic()+20,selected,info,proof,info['streams'][1],True)
+        with a.F.db() as c:
+            c.execute('DELETE FROM cache')
+            before=c.execute('SELECT proof FROM validation WHERE key=?',(KEY,)).fetchone()[0]
+        with patch.object(a.F,'local_download',return_value=selected),patch.object(a,'resolve',return_value=selected),patch.object(a.REL,'speed_verify',side_effect=AssertionError('audio switch must not run speed audit')),patch.object(a,'external_subtitles',return_value=[]):
+            result=a.prepared(KEY)
+        self.assertEqual(result['DefaultAudioStreamIndex'],2)
+        self.assertTrue(result['AudioConversionRequired'])
+        with a.F.db() as c:self.assertEqual(c.execute('SELECT proof FROM validation WHERE key=?',(KEY,)).fetchone()[0],before)
+        audio_checks=[json.loads(r[0]) for r in a.F.db().execute("SELECT value FROM cache WHERE key LIKE 'playback-audio:%'")]
+        self.assertEqual(len(audio_checks),1)
+        self.assertTrue(all(x['audio_frames']>0 and x['video_frames']>0 for x in audio_checks[0]['proof']['samples']))
 
     def test_converted_audio_stays_original_for_native_lc_transcoding(self):
         self.seed(conversion=True)

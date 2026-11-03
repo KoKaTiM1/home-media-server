@@ -30,7 +30,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 from features import Features
 from metadata_jobs import MetadataJobs, MetadataBusy, InvalidSubmission, from_marker as metadata_coordinator
-from reliability import Reliability, Checkpoint, SourceFailure, DecodeFailure, SourceStalled, SourceTooSlow, VERSION, rank, METADATA_SECONDS, WORK_SECONDS
+from reliability import Reliability, Checkpoint, SourceFailure, DecodeFailure, SourceStalled, SourceTooSlow, AUDIO_CODECS, VERSION, rank, METADATA_SECONDS, WORK_SECONDS
 from embedded_subtitles import EmbeddedSubtitles
 from playback_diagnostics import PlaybackDiagnostics
 from russian_audio import RussianAudio
@@ -2204,6 +2204,41 @@ def durable_playback_evidence(key,audio_index=None):
     except (ValueError,KeyError,TypeError,AttributeError,IndexError):return None
 
 
+def playback_proof_anchor(proof):
+    return hashlib.sha256(json.dumps(proof,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+
+
+def cached_audio_anchor_current(key,prepared_key,output):
+    accepted=durable_playback_evidence(key)
+    return bool(accepted and REL.sid(accepted['selected'])==REL.sid(output['selected'])
+                and cached('audio-anchor:'+prepared_key)==playback_proof_anchor(accepted['proof']))
+
+
+def playback_audio_proof(key,verified,audio_index,conversion,deadline):
+    """Check a new track without re-auditing an already accepted source.
+
+    The caller supplies current durable exact-source evidence. This track-only
+    evidence is short-lived and bound to the entire accepted proof; it never
+    replaces the catalogue audit or its canonical playback row.
+    """
+    selected,info,accepted=verified['selected'],verified['info'],verified['proof']
+    anchor=playback_proof_anchor(accepted)
+    cachekey='playback-audio:'+key+':'+REL.sid(selected)+':'+str(audio_index)+':'+str(conversion)
+    saved=cached(cachekey)
+    if saved and saved.get('anchor')==anchor:return saved['proof']
+    track=next((s for s in info['streams'] if s.get('codec_type')=='audio' and s.get('index')==audio_index),None)
+    if track is None:raise ValueError('Audio track not found')
+    if conversion and track.get('codec_name') not in AUDIO_CODECS:
+        raise Checkpoint('Selected audio conversion is unsupported','playback_audio_unsupported')
+    samples=[]
+    for old,seconds in zip(accepted['samples'],(6,2)):
+        samples.append(REL.sample(key,selected,info,audio_index,conversion,old['position'],seconds,deadline))
+    proof={**accepted,'selected_audio_index':audio_index,'audio_conversion':conversion,
+           'samples':samples,'playback_audio_checked_at':time.time()}
+    remember(cachekey,{'anchor':anchor,'proof':proof},300)
+    return proof
+
+
 def prepare_locked(key,background,audio_index,deadline):
     if not background and F.manual_recheck_state(key) in ('pending','failed'):
         raise Checkpoint('Waiting for requested fresh source verification')
@@ -2212,14 +2247,14 @@ def prepare_locked(key,background,audio_index,deadline):
         if LIVE['key'] not in (None,key) and LIVE['active']>0:
             raise PlaybackBusy('Another title is currently streaming; this server supports one stream')
     saved=cached(prepared_key)
-    if not background and saved and saved.get('verification_version') in (5,VERSION) and saved.get('audio_policy')==2 and saved.get('subtitle_policy')==5 and F.source_state(key) in ('verified','downloaded'):
+    if not background and saved and saved.get('verification_version') in (5,VERSION) and saved.get('audio_policy')==2 and saved.get('subtitle_policy')==5 and saved.get('default_audio_policy')==1 and (not saved.get('playback_audio_variant') or cached_audio_anchor_current(key,prepared_key,saved)) and F.source_state(key) in ('verified','downloaded'):
         playback_event(key,'prepared_cache',time.monotonic(),'hit')
         return saved
     verified=cached('verified-'+prepared_key) if not background else None
     if verified and (verified.get('proof',{}).get('version') not in (5,VERSION) or F.source_state(key) not in ('verified','downloaded')
                      or REL.excluded(key,verified['selected']) or bool(F.local_download(key))!=bool(verified['selected'].get('local'))):verified=None
     if not verified:
-        verified=durable_playback_evidence(key,audio_index)
+        verified=durable_playback_evidence(key,None if not background else audio_index)
         if verified and background and verified['selected'].get('local'):verified=None
         if verified:playback_event(key,'durable_evidence',time.monotonic(),'hit')
     for attempt in range(3):
@@ -2248,16 +2283,29 @@ def prepare_locked(key,background,audio_index,deadline):
             audio=[t for t in info.get('streams',[]) if t.get('codec_type')=='audio']
             ordered=sorted(audio,key=lambda t:0 if t.get('codec_name')=='aac' and t.get('profile')=='LC' else 1)
             selected_audio=next((t for t in ordered if t['index']==audio_index),None) if audio_index is not None else next((t for lang in ('eng','en','heb','he') for t in ordered if t.get('tags',{}).get('language')==lang),ordered[0] if ordered else None)
-            # Foreground playback retains the exact audio track covered by
-            # accepted source evidence unless the viewer explicitly switches.
-            if verified and not background and audio_index is None:
+            # Prefer English when available; otherwise retain the available
+            # accepted track instead of changing languages unnecessarily.
+            if verified and not background and audio_index is None and not any(t.get('tags',{}).get('language') in ('eng','en') for t in audio):
                 accepted_audio=verified['proof'].get('selected_audio_index')
                 selected_audio=next((t for t in audio if t['index']==accepted_audio),selected_audio)
             if audio_index is not None and selected_audio is None:raise ValueError('Audio track not found')
             needs_conversion=selected_audio is not None and (selected_audio.get('codec_name')!='aac' or selected_audio.get('profile')!='LC')
             if needs_conversion and float(info.get('format',{}).get('duration') or 0)<=0:raise SourceFailure('Converted VOD requires known duration')
-            if verified and verified.get('transport_check') and (verified['proof'].get('selected_audio_index')!=(selected_audio['index'] if selected_audio else None) or verified['proof'].get('audio_conversion')!=needs_conversion):verified=None
-            proof=verified['proof'] if verified and not background else REL.verify(key,selected,info,selected_audio['index'] if selected_audio else None,needs_conversion,deadline)
+            track_index=selected_audio['index'] if selected_audio else None
+            changed_audio=bool(verified and not background and (verified['proof'].get('selected_audio_index')!=track_index or verified['proof'].get('audio_conversion')!=needs_conversion))
+            if changed_audio:
+                # Revalidate the durable anchor even when a response-cache
+                # entry supplied the source. A stale/manual-rechecked/excluded
+                # source cannot gain track evidence through a cached response.
+                anchor=durable_playback_evidence(key)
+                if not anchor or REL.sid(anchor['selected'])!=REL.sid(selected):
+                    raise Checkpoint('Accepted source changed during audio selection','playback_audio_source_changed')
+                try:proof=playback_audio_proof(key,anchor,track_index,needs_conversion,deadline)
+                except SourceFailure:
+                    raise Checkpoint('Selected audio could not be checked; accepted source retained','playback_audio_check') from None
+                verified={**anchor,'audio_variant':True}
+            else:
+                proof=verified['proof'] if verified and not background else REL.verify(key,selected,info,track_index,needs_conversion,deadline)
             break
         except (ClientCancelled,PlaybackBusy,Checkpoint,TimeoutError,subprocess.TimeoutExpired,sqlite3.OperationalError):raise
         except Exception as error:
@@ -2356,25 +2404,29 @@ def finish_preparation(key,background,deadline,selected,info,proof,selected_audi
         'RunTimeTicks':int(float(info.get('format',{}).get('duration',0))*10000000),
         'Bitrate':int(info.get('format',{}).get('bit_rate',5000000)),
         'languages':sorted(languages),'checked_at':proof.get('checked_at',time.time()),'audio_policy':2,'subtitle_policy':5,
+        'default_audio_policy':1,'playback_audio_variant':bool(verified and verified.get('audio_variant')),
         'verification_version':proof.get('version',VERSION),'PlaybackUrl':REL.source_url('play',key,selected),
         'DefaultAudioStreamIndex':selected_audio['index'] if selected_audio else None,'AudioConversionRequired':needs_conversion}
     if not background:
         try:output['RussianAlternatives']=RUSSIAN.options(key,proof,selected)
         except (OSError,ValueError,TypeError,sqlite3.Error):output['RussianAlternatives']=[]
     if getattr(BUDGET,'speculative',False):remaining(1)
-    with db() as conn:
-        conn.execute('INSERT OR REPLACE INTO playback VALUES (?,?,?)',(key,json.dumps({**output,'verification_info':info}),time.time()))
+    audio_variant=bool(verified and verified.get('audio_variant'))
+    if not audio_variant:
+        with db() as conn:
+            conn.execute('INSERT OR REPLACE INTO playback VALUES (?,?,?)',(key,json.dumps({**output,'verification_info':info}),time.time()))
     accepted=True if verified and not background else F.validation_result(key,True,proof=proof)
     if accepted is not False:
         REL.success(key,selected)
         # Windows-local results enqueue naturally through the verified playback
         # row; only persist immediately when this server already has metadata.
         retain_torrent_metadata(selected)
-        remember('verified-'+prepared_key,{'selected':selected,'info':info,'proof':proof},max(1,300-(time.time()-proof.get('checked_at',time.time()))))
+        if not audio_variant:remember('verified-'+prepared_key,{'selected':selected,'info':info,'proof':proof},max(1,300-(time.time()-proof.get('checked_at',time.time()))))
         if not background:
             try:EMBED.enqueue(key,selected,output['RunTimeTicks']/10000000)
             except (OSError,ValueError,sqlite3.Error):log('Embedded subtitle scheduling deferred')
-    return output if background else remember(prepared_key,output,max(1,300-(time.time()-output['checked_at'])))
+    if audio_variant:remember('audio-anchor:'+prepared_key,playback_proof_anchor(verified['proof']),300)
+    return output if background else remember(prepared_key,output,300 if audio_variant else max(1,300-(time.time()-output['checked_at'])))
 
 
 def collection_items(**filters):
@@ -2671,7 +2723,7 @@ class Handler(BaseHTTPRequestHandler):
             if self.headers.get('Range'): headers['Range']=self.headers['Range']
             upstream_request=R.Request(upstream(selected),headers=headers,method=self.command)
             with playback_phase(key,'upstream_open'):
-                upstream_response=(REL.open_sample(self,upstream_request,max(.001,data_deadline-time.monotonic())) if progress else R.urlopen(upstream_request,timeout=max(.001,data_deadline-time.monotonic())))
+                upstream_response=REL.open_sample(self,upstream_request,max(.001,data_deadline-time.monotonic()))
             with upstream_response as response:
                 byte_start=0
                 match=re.match(r'bytes (\d+)-',response.headers.get('Content-Range',''))

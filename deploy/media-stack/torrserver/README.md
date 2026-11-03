@@ -1,4 +1,4 @@
-# TorrServer saved-torrent index fix
+# TorrServer saved-torrent index and stream cancellation fixes
 
 This build applies a small patch to the exact MatriX.147.1 source release
 (commit d84f41968780744d4b8643f7a73b22a84d2c3779), retaining the official runtime
@@ -12,7 +12,7 @@ hash key only. Full list operations remain available for the normal UI.
 
 Build with `docker compose build torrserver` from the deployment directory.
 The pinned Dockerfile downloads the upstream source, applies the patch, runs
-focused tests, and builds MatriX.147.1-home-dbindex2. Binary artifacts and private
+focused tests, and builds MatriX.147.1-home-dbindex3. Binary artifacts and private
 database copies are not committed. Upstream code is GPLv3; see LICENSE.
 
 Validation: record lookup/save and 32 concurrent reader/writer tests; isolated
@@ -40,3 +40,15 @@ Additional validation: 512 concurrent reader inspections against a copied
 correctly after two successive drops, while reader inspections remain 404
 when it is dormant. Five bridge cleanup regressions cover dormant records,
 active readers, unreachable backends, idle drops and newly protected playback.
+
+The dbindex3 stream fix passes the HTTP cancellation context into each
+underlying torrent read. Previously, a disconnected client could leave
+ServeContent blocked on unavailable pieces indefinitely, keeping the reader
+and swarm alive; idle cleanup correctly declined to drop those readers.
+Cancellation affects only that request. The pinned torrent library does not
+unblock Read merely because Close is called; ReadContext is required. Normal
+deferred cleanup removes the cache reader after the cancelled read returns;
+saved torrent metadata remains.
+The bridge also cancels blocked upstream reads when a playback client leaves.
+Tests cover HTTP disconnect, normal completion, concurrent cancellation and
+independence from other readers. Physical playback remains a separate check.
