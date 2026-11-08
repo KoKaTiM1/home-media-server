@@ -9,7 +9,9 @@ It provides three read-only tabs:
   source attribution (or None when no lookup is active or neither yields an
   accepted candidate) and the
   latest categorized PC issue.
-  The V6 speed-audit card shows its passed, failed and pending counts. The V6 first-sweep row
+  The one-time V5-to-V6 speed-audit card shows passed, failed and pending counts
+  only while checks remain pending; it disappears automatically when that audit
+  finishes. Its historical records and normal failed-source retries are retained. The V6 first-sweep row
   reports one-attempt coverage of the starting queue, with passes, conclusive
   failures and deferred checkpoints counted separately.
 - **Workers and schedules**: server and optional Windows jobs, health, running/waiting/disabled
@@ -27,17 +29,17 @@ verifier reports PC heartbeat, active operation, title passes, unavailable
 outcomes and checkpoints. A successful probe or sample operation alone does not
 count as a fully verified title. Both tables display all current rows without
 silently cutting off the verification status at the old page limit.
-Completed initial-audit rows are omitted from the detailed counters; current
-queue and final pass counts remain visible.
+Completed migration-audit cards and detailed rows are omitted; current queue,
+V6 first-sweep coverage and final pass counts remain visible.
 
 The optional **Media verification** widget uses OMV's supported dashboard grid
 to show the same overview as compact cards on the OMV home page. Enable it in
 the dashboard's widget selection if it does not appear automatically. The
 overview reads the existing background counter snapshot and a small live job
-record; opening OMV does not recount the large catalogue. The Windows 0.2.1
-worker reports fixed decoder phases every 10 seconds. Error reasons are fixed
-categories, not raw logs. A second Windows lane is optional and remains gated
-off until the server and both worker containers pass a bounded physical pilot.
+record; opening OMV does not recount the large catalogue. Current Windows
+workers report fixed decoder phases and categorized reasons rather than raw
+logs. Worker/backend counts are configurable; assignments remain governed by
+source ownership, viewing and resource safeguards.
 
 Worker rows refresh every 10 seconds. A separate worker prepares counters two
 minutes after boot and then one minute after each completed snapshot. The page

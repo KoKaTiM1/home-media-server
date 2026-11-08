@@ -186,6 +186,20 @@ class MonitorTests(unittest.TestCase):
             self.assertEqual(values['Waiting for catalogue metadata'],'3')
             self.assertEqual(values['Initial V6 first sweep'],'10 / 100')
 
+    def test_speed_audit_visibility_with_older_snapshot_without_pending_count(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);data=root/'catalogue';data.mkdir();snapshot=root/'snapshot.json'
+            for done,present in [(7,True),(10,False)]:
+                with self.subTest(done=done):
+                    snapshot.write_text(json.dumps({'time':time.time(),'summary':{
+                        'total':100,'v6':25,'v6_audit_done':done,'v6_audit_total':10,
+                        'first_sweep_total':100,'first_sweep_attempted':25}}))
+                    values={row['name']:row for row in m.overview(data,snapshot)}
+                    self.assertEqual('V6 speed audit' in values,present)
+                    self.assertIn('Initial V6 first sweep',values)
+                    self.assertIn('V6 verified sources',values)
+                    if present:self.assertIn('3 awaiting',values['V6 speed audit']['detail'])
+
     def test_overview_uses_v6_counts_and_hides_legacy_audit_status(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);data=root/'catalogue';data.mkdir()
@@ -199,7 +213,7 @@ class MonitorTests(unittest.TestCase):
             self.assertNotIn('Initial v5 audit',values)
             self.assertNotIn('V5',str(rows))
             self.assertEqual(values['V6 verified sources'],'25')
-            self.assertEqual(values['V6 speed audit'],'10 / 10')
+            self.assertNotIn('V6 speed audit',values)
             self.assertEqual(values['Verified movies'],'15')
             self.assertEqual(values['Verified shows'],'7')
 

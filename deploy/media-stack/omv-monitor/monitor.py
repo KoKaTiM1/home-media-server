@@ -325,8 +325,8 @@ def overview(data=DATA,snapshot=None):
         add('Not yet V6 verified',f'{max(0,total-verified):,}',f"Includes {values.get('pending',0):,} awaiting a check, retries and sources without a current V6 proof")
         add('Unavailable / retry',f"{values.get('unavailable',0):,}",'Failed outcomes are retained and retried on schedule','error' if values.get('unavailable') else 'muted')
         v6_total=values.get('v6_audit_total',0);v6_done=values.get('v6_audit_done',0)
-        if v6_total:
-            detail=(f"{values.get('v6_audit_pending',0):,} awaiting; "
+        if v6_total and values.get('v6_audit_pending',max(0,v6_total-v6_done))>0:
+            detail=(f"{values.get('v6_audit_pending',max(0,v6_total-v6_done)):,} awaiting; "
                     f"{values.get('v6_audit_passed',0):,} passed; {values.get('v6_audit_failed',0):,} failed")
             add('V6 speed audit',f'{v6_done:,} / {v6_total:,}',detail)
         if values.get('first_sweep_total') is not None:
