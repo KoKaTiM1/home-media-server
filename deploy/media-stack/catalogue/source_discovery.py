@@ -81,20 +81,23 @@ def search_parameters(caps, key, meta):
     return query
 
 
-def torznab_streams(raw, key):
+def torznab_streams(raw, key, stats=None):
     root = xml_root(raw)
     if root.tag != 'rss' or root.find('channel') is None:
         raise ValueError('Invalid indexer listing')
     rows = []
-    for item in root.findall('./channel/item')[:100]:
+    items=root.findall('./channel/item')
+    if stats is not None:stats.update(raw_rows=len(items),identity_rejected=0)
+    for item in items[:100]:
         attrs = {x.get('name', '').lower(): x.get('value', '') for x in item
                  if x.tag.rsplit('}', 1)[-1] == 'attr'}
         title = item.findtext('title') or ''
         imdb = attrs.get('imdbid') or attrs.get('imdb', '')
         digits=imdb.removeprefix('tt')
         bound=bool(re.fullmatch(r'[0-9]{1,12}',digits) and int(digits)>0)
-        if key.startswith('movie:') and not bound:continue
-        if bound and int(digits)!=int(key.split(':')[1][2:]):continue
+        if (key.startswith('movie:') and not bound) or (bound and int(digits)!=int(key.split(':')[1][2:])):
+            if stats is not None:stats['identity_rejected']+=1
+            continue
         link = attrs.get('magneturl') or item.findtext('link') or ''
         infohash = attrs.get('infohash', '')
         if not infohash and link.startswith('magnet:?'):

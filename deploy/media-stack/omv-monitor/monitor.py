@@ -160,6 +160,7 @@ def provider_health_rows(data,now):
             if wait:detail+='; next recovery attempt in '+span(wait)
             if 'requests' in state:detail+='; completed lookup attempts since counter initialization: '+str(state['requests'])
             if observation:detail+='; latest listing: '+str(observation.get('provider_rows',0))+' candidates, '+str(observation.get('compatible',0))+' compatible'
+            if provider=='jackett' and state.get('identity_rejected'):detail+='; '+str(state['identity_rejected'])+' identity mismatches rejected'
             if 'raw_rows' in observation and provider=='mediafusion':detail+='; '+str(observation['raw_rows'])+' raw provider rows'
             rows.append({'name':label+' discovery','value':value,'detail':detail})
     except (sqlite3.Error,OSError,ValueError,TypeError):pass
@@ -519,6 +520,8 @@ def overview(data=DATA,snapshot=None):
                 r={scope:(events,titles) for scope,events,titles in recent}
                 add('First sweep completed in last hour',r.get('first_sweep',(0,0))[1],'Distinct previously untouched keys that completed a first attempt; receipts since diagnostic rollout; includes passes, source failures and deferred sources')
                 add('Preparation waits in last hour',r.get('preparation',(0,0))[0],'Scheduling/provider/metadata waits; these do not complete the first sweep')
+                recovery=c.execute("SELECT count(*),count(distinct key) FROM receipts WHERE scope='preparation' AND code='provider_recovery' AND finished>=?",(now-3600,)).fetchone()
+                add('Provider recovery waits in last hour',str(recovery[1])+' titles / '+str(recovery[0])+' events','Source feeds awaiting recovery or cached-empty expiry; these are queued prerequisites, not failed media checks')
                 add('Worker operations in last hour',r.get('worker_job',(0,0))[0],'Operations are separate from whole-title first attempts')
                 for bucket,count in c.execute("SELECT bucket,count FROM buckets WHERE count>0 AND bucket NOT LIKE '%/ok/%' AND bucket NOT LIKE '%/passed/%' AND bucket NOT LIKE '%/operation_ok/%' ORDER BY count DESC LIMIT 5"):
                     add('Latest title outcome: '+bucket.replace('/',' · '),f'{count:,}','Distinct titles per scope with this latest result; decreases when a later result replaces it')

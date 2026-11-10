@@ -1469,6 +1469,73 @@ def mediafusion_streams(key,priority=0):
             raise failure from None
 
 
+def source_provider_config():
+    marker=DATA/'source-providers.json'
+    return json.loads(marker.read_text()) if marker.exists() else {}
+
+
+def source_config_signature():
+    cfg=source_provider_config()
+    selected={k:cfg.get(k) for k in ('mediafusion_enabled','mediafusion_url','jackett_enabled','jackett_url','jackett_indexers')}
+    return hashlib.sha256(json.dumps(selected,sort_keys=True).encode()).hexdigest()[:20]
+
+
+def jackett_cache_key(key,cfg=None):
+    cfg=source_provider_config() if cfg is None else cfg
+    indexers=cfg.get('jackett_indexers',{}).get(key.split(':')[0],[])
+    if len(indexers)<=1:return 'jackett:v2:'+key
+    signature=hashlib.sha256(json.dumps(indexers).encode()).hexdigest()[:16]
+    return 'jackett:v3:'+signature+':'+key
+
+
+def cached_expiry(key):
+    with db() as conn:row=conn.execute('SELECT expires FROM cache WHERE key=? AND expires>?',(key,time.time())).fetchone()
+    return row[0] if row else 0
+
+
+def source_recovery_wait(key,error=None):
+    now=time.time();cfg=source_provider_config();deadlines=[];providers=[]
+    primary=cached('source-provider-control') or {}
+    retry=getattr(error,'retry_after',None)
+    if not isinstance(retry,(int,float)) or retry<=0:
+        retry=900 if getattr(error,'code',None)==429 else 60
+    deadlines.append(max(now+1,primary.get('cooldown',0),cached_expiry('torrentio-empty:'+key))
+                     if primary.get('cooldown',0)>now or cached('torrentio-empty:'+key) else now+retry)
+    providers.append('torrentio')
+    if cfg.get('mediafusion_enabled'):
+        control=cached('mediafusion-provider-control') or {}
+        expiry=cached_expiry('mediafusion:'+key) if cached('mediafusion:'+key)==[] else 0
+        deadlines.append(max(now+1,control.get('cooldown',0),expiry) if control.get('cooldown',0)>now or expiry else now+60)
+        providers.append('mediafusion')
+    if cfg.get('jackett_enabled') and cfg.get('jackett_indexers',{}).get(key.split(':')[0]):
+        expiry=cached_expiry(jackett_cache_key(key,cfg)) if cached(jackett_cache_key(key,cfg))==[] else 0
+        if not expiry:
+            controls=[cached('jackett-'+i+'-control') or {} for i in cfg['jackett_indexers'][key.split(':')[0]]]
+            expiry=min(max(now+30,c.get('cooldown',0)) for c in controls)
+        deadlines.append(expiry);providers.append('jackett')
+    retry_at=max(now+1,min(deadlines))
+    remember('source-recovery:'+key,{'retry_at':retry_at,'signature':source_config_signature(),
+             'primary_cooldown':primary.get('cooldown',0),'providers':providers},retry_at-now)
+    wait=SourceProviderWait('Source providers awaiting recovery','mixed','recovery',retry_at-now)
+    wait.providers=providers
+    return wait
+
+
+def retained_source_recovery(key):
+    state=cached('source-recovery:'+key)
+    if not state or state.get('signature')!=source_config_signature():return None
+    current=cached('source-provider-control') or {}
+    if state.get('primary_cooldown',0)>0 and current.get('cooldown',0)<state['primary_cooldown']-1:return None
+    # A successful concurrent lookup or newly enabled indexer must not be
+    # blocked by an older negative/recovery record.
+    if cached('mediafusion:'+key) or cached(jackett_cache_key(key)):return None
+    retry=state.get('retry_at',0)-time.time()
+    if retry<=0:return None
+    wait=SourceProviderWait('Source providers awaiting recovery','mixed','recovery',retry)
+    wait.providers=state.get('providers',[])
+    return wait
+
+
 def jackett_streams(key,priority=0):
     marker=DATA/'source-providers.json'
     cfg=json.loads(marker.read_text()) if marker.exists() else {}
@@ -1477,13 +1544,14 @@ def jackett_streams(key,priority=0):
     # The only supported deployment is the private Compose service, not a
     # caller-supplied URL or a link returned by an indexer.
     if base!='http://jackett:9117':raise Checkpoint('Invalid local indexer configuration')
-    saved=cached('jackett:v2:'+key)
-    if saved is not None:return saved
     kind,imdb,*episode=key.split(':')
     indexers=cfg.get('jackett_indexers',{}).get(kind,[])
     if not isinstance(indexers,list) or len(indexers)>3 or any(not re.fullmatch('[a-z0-9-]{1,40}',i) for i in indexers):
         raise Checkpoint('Invalid local indexer list')
     if not indexers:return None
+    listing_key=jackett_cache_key(key,cfg)
+    saved=cached(listing_key)
+    if saved is not None:return saved
     try:token=(DATA/'jackett-api-key').read_text().strip()
     except OSError:raise Checkpoint('Local indexer credential unavailable') from None
     if not re.fullmatch('[a-zA-Z0-9]{32,128}',token):raise Checkpoint('Invalid local indexer credential')
@@ -1512,13 +1580,24 @@ def jackett_streams(key,priority=0):
                     query=search_parameters(caps.encode('utf-8') if isinstance(caps,str) else caps,key,meta)
                     query['apikey']=token
                     raw=fetch(endpoint+'?'+U.urlencode(query),raw=True,timeout=15)
-                    rows=torznab_streams(raw,key)
+                    raw_stats={}
+                    rows=torznab_streams(raw,key,raw_stats)
                     provider_succeeded(control,15)
                     clean,stats=filter_streams_with_diagnostics({'streams':rows})
-                    source_provider_event('jackett','compatible' if clean else 'empty',provider_rows=len(rows),stats=stats)
-                    state=cached(control) or {};state.update(raw_rows=len(rows),compatible=len(clean))
+                    if kind=='series':
+                        names=[meta.get(n,'') for n in ('name','original_title','originalName')]
+                        with F.db() as conn:
+                            alias=conn.execute('SELECT english FROM aliases WHERE imdb=?',(imdb,)).fetchone()
+                            local=conn.execute("SELECT name,original FROM home_titles WHERE imdb=? AND kind='series'",(imdb,)).fetchone()
+                        if alias:names.append(alias[0])
+                        if local:names.extend(local)
+                        matched=[r for r in clean if series_title_matches(r.get('behaviorHints',{}).get('filename',''),key,names,str(meta.get('year') or meta.get('releaseInfo') or '')[:4])]
+                        raw_stats['identity_rejected']+=len(clean)-len(matched);clean=matched;stats['compatible']=len(clean)
+                    source_provider_event('jackett','compatible' if clean else 'empty',provider_rows=len(rows),stats=stats,raw_stats=raw_stats)
+                    state=cached(control) or {};state.update(raw_rows=raw_stats['raw_rows'],provider_rows=len(rows),compatible=len(clean),identity_rejected=raw_stats['identity_rejected'])
                     remember(control,state,90000)
                     combined.extend(clean)
+                    if clean:break
                 except (urllib.error.URLError,TimeoutError,ValueError,ET.ParseError) as error:
                     provider_failed(control,error,15)
                     raise
@@ -1527,9 +1606,9 @@ def jackett_streams(key,priority=0):
             failure=error
     if not combined and failure:
         if isinstance(failure,SourceProviderWait):raise failure
-        raise Checkpoint('Local indexer awaiting recovery') from None
+        raise source_recovery_wait(key,failure) from None
     combined=filter_streams_with_diagnostics({'streams':combined})[0]
-    return remember('jackett:v2:'+key,combined[:20],1800 if combined else 900)
+    return remember(listing_key,combined[:20],1800 if combined else 900)
 
 
 def fallback_candidates(key,priority=0):
@@ -1549,7 +1628,9 @@ def fallback_candidates(key,priority=0):
     if local:return local
     # An unavailable provider is not a genuine empty listing, even when
     # another provider searched successfully but had no candidates.
-    if failure:raise failure
+    if failure:
+        if isinstance(failure,SourceProviderWait):raise failure
+        raise source_recovery_wait(key,failure) from None
     return [] if fallback is not None or local is not None else None
 
 
@@ -1626,7 +1707,7 @@ def source_provider_error_category(error):
     saved=getattr(error,'provider_failure_category',None)
     if isinstance(saved,str) and re.fullmatch(r'(?:network|timeout|invalid_response|http_[1-5][0-9]{2})',saved):return saved
     if isinstance(error,SourceProviderWait):
-        return 'wait_'+(error.reason if error.reason in ('busy','queue_timeout','cooldown','pacing','capacity') else 'other')
+        return 'wait_'+(error.reason if error.reason in ('busy','queue_timeout','cooldown','pacing','capacity','recovery') else 'other')
     if isinstance(error,urllib.error.HTTPError):
         try:code=int(error.code)
         except (TypeError,ValueError):code=0
@@ -1647,7 +1728,7 @@ def source_provider_event(provider,outcome,cache='miss',provider_rows=None,stats
                      'unsupported_container','duplicate_infohash','compatible'):
             event[name]=int(stats.get(name,0))
     if raw_stats is not None:
-        for name in ('raw_rows','malformed_rows','torrentio_origin_rows','named_origin_rows','missing_or_unknown_origin_rows'):
+        for name in ('raw_rows','malformed_rows','torrentio_origin_rows','named_origin_rows','missing_or_unknown_origin_rows','identity_rejected'):
             event['raw_'+name if name!='raw_rows' else name]=max(0,int(raw_stats.get(name,0)))
     if error is not None:event['error']=source_provider_error_category(error)
     if primary_cache is not None:event['primary_cache']=primary_cache
@@ -1696,6 +1777,9 @@ def stream_candidates(key):
     if saved and key.startswith('movie:'):
         clean=[r for r in saved if r.get('_provider')!='jackett' or r.get('_source_imdb')==key.split(':')[1]]
         if len(clean)!=len(saved):saved=clean or None
+    if not saved:
+        recovery=retained_source_recovery(key)
+        if recovery:raise recovery
     if saved==[]:
         choices=fallback_candidates(key)
         if choices:
@@ -1731,6 +1815,7 @@ def stream_candidates(key):
             # paced Torrentio lookup before rejoining the fallback queue.
             # A completed fallback result replaces this with its normal TTL.
             remember('streams:'+key,[],300)
+            remember('torrentio-empty:'+key,True,300)
     except (SourceProviderWait,urllib.error.URLError,TimeoutError,ValueError) as error:
         primary_error=error;response={'streams':[]};candidates=[]
         source_provider_event('torrentio','error','miss',error=error)
@@ -1744,7 +1829,7 @@ def stream_candidates(key):
     if not candidates:
         fallback=fallback_candidates(key)
         if fallback is not None:candidates=fallback
-        if not candidates and primary_error:raise Checkpoint('Source providers awaiting recovery') from None
+        if not candidates and primary_error:raise source_recovery_wait(key,primary_error) from None
     candidates.sort(key=rank,reverse=True)
     if key=='movie:tt1254207' and not cached('open-film-failed'): candidates.insert(0,open_film)
     if not getattr(BUDGET,'speculative',False):

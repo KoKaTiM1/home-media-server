@@ -67,7 +67,7 @@ def classify_error(error):
     if not isinstance(code,str) or code not in DIAGNOSTIC_CODES:code=fallback
     if name=='SourceProviderWait':
         reason=getattr(error,'reason',None)
-        if reason in ('busy','capacity','queue_timeout','cooldown','pacing'):code='provider_'+reason
+        if reason in ('busy','capacity','queue_timeout','cooldown','pacing','recovery'):code='provider_'+reason
     if name=='HTTPError' and type(getattr(error,'code',None)) is int and 100<=error.code<=599:code='upstream_http_'+str(error.code)
     if name=='OperationalError' and getattr(error,'sqlite_errorcode',0)&255 in (5,6):code='sqlite_busy'
     return {'category':category,'code':code,'failure_type':name if name in known else 'unknown'}

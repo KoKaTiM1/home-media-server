@@ -1811,11 +1811,13 @@ class Features:
                         # same oldest candidate is eligible again.
                         if reason=='capacity':retry_after=getattr(error,'retry_after',None) or 30
                         elif reason=='queue_timeout':retry_after=900
-                        elif reason=='cooldown':retry_after=getattr(error,'retry_after',None) or 300
+                        elif reason in ('cooldown','recovery'):retry_after=getattr(error,'retry_after',None) or 300
                         else:retry_after=30
                         with self.db() as conn:
                             conn.execute('INSERT OR REPLACE INTO metadata_waits VALUES (?,?)',(key,time.time()+retry_after))
-                        message=('Source provider queue at capacity; title retained for retry'
+                        message=('Source providers awaiting recovery; retry scheduled in '+str(max(1,int(retry_after)))+' seconds'
+                                 if reason=='recovery' else
+                                 'Source provider queue at capacity; title retained for retry'
                                  if reason=='capacity' else
                                  'Source provider request queue timed out; title retained for retry'
                                  if reason=='queue_timeout' else
