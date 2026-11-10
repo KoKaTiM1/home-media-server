@@ -91,7 +91,10 @@ def torznab_streams(raw, key):
                  if x.tag.rsplit('}', 1)[-1] == 'attr'}
         title = item.findtext('title') or ''
         imdb = attrs.get('imdbid') or attrs.get('imdb', '')
-        if imdb and imdb.removeprefix('tt') != key.split(':')[1].removeprefix('tt'):continue
+        digits=imdb.removeprefix('tt')
+        bound=bool(re.fullmatch(r'[0-9]{1,12}',digits) and int(digits)>0)
+        if key.startswith('movie:') and not bound:continue
+        if bound and int(digits)!=int(key.split(':')[1][2:]):continue
         link = attrs.get('magneturl') or item.findtext('link') or ''
         infohash = attrs.get('infohash', '')
         if not infohash and link.startswith('magnet:?'):
@@ -104,5 +107,23 @@ def torznab_streams(raw, key):
         seeds = attrs.get('seeders', '0')
         seeds = seeds if seeds.isdigit() else '0'
         rows.append({'infoHash': infohash.lower(), 'title': title + '\nseeders: ' + seeds,
-                     'behaviorHints': {'filename': title}, '_provider': 'jackett'})
+                     'behaviorHints': {'filename': title}, '_provider': 'jackett',
+                     **({'_source_imdb':key.split(':')[1]} if bound else {})})
     return rows
+
+
+def series_title_matches(title, key, names, year=''):
+    """Text indexers lack an IMDb binding: reject spin-offs and wrong episodes."""
+    _, _, season, episode = key.split(':')
+    # An explicit release-group prefix is not part of the series title.
+    title = re.sub(r'^(?:\[[^\]]{1,80}\][ ._-]*)+', '', title.rsplit('/',1)[-1])
+    normalize = lambda value: re.sub(r'[^\w]+', ' ', str(value).casefold()).strip()
+    title = normalize(title)
+    episode_pattern = rf'(?:s0*{int(season)} *e0*{int(episode)}|0*{int(season)}x0*{int(episode)})(?!\d)'
+    for name in names:
+        name = normalize(name)
+        if not name:continue
+        match = re.match(r'^'+re.escape(name)+r' *(?:(\d{4}) *)?'+episode_pattern, title)
+        if match and (not match[1] or not str(year).isdigit() or match[1] == str(year)):
+            return True
+    return False

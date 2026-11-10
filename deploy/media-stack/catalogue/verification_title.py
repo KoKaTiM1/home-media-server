@@ -80,6 +80,7 @@ def payload(g,key):
             # Existing 0.4.11 clients accept the other wire label. The trusted
             # server payload retains the discovery origin for evidence import.
             x['_discovery_provider']='jackett';x['provider']='other'
+            x['_source_imdb']=c.get('_source_imdb') or (imdb if c.get('_exact') else None)
         if x['provider'] not in ('torrentio','mediafusion','other'):x['provider']='none'
         providers.add(x['provider'])
         if c.get('fileIdx') is not None:x['fileIdx']=int(c['fileIdx'])

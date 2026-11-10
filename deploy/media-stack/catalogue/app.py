@@ -28,7 +28,7 @@ import urllib.request as R
 import uuid
 import xml.etree.ElementTree as ET
 import zipfile
-from source_discovery import failure_state, success_state, search_parameters, torznab_streams
+from source_discovery import failure_state, success_state, search_parameters, torznab_streams, series_title_matches
 from features import Features
 from metadata_jobs import MetadataJobs, MetadataBusy, InvalidSubmission, from_marker as metadata_coordinator
 from reliability import Reliability, Checkpoint, SourceFailure, DecodeFailure, SourceStalled, SourceTooSlow, AUDIO_CODECS, VERSION, rank, METADATA_SECONDS, WORK_SECONDS
@@ -1477,7 +1477,7 @@ def jackett_streams(key,priority=0):
     # The only supported deployment is the private Compose service, not a
     # caller-supplied URL or a link returned by an indexer.
     if base!='http://jackett:9117':raise Checkpoint('Invalid local indexer configuration')
-    saved=cached('jackett:'+key)
+    saved=cached('jackett:v2:'+key)
     if saved is not None:return saved
     kind,imdb,*episode=key.split(':')
     indexers=cfg.get('jackett_indexers',{}).get(kind,[])
@@ -1529,7 +1529,7 @@ def jackett_streams(key,priority=0):
         if isinstance(failure,SourceProviderWait):raise failure
         raise Checkpoint('Local indexer awaiting recovery') from None
     combined=filter_streams_with_diagnostics({'streams':combined})[0]
-    return remember('jackett:'+key,combined[:20],1800 if combined else 900)
+    return remember('jackett:v2:'+key,combined[:20],1800 if combined else 900)
 
 
 def fallback_candidates(key,priority=0):
@@ -1693,6 +1693,9 @@ def stream_candidates(key):
         'title':'Big Buck Bunny — publisher web-seeded release',
         'behaviorHints':{'filename':'Big Buck Bunny.mp4'},'_score':999999,'_provider':'other'}
     saved=cached('streams:'+key)
+    if saved and key.startswith('movie:'):
+        clean=[r for r in saved if r.get('_provider')!='jackett' or r.get('_source_imdb')==key.split(':')[1]]
+        if len(clean)!=len(saved):saved=clean or None
     if saved==[]:
         choices=fallback_candidates(key)
         if choices:
@@ -1775,8 +1778,22 @@ def candidate_matches(candidate,key):
     title=filename or candidate.get('title','').split('\n')[0]
     if key=='movie:tt1254207' and candidate.get('infoHash')=='dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c':return True
     if re.search(r'\b(sample|trailer|preview)\b',title,re.I):return False
+    independent=(candidate.get('_provider')=='jackett' or candidate.get('_discovery_provider')=='jackett')
+    if key.startswith('movie:') and independent and candidate.get('_source_imdb')!=key.split(':')[1]:return False
     if key.startswith('series:'):
-        _,_,season,episode=key.split(':')
+        _,imdb,season,episode=key.split(':')
+        if candidate.get('_provider')=='jackett' or candidate.get('_discovery_provider')=='jackett':
+            meta=F.local_index_metadata('series',imdb) or cached('meta:series:'+imdb) or {}
+            if not meta:
+                with db() as conn:row=conn.execute('SELECT meta FROM items WHERE key=?',('series:'+imdb,)).fetchone()
+                if row:meta=json.loads(row[0])
+            names=[meta.get(n,'') for n in ('name','original_title','originalName')]
+            with F.db() as conn:
+                alias=conn.execute('SELECT english FROM aliases WHERE imdb=?',(imdb,)).fetchone()
+                local=conn.execute("SELECT name,original FROM home_titles WHERE imdb=? AND kind='series'",(imdb,)).fetchone()
+            if alias:names.append(alias[0])
+            if local:names.extend(local)
+            return series_title_matches(title,key,names,str(meta.get('year') or meta.get('releaseInfo') or '')[:4])
         return bool(re.search(rf'(?:S0*{int(season)}[ ._-]*E0*{int(episode)}(?!\d)|(?<!\d)0*{int(season)}x0*{int(episode)}(?!\d))',title,re.I)) or candidate.get('fileIdx') is not None
     with db() as conn:row=conn.execute('SELECT meta FROM items WHERE key=?',(key,)).fetchone()
     if not row:
