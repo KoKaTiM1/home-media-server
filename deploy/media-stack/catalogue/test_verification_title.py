@@ -31,6 +31,18 @@ class TitleTests(unittest.TestCase):
         self.payload={'schema':1,'key':KEY,'meta':self.meta,'candidates':[{'infoHash':HASH,'title':'Fixture 2026 1080p','behaviorHints':{'filename':'Fixture.2026.mp4'}}], 'aliases':[],'prior':{'state':'pending'}}
         self.q=DecodeJobs(self.root/'queue.sqlite');self.q.initialize();self.q.set('enabled',True);self.q.set('local_torrent_enabled',True);self.q.set('local_torrent_permitted',True);self.q.set('max_windows_jobs',4)
         self.q.claim('pc-new',['local-torrent-v1']);self.q.backend_health('pc-new',True)
+    def test_jackett_payload_preserves_legacy_client_labels_and_trusted_origin(self):
+        candidate={'infoHash':HASH,'title':'Fixture 2026 1080p','behaviorHints':{'filename':'Fixture.2026.mp4'},'_provider':'jackett'}
+        with patch.object(a,'metadata',return_value=self.meta),patch.object(a,'verification_candidates',return_value=[candidate]):
+            result=payload(a.__dict__,KEY)
+        self.assertEqual(result['provider'],'other')
+        self.assertEqual(result['candidates'][0]['provider'],'other')
+        self.assertEqual(result['_discovery_provider'],'jackett')
+        self.assertEqual(result['candidates'][0]['_discovery_provider'],'jackett')
+        validate_task(result)
+        result['candidates'][0]['provider']='jackett'
+        with self.assertRaises(ValueError):validate_task(result)
+
     def test_first_sweep_payload_carries_bounded_execution_policy(self):
         candidate={'infoHash':HASH,'title':'Fixture 2026','behaviorHints':{'filename':'Fixture.2026.mp4'}}
         with patch.object(a.BUDGET,'first_sweep_attempt',True,create=True),patch.object(a,'metadata',return_value=self.meta),patch.object(a,'verification_candidates',return_value=[candidate]):

@@ -11,6 +11,14 @@ spec.loader.exec_module(exporter)
 
 
 class PrivacyTests(unittest.TestCase):
+    def test_indexer_credential_is_rejected_without_disclosing_value(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);secret=root/'private';secret.write_text('synthetic-indexer-credential-123456')
+            public=root/'public';public.mkdir();(public/'README.md').write_text(secret.read_text())
+            with patch.object(exporter,'PROVIDER_CREDENTIAL_FILES',(secret,)),patch.object(exporter,'private_replacements',return_value={}):
+                with self.assertRaises(RuntimeError) as caught:exporter.verify(public)
+            self.assertNotIn(secret.read_text(),str(caught.exception))
+
     def test_missing_private_profile_cannot_create_a_public_export(self):
         with tempfile.TemporaryDirectory() as directory,patch.object(exporter,'private_replacements',return_value={}):
             destination=Path(directory)/'public'

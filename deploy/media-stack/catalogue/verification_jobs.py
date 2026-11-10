@@ -105,7 +105,7 @@ class DecodeJobs:
         if phase not in ('source preparation','torrent_resolution','waiting for source metadata','video_probe','preparation',
                          'waiting for decoder','waiting for speed check','speed verification','probe','sample','title validation','finished','windows local torrent','server fallback'):
             raise InvalidJob('Invalid producer phase')
-        if provider not in ('torrentio','mediafusion','mixed','other','none'):raise InvalidJob('Invalid source provider')
+        if provider not in ('torrentio','mediafusion','jackett','mixed','other','none'):raise InvalidJob('Invalid source provider')
         self.set('producer:'+str(slot),{'key':key,'phase':phase,'provider':provider,'updated':time.time()})
     def setting_read(self,key,default=None):
         with self.db() as c:return self.setting(c,key,default)

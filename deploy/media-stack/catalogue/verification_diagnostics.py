@@ -37,8 +37,8 @@ class DiagnosticLedger:
 def final_event(row,version,phases,accepted=None):
     """Project trusted queue fields; never copy arbitrary payload/error text."""
     params=json.loads(row['params'] or '{}');result=json.loads(row['result'] or '{}')
-    provider=params.get('provider','none')
-    if provider not in ('torrentio','mediafusion','mixed','other','none'):provider='none'
+    provider=params.get('_discovery_provider',params.get('provider','none'))
+    if provider not in ('torrentio','mediafusion','jackett','mixed','other','none'):provider='none'
     diagnostic=result.get('diagnostic',{})
     source_hash=diagnostic.get('source_hash') if isinstance(diagnostic,dict) else None
     candidates=params.get('candidates',[])

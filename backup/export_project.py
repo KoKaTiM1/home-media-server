@@ -16,6 +16,7 @@ import xml.etree.ElementTree as ET
 
 STACK = Path('/opt/media-stack')
 STORAGE = Path('/srv/dev-disk-by-uuid-<MEDIA_FILESYSTEM_UUID>')
+PROVIDER_CREDENTIAL_FILES = (Path('/srv/dev-disk-by-uuid-<APPDATA_FILESYSTEM_UUID>/appdata/catalogue/jackett-api-key'),)
 SKIP = {'.git', '__pycache__', 'obj', 'bin', 'build', '.claude', '.github'}
 METADATA_WORKER_FILES = (
     '.gitignore', '.dockerignore', 'Dockerfile', 'README.md', 'START-HERE.txt',
@@ -83,6 +84,10 @@ def secret_values():
                 elif isinstance(value, str) and len(value) >= 12:
                     values.add(value.encode())
             collect(obj)
+    for credential in PROVIDER_CREDENTIAL_FILES:
+        if credential.is_file():
+            value=credential.read_bytes().strip()
+            if len(value)>=12:values.add(value)
     # Include credentials managed outside the stack's dedicated secret files.
     configuration=STORAGE/'appdata/jellyfin/config/config'
     if configuration.is_dir():

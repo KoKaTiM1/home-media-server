@@ -3,6 +3,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg fonts-de
 RUN pip install --no-cache-dir Pillow==12.2.0
 WORKDIR /app
 COPY app.py /app/app.py
+COPY source_discovery.py /app/source_discovery.py
 COPY features.py /app/features.py
 COPY reliability.py /app/reliability.py
 COPY metadata_jobs.py /app/metadata_jobs.py

@@ -28,6 +28,7 @@ import urllib.request as R
 import uuid
 import xml.etree.ElementTree as ET
 import zipfile
+from source_discovery import failure_state, success_state, search_parameters, torznab_streams
 from features import Features
 from metadata_jobs import MetadataJobs, MetadataBusy, InvalidSubmission, from_marker as metadata_coordinator
 from reliability import Reliability, Checkpoint, SourceFailure, DecodeFailure, SourceStalled, SourceTooSlow, AUDIO_CODECS, VERSION, rank, METADATA_SECONDS, WORK_SECONDS
@@ -306,7 +307,7 @@ def provider_capacity_retry_after(queue_slots,spacing_seconds=15,jitter_seconds=
 
 
 @contextmanager
-def serialized_provider_slot(lock_path,control_key,priority=0,queue_slots=None,queue_spacing_seconds=15):
+def serialized_provider_slot(lock_path,control_key,priority=0,queue_slots=None,queue_spacing_seconds=15,wait_seconds=None):
     # All source providers serialize across processes. Foreground calls fail
     # fast; background callers take a filesystem ticket so the 16 producer
     # lanes cannot repeatedly race one another for the next provider slot.
@@ -318,10 +319,13 @@ def serialized_provider_slot(lock_path,control_key,priority=0,queue_slots=None,q
         # and paced (15s fallback/5s primary). A speed-rejected source gets a
         # priority ticket so its alternative lookup is not trapped behind
         # ordinary empty-result lookups; FIFO is retained within each class.
-        deadline+=BACKGROUND_PROVIDER_SLOT_WAIT
+        deadline+=min(BACKGROUND_PROVIDER_SLOT_WAIT,wait_seconds) if wait_seconds is not None else BACKGROUND_PROVIDER_SLOT_WAIT
         for name in ('worker_deadline','deadline'):
             limit=getattr(BUDGET,name,None)
             if limit is not None:deadline=min(deadline,limit)
+    state=cached(control_key) or {}
+    cooldown=state.get('cooldown',0)-time.time()
+    if cooldown>0:raise SourceProviderWait('Source provider cooldown active',control_key,'cooldown',cooldown)
     ticket=None;ticket_fd=None;queue_dir=None
     if background:
         queue_dir=Path(str(lock_path)+'.waiters')
@@ -442,7 +446,7 @@ def serialized_provider_slot(lock_path,control_key,priority=0,queue_slots=None,q
                 now=time.time()
                 if state.get('cooldown',0)>now:
                     lock.close()
-                    raise SourceProviderWait('Source provider cooldown active',control_key,'cooldown')
+                    raise SourceProviderWait('Source provider cooldown active',control_key,'cooldown',max(1,state['cooldown']-now))
                 spacing=state.get('next',0)-now
                 if spacing>0:
                     lock.close()
@@ -487,23 +491,26 @@ def serialized_provider_slot(lock_path,control_key,priority=0,queue_slots=None,q
                     finally:os.close(ticket_fd)
 
 
+def provider_failed(control_key, error, spacing):
+    status=error.code if isinstance(error,urllib.error.HTTPError) else 0
+    headers=getattr(error,'headers',None)
+    jitter=int.from_bytes(os.urandom(2),'big')%31
+    state=failure_state(cached(control_key),status,headers,spacing,time.time(),jitter)
+    remember(control_key,state,max(90000,state['cooldown']-time.time()+60))
+
+
+def provider_succeeded(control_key,spacing):
+    remember(control_key,success_state(cached(control_key),spacing,time.time()),90000)
+
+
 @contextmanager
 def source_provider_slot():
     with serialized_provider_slot(DATA/'source-provider.lock','source-provider-control'):
-        try:
-            yield
-        except urllib.error.HTTPError as error:
-            if error.code==429 or error.code>=500:
-                seconds=900 if error.code==429 else 300
-                try:seconds=max(seconds,min(86400,int(error.headers.get('Retry-After','0'))))
-                except (ValueError,TypeError,AttributeError):pass
-                remember('source-provider-control',{'next':time.time()+5,'cooldown':time.time()+seconds,'status':error.code},max(90000,seconds+60))
-                log('Source provider cooldown HTTP '+str(error.code))
+        try:yield
+        except (urllib.error.URLError,TimeoutError,ValueError) as error:
+            provider_failed('source-provider-control',error,5)
             raise
-        finally:
-            state=cached('source-provider-control') or {}
-            state['next']=time.time()+5
-            remember('source-provider-control',state,90000)
+        else:provider_succeeded('source-provider-control',5)
 
 
 def fetch(url, data=None, headers=None, timeout=20, raw=False, method=None):
@@ -1432,11 +1439,12 @@ def mediafusion_streams(key,priority=0):
     slots=cfg.get('mediafusion_queue_slots')
     if slots is not None and (type(slots) is not int or not 1<=slots<=32):raise Checkpoint('Invalid fallback queue capacity')
     with serialized_provider_slot(DATA/'mediafusion-provider.lock','mediafusion-provider-control',priority=priority,
-                                  queue_slots=slots,queue_spacing_seconds=15):
+                                  queue_slots=slots,queue_spacing_seconds=15,
+                                  wait_seconds=30 if cfg.get('jackett_enabled') else None):
         kind,imdb,*parts=key.split(':');ident=imdb+(':'+':'.join(parts) if parts else '')
         try:
             result=fetch(base+'/stream/'+kind+'/'+ident+'.json',timeout=15)
-            if not isinstance(result,dict) or not isinstance(result.get('streams'),list):raise Checkpoint('Invalid fallback source response')
+            if not isinstance(result,dict) or not isinstance(result.get('streams'),list):raise ValueError('Invalid fallback source response')
             raw_stats=mediafusion_origin_counts(result['streams'])
             remember('mediafusion-raw-counts:'+key,raw_stats,1800)
             rows=[]
@@ -1447,22 +1455,102 @@ def mediafusion_streams(key,priority=0):
                 if not origin or 'torrentio' in origin[1].casefold():continue
                 filename=str((row.get('behaviorHints') or {}).get('filename') or '')
                 rows.append({**row,'title':filename+'\n'+description,'_provider':'mediafusion'})
-            remember('mediafusion-provider-control',{'next':time.time()+15,'status':200},90000)
+            provider_succeeded('mediafusion-provider-control',15)
             return remember('mediafusion:'+key,rows,1800 if rows else 900)
         except urllib.error.HTTPError as error:
-            seconds=900 if error.code==429 else 300
-            try:seconds=max(seconds,min(86400,int(error.headers.get('Retry-After','0'))))
-            except (ValueError,TypeError,AttributeError):pass
-            remember('mediafusion-provider-control',{'next':time.time()+15,'cooldown':time.time()+seconds,'status':error.code},90000)
-            log('Fallback provider cooldown HTTP '+str(error.code))
+            provider_failed('mediafusion-provider-control',error,15)
             failure=Checkpoint('Fallback source provider unavailable')
             failure.provider_failure_category=source_provider_error_category(error)
             raise failure from None
         except (urllib.error.URLError,TimeoutError,ValueError) as error:
-            remember('mediafusion-provider-control',{'next':time.time()+15,'cooldown':time.time()+60},90000)
+            provider_failed('mediafusion-provider-control',error,15)
             failure=Checkpoint('Fallback source provider unavailable')
             failure.provider_failure_category=source_provider_error_category(error)
             raise failure from None
+
+
+def jackett_streams(key,priority=0):
+    marker=DATA/'source-providers.json'
+    cfg=json.loads(marker.read_text()) if marker.exists() else {}
+    if not cfg.get('jackett_enabled'):return None
+    base=cfg.get('jackett_url','').rstrip('/')
+    # The only supported deployment is the private Compose service, not a
+    # caller-supplied URL or a link returned by an indexer.
+    if base!='http://jackett:9117':raise Checkpoint('Invalid local indexer configuration')
+    saved=cached('jackett:'+key)
+    if saved is not None:return saved
+    kind,imdb,*episode=key.split(':')
+    indexers=cfg.get('jackett_indexers',{}).get(kind,[])
+    if not isinstance(indexers,list) or len(indexers)>3 or any(not re.fullmatch('[a-z0-9-]{1,40}',i) for i in indexers):
+        raise Checkpoint('Invalid local indexer list')
+    if not indexers:return None
+    try:token=(DATA/'jackett-api-key').read_text().strip()
+    except OSError:raise Checkpoint('Local indexer credential unavailable') from None
+    if not re.fullmatch('[a-zA-Z0-9]{32,128}',token):raise Checkpoint('Invalid local indexer credential')
+    # Use only existing local metadata; discovery must not start another
+    # metadata-provider lookup inside the indexer budget.
+    meta=F.local_index_metadata(kind,imdb) or cached('meta:'+kind+':'+imdb) or {}
+    if not meta:
+        with db() as conn:row=conn.execute('SELECT meta FROM items WHERE key=?',(kind+':'+imdb,)).fetchone()
+        if row:
+            try:meta=json.loads(row[0])
+            except (ValueError,TypeError):pass
+    combined=[];failure=None
+    for indexer in indexers:
+        control='jackett-'+indexer+'-control'
+        try:
+            with serialized_provider_slot(DATA/('jackett-'+indexer+'.lock'),control,priority=priority,
+                                          queue_slots=2,queue_spacing_seconds=15):
+                try:
+                    endpoint=base+'/api/v2.0/indexers/'+indexer+'/results/torznab/api'
+                    caps=cached('jackett-caps:'+indexer)
+                    if caps is None:
+                        raw=fetch(endpoint+'?'+U.urlencode({'apikey':token,'t':'caps'}),raw=True,timeout=10)
+                        # Parse before caching, including provider-level XML errors.
+                        search_parameters(raw,key,meta)
+                        caps=remember('jackett-caps:'+indexer,raw.decode('utf-8'),86400)
+                    query=search_parameters(caps.encode('utf-8') if isinstance(caps,str) else caps,key,meta)
+                    query['apikey']=token
+                    raw=fetch(endpoint+'?'+U.urlencode(query),raw=True,timeout=15)
+                    rows=torznab_streams(raw,key)
+                    provider_succeeded(control,15)
+                    clean,stats=filter_streams_with_diagnostics({'streams':rows})
+                    source_provider_event('jackett','compatible' if clean else 'empty',provider_rows=len(rows),stats=stats)
+                    state=cached(control) or {};state.update(raw_rows=len(rows),compatible=len(clean))
+                    remember(control,state,90000)
+                    combined.extend(clean)
+                except (urllib.error.URLError,TimeoutError,ValueError,ET.ParseError) as error:
+                    provider_failed(control,error,15)
+                    raise
+        except (Checkpoint,urllib.error.URLError,TimeoutError,ValueError,ET.ParseError) as error:
+            source_provider_event('jackett','error',error=error)
+            failure=error
+    if not combined and failure:
+        if isinstance(failure,SourceProviderWait):raise failure
+        raise Checkpoint('Local indexer awaiting recovery') from None
+    combined=filter_streams_with_diagnostics({'streams':combined})[0]
+    return remember('jackett:'+key,combined[:20],1800 if combined else 900)
+
+
+def fallback_candidates(key,priority=0):
+    failure=None;fallback=None
+    cache='hit' if cached('mediafusion:'+key) is not None else 'miss'
+    try:
+        fallback=mediafusion_streams(key,priority=priority)
+        if fallback is not None:
+            choices,stats=filter_streams_with_diagnostics({'streams':fallback})
+            source_provider_event('mediafusion','compatible' if choices else 'empty',cache,len(fallback),stats,
+                                  raw_stats=cached('mediafusion-raw-counts:'+key))
+            if choices:return choices
+    except (Checkpoint,urllib.error.URLError,TimeoutError,ValueError) as error:
+        source_provider_event('mediafusion','error',cache,error=error)
+        failure=error
+    local=jackett_streams(key,priority=priority)
+    if local:return local
+    # An unavailable provider is not a genuine empty listing, even when
+    # another provider searched successfully but had no candidates.
+    if failure:raise failure
+    return [] if fallback is not None or local is not None else None
 
 
 def mediafusion_origin_counts(streams):
@@ -1545,7 +1633,7 @@ def source_provider_error_category(error):
         return 'http_'+str(code) if 100<=code<=599 else 'http_other'
     if isinstance(error,(TimeoutError,socket.timeout)):return 'timeout'
     if isinstance(error,urllib.error.URLError):return 'network'
-    if isinstance(error,ValueError):return 'invalid_response'
+    if isinstance(error,(ValueError,ET.ParseError)):return 'invalid_response'
     if isinstance(error,Checkpoint):return 'checkpoint'
     return 'other'
 
@@ -1563,7 +1651,10 @@ def source_provider_event(provider,outcome,cache='miss',provider_rows=None,stats
             event['raw_'+name if name!='raw_rows' else name]=max(0,int(raw_stats.get(name,0)))
     if error is not None:event['error']=source_provider_error_category(error)
     if primary_cache is not None:event['primary_cache']=primary_cache
-    try:log('Source discovery '+json.dumps(event,sort_keys=True,separators=(',',':')))
+    try:
+        if cache=='miss' and outcome in ('compatible','empty') and provider in ('torrentio','mediafusion','jackett'):
+            remember('provider-observation:'+provider,{'updated':time.time(),**event},90000)
+        log('Source discovery '+json.dumps(event,sort_keys=True,separators=(',',':')))
     except Exception:pass # Diagnostics must never change source selection.
 
 
@@ -1582,22 +1673,10 @@ def add_mediafusion_after_slow_primary(key,saved):
     """Merge paced fallback candidates after a proven slow primary source."""
     marker='mediafusion-needed:'+key
     if not getattr(BUDGET,'validation_background',False) or not cached(marker):return saved
-    fallback_cache='hit' if cached('mediafusion:'+key) is not None else 'miss'
-    try:fallback=mediafusion_streams(key,priority=1)
-    except (Checkpoint,urllib.error.URLError,TimeoutError,ValueError) as error:
-        source_provider_event('mediafusion','error',fallback_cache,error=error,primary_cache='speed_rejected')
-        raise
-    if fallback is None:
-        source_provider_event('mediafusion','disabled',fallback_cache,primary_cache='speed_rejected')
-        remember(marker,False,0)
-        return saved
-    candidates,stats=filter_streams_with_diagnostics({'streams':fallback})
-    source_provider_event('mediafusion','compatible' if candidates else 'empty',fallback_cache,len(fallback),stats,
-                          primary_cache='speed_rejected',raw_stats=cached('mediafusion-raw-counts:'+key))
-    seen={str(row.get('infoHash','')).lower() for row in saved if isinstance(row,dict)}
-    combined=list(saved)
-    for candidate in candidates:
-        candidate['_provider']='mediafusion'
+    choices=fallback_candidates(key,priority=1)
+    if choices is None:return saved
+    combined=list(saved);seen={candidate.get('infoHash','').lower() for candidate in combined}
+    for candidate in choices:
         infohash=candidate['infoHash'].lower()
         if infohash not in seen:
             seen.add(infohash);combined.append(candidate)
@@ -1615,21 +1694,11 @@ def stream_candidates(key):
         'behaviorHints':{'filename':'Big Buck Bunny.mp4'},'_score':999999,'_provider':'other'}
     saved=cached('streams:'+key)
     if saved==[]:
-        fallback_cache='hit' if cached('mediafusion:'+key) is not None else 'miss'
-        try:fallback=mediafusion_streams(key)
-        except (Checkpoint,urllib.error.URLError,TimeoutError,ValueError) as error:
-            source_provider_event('mediafusion','error',fallback_cache,error=error,primary_cache='negative')
-            raise
-        if fallback is not None:
-            choices,stats=filter_streams_with_diagnostics({'streams':fallback})
-            source_provider_event('mediafusion','compatible' if choices else 'empty',fallback_cache,len(fallback),stats,
-                                  primary_cache='negative',raw_stats=cached('mediafusion-raw-counts:'+key))
-            if choices:
-                saved=remember('streams:'+key,choices[:20],1800)
-                if not getattr(BUDGET,'speculative',False):
-                    remember('source-status:'+key,{'state':'listed','checked_at':time.time()},21600)
-        else:
-            source_provider_event('mediafusion','disabled',fallback_cache,primary_cache='negative')
+        choices=fallback_candidates(key)
+        if choices:
+            saved=remember('streams:'+key,choices[:20],1800)
+            if not getattr(BUDGET,'speculative',False):
+                remember('source-status:'+key,{'state':'listed','checked_at':time.time()},21600)
     if saved is not None:
         # Rows cached before provider attribution were only produced by the
         # primary Torrentio path; preserve explicit MediaFusion labels.
@@ -1638,7 +1707,7 @@ def stream_candidates(key):
         saved=add_mediafusion_after_slow_primary(key,saved)
         if saved:
             providers=sorted({row.get('_provider','torrentio') for row in saved if isinstance(row,dict)})
-            providers=[p if p in ('torrentio','mediafusion','other') else 'other' for p in providers]
+            providers=[p if p in ('torrentio','mediafusion','jackett','other') else 'other' for p in providers]
             source_provider_event('+'.join(sorted(set(providers))) or 'unknown','compatible','hit',len(saved))
         if not getattr(BUDGET,'speculative',False) and not cached('source-status:'+key):
             remember('source-status:'+key,{'state':'listed' if saved else 'unavailable','checked_at':time.time()},21600)
@@ -1670,17 +1739,8 @@ def stream_candidates(key):
     if candidates and getattr(BUDGET,'validation_background',False) and cached('mediafusion-needed:'+key):
         candidates=add_mediafusion_after_slow_primary(key,candidates)
     if not candidates:
-        fallback_cache='hit' if cached('mediafusion:'+key) is not None else 'miss'
-        try:fallback=mediafusion_streams(key)
-        except (Checkpoint,urllib.error.URLError,TimeoutError,ValueError) as error:
-            source_provider_event('mediafusion','error',fallback_cache,error=error)
-            raise
-        if fallback is not None:
-            candidates,fallback_stats=filter_streams_with_diagnostics({'streams':fallback})
-            source_provider_event('mediafusion','compatible' if candidates else 'empty',fallback_cache,len(fallback),fallback_stats,
-                                  raw_stats=cached('mediafusion-raw-counts:'+key))
-        else:
-            source_provider_event('mediafusion','disabled',fallback_cache)
+        fallback=fallback_candidates(key)
+        if fallback is not None:candidates=fallback
         if not candidates and primary_error:raise Checkpoint('Source providers awaiting recovery') from None
     candidates.sort(key=rank,reverse=True)
     if key=='movie:tt1254207' and not cached('open-film-failed'): candidates.insert(0,open_film)
@@ -1766,7 +1826,7 @@ def resolve(key,deadline=None):
     for candidate in verification_candidates(key):
         remaining(1)
         source_provider=candidate.get('_provider','torrentio')
-        if source_provider not in ('torrentio','mediafusion','other'):source_provider='none'
+        if source_provider not in ('torrentio','mediafusion','jackett','other'):source_provider='none'
         BUDGET.remote_provider=source_provider
         if background and getattr(BUDGET,'remote_verification',False):
             from verification_remote import producer_phase

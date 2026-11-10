@@ -170,3 +170,5 @@ and restore instructions for the private configuration and systemd units.
 Worker package 0.4.11 adds HEVC Main 8-bit SDR up to 1080p to the shared server/Windows V6 recipes. The owner TV test confirmed picture and sound; seeking/replay remains tracked separately. HDR, Main10, 4K and AV1 remain excluded. Package availability alone does not establish physical fleet rollout. The 0.4.6/0.4.7 canaries exposed a copied-file permission fault; 0.4.10 normalizes runtime source permissions and adds an image-user import gate.
 
 Worker 0.4.10 additionally bounds first-sweep execution to four minutes, independently of source discovery and queue waiting, and tracks exact-request progress for a 45-second probe/decode stall watchdog. Deployment acceptance is measured across the eight-worker fleet with retained rollback containers; the package version alone is not proof of a completed rollout.
+
+Torrent discovery supports an optional private Jackett fallback after Torrentio and MediaFusion. Discovery candidates still require full V6 acceptance; provider health and retry status are visible in OMV. See the catalogue guide for configuration and limitations.

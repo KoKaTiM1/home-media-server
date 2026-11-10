@@ -76,6 +76,10 @@ def payload(g,key):
         x={'infoHash':h,'title':str(c.get('title',''))[:2000],
            'behaviorHints':{'filename':str(c.get('behaviorHints',{}).get('filename',''))[:2000]},
            'provider':c.get('_provider','torrentio')}
+        if x['provider']=='jackett':
+            # Existing 0.4.11 clients accept the other wire label. The trusted
+            # server payload retains the discovery origin for evidence import.
+            x['_discovery_provider']='jackett';x['provider']='other'
         if x['provider'] not in ('torrentio','mediafusion','other'):x['provider']='none'
         providers.add(x['provider'])
         if c.get('fileIdx') is not None:x['fileIdx']=int(c['fileIdx'])
@@ -103,6 +107,8 @@ def payload(g,key):
     provider=next(iter(providers)) if len(providers)==1 else 'mixed' if providers else 'none'
     p={'schema':1,'key':key,'meta':meta,'aliases':names,'candidates':candidates,'provider':provider,
        'prior':{'state':r[0] if r else 'pending','proof':json.loads(r[1]) if r and r[1] else None,'reason':r[2] if r else '', 'requested':m[0] if m else 0}}
+    origins={c.get('_discovery_provider',c.get('provider','none')) for c in candidates}
+    p['_discovery_provider']=next(iter(origins)) if len(origins)==1 else 'mixed'
     if first_sweep:p['execution_policy']={'profile':'first_sweep','active_seconds':240}
     validate_task(p);return p
 
@@ -188,7 +194,7 @@ def validate_evidence(g,key,p,result,started):
         if w['offset']!=min(selected['length']-size,max(0,int(selected['length']*fraction))) or w['uncached_bytes_lower_bound']!=size-cached or not math.isclose(w['bytes_per_second'],(size-cached)/seconds,rel_tol=1e-6):raise ValueError('Speed attribution mismatch')
     selected={k:selected[k] for k in ('hash','index','filename','length')}
     selected.update(link=candidate.get('torrentUrl') or magnet(selected['hash']),torrent_url=candidate.get('torrentUrl'),source_name=candidate.get('title',''))
-    selected['source_provider']=candidate.get('provider','none')
+    selected['source_provider']=candidate.get('_discovery_provider',candidate.get('provider','none'))
     proof={**proof,'verification_worker':'windows','source_backend':'windows-torrent','speed':{**speed,'measurement_worker':'windows'}}
     return selected,info,proof,audio,conversion
 
@@ -230,7 +236,7 @@ def _execute_title(g,key,cancel,execution_seconds):
     source_deadline=now+source_budget if getattr(g['BUDGET'],'first_sweep_attempt',False) else min(now+source_budget,deadline-execution_reserve)
     if source_deadline<=time.monotonic():raise Checkpoint('Local source discovery budget exhausted')
     with g['validation_attempt'](True),g['request_budget'](source_deadline,cancel):p=payload(g,key)
-    producer_phase(g,key,'source preparation',p.get('provider','none'))
+    producer_phase(g,key,'source preparation',p.get('_discovery_provider',p.get('provider','none')))
     started=time.time()
     fallback=False;job=None;consumed=False;failure_category="transport";failure_code="unclassified";cancel_code="controller_error"
     # Queue waiting has its own bounded window. Active execution remains capped

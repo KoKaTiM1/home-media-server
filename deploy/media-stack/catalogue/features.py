@@ -366,7 +366,7 @@ class Features:
                 from verification_diagnostics import classify_error
                 detail=diagnostic or classify_error(None)
                 budget=self.g.get('BUDGET');provider=getattr(budget,'remote_provider','none')
-                if provider not in ('torrentio','mediafusion','mixed','other','none'):provider='none'
+                if provider not in ('torrentio','mediafusion','jackett','mixed','other','none'):provider='none'
                 finished=time.time();event={'scope':'first_sweep' if cur.rowcount else 'preparation','key':key,'finished':finished,'outcome':outcome if cur.rowcount else 'waiting','provider':provider,'phase':getattr(budget,'remote_phase','source preparation'),'execution_seconds':round(max(0,finished-(attempt_started or finished)),3),**detail}
                 conn.execute('INSERT INTO verification_attempt_outbox VALUES (?,?)',(uuid.uuid4().hex,json.dumps(event,sort_keys=True)))
             if cur.rowcount:
@@ -1811,7 +1811,7 @@ class Features:
                         # same oldest candidate is eligible again.
                         if reason=='capacity':retry_after=getattr(error,'retry_after',None) or 30
                         elif reason=='queue_timeout':retry_after=900
-                        elif reason=='cooldown':retry_after=300
+                        elif reason=='cooldown':retry_after=getattr(error,'retry_after',None) or 300
                         else:retry_after=30
                         with self.db() as conn:
                             conn.execute('INSERT OR REPLACE INTO metadata_waits VALUES (?,?)',(key,time.time()+retry_after))

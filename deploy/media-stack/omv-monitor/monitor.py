@@ -142,6 +142,30 @@ def failure_reason_label(reason):
            'Saved copy removed; online source needs verification':'Saved copy removed'}
     return known.get(reason,'Other recorded reason')
 
+def provider_health_rows(data,now):
+    rows=[]
+    try:
+        with closing(sqlite3.connect('file:'+str(data/'catalogue.sqlite')+'?mode=ro',uri=True,timeout=1)) as conn:
+            states={k:json.loads(v) for k,v in conn.execute("SELECT key,value FROM cache WHERE (key IN ('source-provider-control','mediafusion-provider-control','provider-observation:torrentio','provider-observation:mediafusion','provider-observation:jackett') OR key GLOB 'jackett-*-control') AND expires>?",(now,))}
+        pairs=[('Torrentio','source-provider-control','torrentio'),('MediaFusion','mediafusion-provider-control','mediafusion')]
+        pairs += [('Jackett '+k[8:-8],k,'jackett') for k in sorted(states) if k.startswith('jackett-') and k.endswith('-control')]
+        for label,key,provider in pairs:
+            state=states.get(key,{})
+            observation=({'provider_rows':state['raw_rows'],'compatible':state.get('compatible',0)}
+                         if provider=='jackett' and 'raw_rows' in state else states.get('provider-observation:'+provider,{}))
+            wait=max(0,int(state.get('cooldown',0)-now))
+            value='Cooldown' if wait else 'Ready' if state.get('status')==200 else 'Awaiting response'
+            status=state.get('status');detail='Last HTTP '+str(status) if status else 'No successful HTTP response recorded'
+            if state.get('updated'):detail+='; response '+span(max(0,now-state['updated']))+' ago'
+            if wait:detail+='; next recovery attempt in '+span(wait)
+            if 'requests' in state:detail+='; completed lookup attempts since counter initialization: '+str(state['requests'])
+            if observation:detail+='; latest listing: '+str(observation.get('provider_rows',0))+' candidates, '+str(observation.get('compatible',0))+' compatible'
+            if 'raw_rows' in observation and provider=='mediafusion':detail+='; '+str(observation['raw_rows'])+' raw provider rows'
+            rows.append({'name':label+' discovery','value':value,'detail':detail})
+    except (sqlite3.Error,OSError,ValueError,TypeError):pass
+    return rows
+
+
 def counts(data=DATA,refresh=False):
     if foreground_busy(data):
         try:return json.loads(Path('/run/media-worker-counts.json').read_text())['rows']
@@ -156,6 +180,7 @@ def counts(data=DATA,refresh=False):
         return [{'id':'initializing','name':'Counter snapshot','value':'Initializing','detail':'Background counter job is preparing the first snapshot','updated':'Waiting for first snapshot'}]
     rows=[];summary={}
     def add(name,value,detail=''):rows.append({'id':str(len(rows)),'name':name,'value':f'{value:,}' if isinstance(value,int) else str(value),'detail':detail,'updated':stamp(now)})
+    for provider_row in provider_health_rows(data,now):add(provider_row['name'],provider_row['value'],provider_row['detail'])
     with closing(sqlite3.connect('file:'+str(data/'catalogue.sqlite')+'?mode=ro',uri=True,timeout=3)) as conn:
         conn.set_progress_handler(lambda:int(foreground_busy(data)),10000)
         grouped=dict(conn.execute('SELECT state,COUNT(*) FROM validation GROUP BY state'))
@@ -315,6 +340,9 @@ def overview(data=DATA,snapshot=None):
     rows=[]
     def add(name,value,detail,tone='muted'):
         rows.append({'id':str(len(rows)),'name':name,'value':str(value),'detail':detail,'tone':tone,'updated':updated})
+    if not foreground_busy(data):
+        for provider_row in provider_health_rows(data,now):
+            add(provider_row['name'],provider_row['value'],provider_row['detail'],'warning' if provider_row['value']=='Cooldown' else 'muted')
     if not values:
         add('Verification overview','Preparing','The background counter snapshot is still running')
     else:
@@ -465,17 +493,17 @@ def overview(data=DATA,snapshot=None):
         if provider_state is None and fresh_producers:
             provider_state=max(fresh_producers,key=lambda v:v.get('updated',0))
         provider=(provider_state or {}).get('provider','none')
-        provider_labels={'torrentio':'Torrentio','mediafusion':'MediaFusion fallback','mixed':'Torrentio + MediaFusion candidates',
+        provider_labels={'torrentio':'Torrentio','mediafusion':'MediaFusion fallback','jackett':'Jackett independent indexer','mixed':'Multiple discovery providers',
                          'other':'Other source','none':'None'}
         provider_value=provider_labels.get(provider,'None')
         if provider_state is None:
             provider_detail='No Windows title/source lookup is active; no provider is currently in use.'
         elif provider!='none':
             provider_detail=('Provider candidates for the active Windows title; after completion this identifies the selected source. '
-                             'Mixed means candidates from both providers are present.')
+                             'Mixed means candidates from multiple providers are present.')
         else:
-            provider_detail='No accepted Torrentio or MediaFusion candidate is available for the active title.'
-        add('Current torrent provider',provider_value,provider_detail,'success' if provider in ('torrentio','mediafusion') else 'muted')
+            provider_detail='No compatible provider candidate is available for the active title.'
+        add('Current torrent provider',provider_value,provider_detail,'success' if provider in ('torrentio','mediafusion','jackett') else 'muted')
         if problem:
             label='Decode rejected' if problem['outcome']=='decode_failure' else 'Checkpoint'
             reason=problem['reason_code'] or 'reason unavailable from current PC client'
