@@ -1820,6 +1820,8 @@ class Features:
                             self.enqueue_many(aired,30)
                         except Exception:self.log('Episode verification queue expansion deferred')
                 except Exception as error:
+                    diagnostic_logger=self.g.get('log_sqlite_failure')
+                    if callable(diagnostic_logger):diagnostic_logger(error,'worker attempt')
                     from verification_diagnostics import classify_error
                     attempt_diagnostic=classify_error(error)
                     from source_failure_diagnostics import sanitize as sanitize_failure_evidence

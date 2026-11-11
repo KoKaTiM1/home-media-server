@@ -217,6 +217,50 @@ def log(message):
     print(dt.datetime.now(dt.timezone.utc).isoformat(), message, flush=True)
 
 
+SQLITE_DIAGNOSTIC_FILES=frozenset(('app.py','features.py','reliability.py','verification_title.py',
+ 'verification_remote.py','verification_jobs.py','metadata_jobs.py','source_discovery.py',
+ 'russian_audio.py','embedded_subtitles.py','playback_diagnostics.py'))
+SQLITE_DIAGNOSTIC_PHASES=frozenset(('source preparation','preparation','server fallback',
+ 'torrent_resolution','torrent resolution','video_probe','video probe','windows local torrent',
+ 'title validation','speed verification','sample decode','audio conversion','conversion probe'))
+
+
+def sqlite_failure_details(error,stage):
+    """Only code identifiers and native SQLite enums; never SQL, args or locals."""
+    if not isinstance(error,sqlite3.Error):return {}
+    stage=stage if isinstance(stage,str) and stage in ('preparation','worker attempt') else 'unknown'
+    typ=type(error).__name__
+    if typ not in ('Error','InterfaceError','DatabaseError','DataError','OperationalError',
+                   'IntegrityError','InternalError','ProgrammingError','NotSupportedError'):typ='SQLiteError'
+    value={'stage':stage,'error_type':typ}
+    code=getattr(error,'sqlite_errorcode',None);name=getattr(error,'sqlite_errorname',None)
+    if type(code) is int and 0<=code<=65535:
+        value['sqlite_code']=code
+        if (isinstance(name,str) and name.startswith('SQLITE_')
+            and re.fullmatch(r'SQLITE_[A-Z0-9_]{1,48}',name)
+            and type(getattr(sqlite3,name,None)) is int and getattr(sqlite3,name)==code):value['sqlite_name']=name
+    phase=getattr(BUDGET,'remote_phase',None)
+    value['phase']=phase if isinstance(phase,str) and phase in SQLITE_DIAGNOSTIC_PHASES else 'unknown'
+    frames=[];tb=error.__traceback__
+    while tb is not None:
+        code_object=tb.tb_frame.f_code;filename=Path(code_object.co_filename).name;function=code_object.co_name
+        if filename in SQLITE_DIAGNOSTIC_FILES and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,63}',function):
+            frames.append({'file':filename,'function':function,'line':tb.tb_lineno});frames=frames[-6:]
+        tb=tb.tb_next
+    value['frames']=frames
+    return value
+
+
+def log_sqlite_failure(error,stage):
+    """Best-effort logging must never change exception classification or retry."""
+    try:
+        if not isinstance(error,sqlite3.Error) or getattr(error,'_sqlite_diagnostic_logged',False):return
+        value=sqlite_failure_details(error,stage)
+        log('SQLite failure '+json.dumps(value,sort_keys=True,separators=(',',':')))
+        error._sqlite_diagnostic_logged=True
+    except Exception:pass
+
+
 class Connection(sqlite3.Connection):
     def __exit__(self, *args):
         try:
@@ -234,6 +278,7 @@ def db():
     if conn.execute('PRAGMA journal_mode').fetchone()[0]!='wal':
         conn.execute('PRAGMA journal_mode=WAL')
     conn.execute('CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, value TEXT, expires REAL)')
+    conn.execute('CREATE INDEX IF NOT EXISTS cache_prefix_lookup ON cache(key COLLATE NOCASE)')
     conn.execute('CREATE TABLE IF NOT EXISTS items (key TEXT PRIMARY KEY, kind TEXT, imdb TEXT, meta TEXT, buckets TEXT)')
     conn.execute('CREATE TABLE IF NOT EXISTS playback (key TEXT PRIMARY KEY, value TEXT, updated REAL)')
     return conn
@@ -2363,6 +2408,7 @@ def prepared(key,background=False,audio_index=None,cancel=None,source_id=None):
             raise
         except (Checkpoint,TimeoutError,subprocess.TimeoutExpired,ClientCancelled,sqlite3.OperationalError) as error:
             if isinstance(error,sqlite3.OperationalError):
+                log_sqlite_failure(error,'preparation')
                 error=Checkpoint('Catalogue database is temporarily busy','coordinator_database');error.failure_category='coordinator';raise error from None
             if not speculative:
                 F.enqueue(key,200)

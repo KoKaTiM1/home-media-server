@@ -872,3 +872,10 @@ OMV separately shows first-sweep torrent metadata deferrals and actual Debian fa
 Candidate tracker hints are retained through Torznab magnet parsing and Windows job construction, including rebuilt magnets for exact sources. Only eight fixed public announce endpoints are accepted; arbitrary hosts, credentials, query strings, local endpoints and duplicate hints are discarded. The default tracker remains present. Cached provider candidates are filtered again at the Windows boundary. Exact source identity and V6 requirements remain unchanged. Existing Windows 0.4.12 consumes the optional `sources` field; this server release requires no PC image update.
 
 Jackett failures may include bounded diagnostic labels for adapter HTTP status and a confirmed upstream 429 or connection reset. Only fixed labels/status numbers are retained, never response bodies or exception text. These diagnostics do not change backoff: the actual adapter status and existing Retry-After policy remain authoritative. A later successful lookup clears old underlying-error labels.
+
+
+### Indexed prepared-cache cleanup and SQLite diagnostics
+
+The catalogue cache has a derived `cache_prefix_lookup` index on `key COLLATE NOCASE`. The existing per-title DELETE remains unchanged, preserving exact-key and case-insensitive variant matching while avoiding a complete cache scan. Production deployment builds the index with assignments drained; initialization also ensures it exists for fresh databases. It does not alter validation, proofs, source ranking or retry policy.
+
+SQLite failures are logged before preparation wraps them and at the outer verifier catch. Fixed stage/phase labels, native SQLite codes/names and at most six allowlisted source basenames/functions/line numbers are retained. SQL, exception messages, media keys, URLs, credentials and frame locals are excluded. Duplicate logging of the same exception is suppressed; missing native fields remain absent. Logging failure leaves existing classification and retry behavior intact. These events identify future contention paths without assigning invented causes to old receipts.
