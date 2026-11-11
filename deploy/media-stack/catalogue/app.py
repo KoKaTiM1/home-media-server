@@ -1488,6 +1488,10 @@ def jackett_cache_key(key,cfg=None):
     return 'jackett:v3:'+signature+':'+key
 
 
+def jackett_indexer_cache_key(indexer,key):
+    return 'jackett-indexer:v1:'+indexer+':'+key
+
+
 def cached_expiry(key):
     with db() as conn:row=conn.execute('SELECT expires FROM cache WHERE key=? AND expires>?',(key,time.time())).fetchone()
     return row[0] if row else 0
@@ -1510,8 +1514,13 @@ def source_recovery_wait(key,error=None):
     if cfg.get('jackett_enabled') and cfg.get('jackett_indexers',{}).get(key.split(':')[0]):
         expiry=cached_expiry(jackett_cache_key(key,cfg)) if cached(jackett_cache_key(key,cfg))==[] else 0
         if not expiry:
-            controls=[cached('jackett-'+i+'-control') or {} for i in cfg['jackett_indexers'][key.split(':')[0]]]
-            expiry=min(max(now+30,c.get('cooldown',0)) for c in controls)
+            ready=[]
+            for indexer in cfg['jackett_indexers'][key.split(':')[0]]:
+                control=cached('jackett-'+indexer+'-control') or {}
+                item=jackett_indexer_cache_key(indexer,key)
+                negative=cached_expiry(item) if cached(item)==[] else 0
+                ready.append(max(now+1,control.get('cooldown',0),negative) if negative or control.get('cooldown',0)>now else now+30)
+            expiry=min(ready)
         deadlines.append(expiry);providers.append('jackett')
     retry_at=max(now+1,min(deadlines))
     remember('source-recovery:'+key,{'retry_at':retry_at,'signature':source_config_signature(),
@@ -1563,8 +1572,16 @@ def jackett_streams(key,priority=0):
         if row:
             try:meta=json.loads(row[0])
             except (ValueError,TypeError):pass
-    combined=[];failure=None
+    combined=[];failure=None;completed_expiries=[]
     for indexer in indexers:
+        completed_key=jackett_indexer_cache_key(indexer,key)
+        previous=cached(completed_key)
+        if previous is not None:
+            completed_expiries.append(cached_expiry(completed_key))
+            source_provider_event('jackett','compatible' if previous else 'empty','hit',len(previous))
+            if previous:
+                combined.extend(previous);break
+            continue
         control='jackett-'+indexer+'-control'
         try:
             with serialized_provider_slot(DATA/('jackett-'+indexer+'.lock'),control,priority=priority,
@@ -1593,6 +1610,11 @@ def jackett_streams(key,priority=0):
                         if local:names.extend(local)
                         matched=[r for r in clean if series_title_matches(r.get('behaviorHints',{}).get('filename',''),key,names,str(meta.get('year') or meta.get('releaseInfo') or '')[:4])]
                         raw_stats['identity_rejected']+=len(clean)-len(matched);clean=matched;stats['compatible']=len(clean)
+                    # Persist each successful listing before advancing to a
+                    # different indexer's queue. A later admission wait must
+                    # not force this completed search to run again.
+                    remember(completed_key,clean[:20],1800 if clean else 900)
+                    completed_expiries.append(cached_expiry(completed_key))
                     source_provider_event('jackett','compatible' if clean else 'empty',provider_rows=len(rows),stats=stats,raw_stats=raw_stats)
                     state=cached(control) or {};state.update(raw_rows=raw_stats['raw_rows'],provider_rows=len(rows),compatible=len(clean),identity_rejected=raw_stats['identity_rejected'])
                     remember(control,state,90000)
@@ -1605,10 +1627,12 @@ def jackett_streams(key,priority=0):
             source_provider_event('jackett','error',error=error)
             failure=error
     if not combined and failure:
-        if isinstance(failure,SourceProviderWait):raise failure
+        if isinstance(failure,SourceProviderWait) and failure.reason not in ('cooldown','recovery'):raise failure
         raise source_recovery_wait(key,failure) from None
     combined=filter_streams_with_diagnostics({'streams':combined})[0]
-    return remember(listing_key,combined[:20],1800 if combined else 900)
+    # The compound listing must not extend an older component's freshness.
+    ttl=max(1,min(completed_expiries)-time.time())
+    return remember(listing_key,combined[:20],ttl)
 
 
 def fallback_candidates(key,priority=0):

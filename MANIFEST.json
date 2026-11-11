@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-11-10T23:42:51.183755+00:00",
+  "created_utc": "2026-11-11T08:23:49.464839+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -17,8 +17,8 @@
     "backup/test_export_privacy.py": "d1be3e2707805f7ca2ee3430ca7bf114d9e20240cfcbc0e3e8ccf6dad99385cc",
     "deploy/media-stack/README.md": "312a6c152769ba5fab9a34d22f6c4bc301815187151a7298b3ab68e5333b9ffd",
     "deploy/media-stack/catalogue/Dockerfile": "f8855327a7d9f69ab871d04812b7ceafeb0fb696e780801675249fb61b5906bd",
-    "deploy/media-stack/catalogue/README.md": "e260f15e3b977b674efa4848c0d78dc2a75aa188e0545629161497514c849c52",
-    "deploy/media-stack/catalogue/app.py": "1299e6298088551e515b2140d339a446221d6ee8be49e1fa402fadae63484dce",
+    "deploy/media-stack/catalogue/README.md": "6075946f36efe817e3207221c6ce1d549ee2149f33aa55cec7fefa6b07d644a7",
+    "deploy/media-stack/catalogue/app.py": "80382ca0c5c90fd959d450e9650d16d1733a6c3821b755cb013e3f2f3214bf7f",
     "deploy/media-stack/catalogue/bootstrap.py": "002cb58a203f36b9ee66d83900cf939a273e73e75637dfd8b342a67b48edfad9",
     "deploy/media-stack/catalogue/check_audio_conversion.py": "669463dd9be988b0becf34db0014739e559e2f1fa6c350be11d5dd4a81c4a899",
     "deploy/media-stack/catalogue/check_audio_subtitles.py": "f89e81cd25fa7767dddef438e63e8155a92e8689e5aeeaf5e27af306ed4eb02f",
@@ -55,6 +55,7 @@
     "deploy/media-stack/catalogue/test_metadata_lan.py": "d68a6764d1b79fb272948d1504aa9e9bff035a7cb06f1a68aeee3849b94fa378",
     "deploy/media-stack/catalogue/test_metadata_resume.py": "42a658c8dc0f8cd165bb3148d76dcf71e275bd7460a0c451d7b4d04a328917d6",
     "deploy/media-stack/catalogue/test_multi_subtitles.py": "5a0d8e7c6d0fdd99e00448ab6f7f8612c986db2280078ec7ea47584861791366",
+    "deploy/media-stack/catalogue/test_partial_indexer_results.py": "ea90138647248da1b6708b65e782b1f401038911a96cbe33e271ecfa50fbd0ab",
     "deploy/media-stack/catalogue/test_playback_deadlines.py": "82dfa592a697d2eabde631908bb7acdbb4701b3afc04cbf46b2b2bc63f169613",
     "deploy/media-stack/catalogue/test_preparation_pool.py": "06b0df806ddc6b446d923b93f4a07cb8360bb9df5a08c93cd67d3cc24857122a",
     "deploy/media-stack/catalogue/test_recheck.py": "dbf72ed5627f444ac83152df11ddf3b389531a6a882058e9fcf834251dac64f1",
