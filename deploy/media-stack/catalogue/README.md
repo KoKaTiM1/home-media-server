@@ -823,3 +823,20 @@ The optional Knaben episode indexer is tried after the first independent indexer
 ### Resuming partial multi-indexer discovery
 
 Each successful indexer lookup, including an empty listing, is cached independently before another indexer is attempted. A subsequent admission wait or provider failure retains that completed work. Retries resume the unfinished searches instead of repeatedly consuming the first indexer's request slots. Provider failures are never cached as successful empty listings. The combined listing expires no later than its earliest component result; recovery scheduling considers partial negative-cache expiry as well as cooldowns. Existing source identity, codec/speed/sample proof and approved-source retention remain unchanged.
+
+### First-sweep discovery fairness
+
+Provider capacity, pacing and recovery waits leave the title queued and its media
+proof unchanged. The queue also advances that title's scheduling position, so
+expiry of a short wait cannot put it straight back ahead of untouched work.
+A resolved metadata dependency receives its reserved handoff once; if source
+admission then waits, it returns to ordinary discovery ordering.
+
+Ordinary discovery reads bounded movie and series windows through separate
+partial indexes, alternating eligible kinds within the same saved priority and
+source-version class. The last dispatched kind persists across producer restarts;
+it advances only after an attempt is successfully marked, not on read-only queue
+inspection. If one kind has no eligible work, the other proceeds. Existing manual
+rechecks, V5 audit precedence, source claims, holds, provider pacing/cooldowns and
+V6 acceptance remain authoritative. These scheduling waits are prerequisites,
+not completed media checks or proof of unavailable torrents.

@@ -24,6 +24,7 @@ class FirstSweepTests(unittest.TestCase):
         c.executemany("INSERT INTO validation VALUES(?,'pending',0,'{}',0)",((f'movie:tt{i:07}',) for i in range(100000)))
         c.executemany("INSERT INTO verification_sweep_attempts(sweep_id,key,started,outcome) VALUES(1,?,1,'queued')",((f'movie:tt{i:07}',) for i in range(100000)))
         Features.metadata_dependency_schema(c)
+        Features.sweep_fairness_schema(c)
         c.commit();c.close()
         self.f=Features({});self.f.db=self.db
     def tearDown(self):self.tmp.cleanup()

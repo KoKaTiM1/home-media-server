@@ -38,10 +38,10 @@ class AdmissionTests(unittest.TestCase):
   self.assertEqual(list((app.DATA/'mediafusion-provider.lock.waiters').glob('*.ticket')),[])
  def test_capacity_deferral_keeps_first_sweep_unfinished_and_releases_claim(self):
      app.REL.db().close()
-     other='movie:tt0000002'
+     other='series:tt0000002:1:1'
      with app.F.db() as c:
          c.execute("INSERT INTO validation(key,state,priority) VALUES (?,'pending',1)",(other,))
-         c.execute('UPDATE validation SET priority=100 WHERE key=?',(KEY,))
+         c.execute('UPDATE validation SET priority=1 WHERE key=?',(KEY,))
      app.F.start_verification_sweep()
      with app.F.db() as c:
          c.execute("UPDATE verification_sweep_attempts SET outcome='queued',started=0,finished=0 WHERE sweep_id=1 AND key=?",(KEY,))
@@ -62,6 +62,9 @@ class AdmissionTests(unittest.TestCase):
          wait=c.execute('SELECT expires FROM metadata_waits WHERE key=?',(KEY,)).fetchone()
      self.assertIsNotNone(wait)
      self.assertGreaterEqual(wait[0],time.time()+29)
+     self.assertEqual(app.F.first_sweep_candidate()[0][1],other)
+     # Expiry must not put the same title back ahead of untouched work.
+     with app.F.db() as c:c.execute('DELETE FROM metadata_waits WHERE key=?',(KEY,))
      self.assertEqual(app.F.first_sweep_candidate()[0][1],other)
 
  def test_priority_overflow_cannot_displace_an_admitted_normal_waiter(self):

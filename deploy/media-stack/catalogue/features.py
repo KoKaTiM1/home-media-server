@@ -132,6 +132,7 @@ class Features:
                 conn.execute('CREATE INDEX IF NOT EXISTS verification_sweep_order ON verification_sweep_attempts(sweep_id,outcome,priority DESC,source_version,due)')
                 conn.commit()
             conn.execute("CREATE INDEX IF NOT EXISTS verification_sweep_v5_order ON verification_sweep_attempts(sweep_id,priority DESC,due) WHERE outcome='queued' AND source_version=5")
+            self.sweep_fairness_schema(conn)
             if conn.execute('SELECT 1 FROM verification_sweeps LIMIT 1').fetchone():return
             conn.execute('BEGIN IMMEDIATE')
             if conn.execute('SELECT 1 FROM verification_sweeps LIMIT 1').fetchone():return
@@ -144,6 +145,14 @@ class Features:
             # this indexed queue instead of repeatedly scanning the million-row
             # validation table. Retained checkpoints count as already attempted.
             conn.execute(f"INSERT OR IGNORE INTO verification_sweep_attempts(sweep_id,key,started,outcome,priority,source_version,due) SELECT ?,v.key,?,'queued',v.priority,COALESCE(json_extract(v.proof,'$.version'),0),v.next_check FROM validation v WHERE v.rowid<=? AND {eligible} AND NOT EXISTS(SELECT 1 FROM verification_audit a WHERE a.key=v.key AND a.reason='speed-v6' AND a.completed>0)",(sweep_id,now,high,now))
+
+    @staticmethod
+    def sweep_fairness_schema(conn):
+        # Partial indexes let either kind reach the head without scanning the
+        # million-key queue or sorting it on every producer tick.
+        for kind in ('movie','series'):
+            conn.execute(f"CREATE INDEX IF NOT EXISTS verification_sweep_{kind}_order ON verification_sweep_attempts(sweep_id,outcome,priority DESC,source_version,due) WHERE key GLOB '{kind}:*'")
+        conn.execute('CREATE TABLE IF NOT EXISTS verification_sweep_dispatch(sweep_id INTEGER PRIMARY KEY,last_kind TEXT NOT NULL)')
 
     @staticmethod
     def metadata_dependency_schema(conn):
@@ -273,7 +282,8 @@ class Features:
                     conn.execute("UPDATE verification_sweep_attempts SET outcome='queued',started=? WHERE sweep_id=? AND outcome='started' AND started<? AND NOT EXISTS(SELECT 1 FROM verification_claims c WHERE c.key=verification_sweep_attempts.key AND c.expires>?)",(now,sweep_id,now-600,now))
                 selection="""SELECT x.key,v.state,v.next_check,
                     COALESCE(json_extract(v.proof,'$.version'),0),v.priority,
-                    EXISTS(SELECT 1 FROM verification_audit a WHERE a.key=x.key AND a.reason='speed-v6' AND a.completed>0)
+                    EXISTS(SELECT 1 FROM verification_audit a WHERE a.key=x.key AND a.reason='speed-v6' AND a.completed>0),
+                    x.priority,x.due
                     FROM {source}
                     JOIN validation v ON v.key=x.key
                     WHERE x.sweep_id=? AND x.outcome='queued' {version_filter}
@@ -289,19 +299,36 @@ class Features:
                 if not rows:
                     rows=conn.execute(selection.format(source='verification_metadata_dependencies d INDEXED BY verification_metadata_ready JOIN verification_sweep_attempts x ON x.sweep_id=d.sweep_id AND x.key=d.key',version_filter="AND d.state='resumed'",ordering='d.waiting,d.key'),parameters).fetchall()
                     rows=[row for row in rows if not self.metadata_admission_blocked(row[0],conn)]
-                if not rows:
-                    rows=conn.execute(selection.format(source='verification_sweep_attempts x INDEXED BY verification_sweep_order',version_filter='',ordering='x.priority DESC,x.source_version,x.due'),parameters).fetchall()
+                fair_discovery=not rows
+                if fair_discovery:
+                    for kind in ('movie','series'):
+                        rows.extend(conn.execute(selection.format(
+                            source=f'verification_sweep_attempts x INDEXED BY verification_sweep_{kind}_order',
+                            version_filter=f"AND x.key GLOB '{kind}:*'",
+                            ordering='x.priority DESC,x.source_version,x.due'),parameters).fetchall())
                     rows=[row for row in rows if not self.metadata_admission_blocked(row[0],conn)]
                 candidates=[]
-                for key,state,due,version,priority,audited in rows:
+                for key,state,due,version,priority,audited,queue_priority,queue_due in rows:
                     if audited or (state=='verified' and version>=6):
                         outcome='passed' if audited else 'deferred'
                     elif state=='unavailable' and due>now:outcome='deferred'
                     else:
-                        candidates.append((key,priority,version,due));continue
+                        candidates.append((key,priority,version,due,queue_priority,queue_due));continue
                     conn.execute("UPDATE verification_sweep_attempts SET outcome=?,finished=? WHERE sweep_id=? AND key=? AND outcome='queued'",(outcome,now,sweep_id,key))
                 if candidates:
-                    row=min(candidates,key=lambda r:(-r[1],r[2],r[3],r[0]))
+                    if fair_discovery:
+                        # Preserve saved priority/version classes; rotate kinds
+                        # inside a class. Live metadata-ready priority boosts
+                        # must not monopolize every turn over untouched movies.
+                        level=min((-r[4],r[2]) for r in candidates)
+                        candidates=[r for r in candidates if (-r[4],r[2])==level]
+                        last=conn.execute('SELECT last_kind FROM verification_sweep_dispatch WHERE sweep_id=?',(sweep_id,)).fetchone()
+                        kinds={r[0].split(':',1)[0] for r in candidates}
+                        wanted=('series' if last and last[0]=='movie' else 'movie')
+                        if wanted in kinds:candidates=[r for r in candidates if r[0].startswith(wanted+':')]
+                        row=min(candidates,key=lambda r:(r[5],-r[1],r[0]))
+                    else:
+                        row=min(candidates,key=lambda r:(-r[1],r[2],r[3],r[0]))
                     return (sweep_id,row[0]),True
                 queued=conn.execute("SELECT 1 FROM verification_sweep_attempts WHERE sweep_id=? AND outcome='queued' LIMIT 1",(sweep_id,)).fetchone()
                 started_count=conn.execute("SELECT 1 FROM verification_sweep_attempts WHERE sweep_id=? AND outcome IN ('started','metadata_wait') LIMIT 1",(sweep_id,)).fetchone()
@@ -348,6 +375,8 @@ class Features:
                 cur=conn.execute("UPDATE verification_sweep_attempts SET started=?,outcome='started' WHERE sweep_id=? AND key=? AND outcome='queued'",(now,sweep_id,key))
                 if not cur.rowcount:
                     cur=conn.execute("INSERT OR IGNORE INTO verification_sweep_attempts(sweep_id,key,started,outcome) VALUES (?,?,?,'started')",(sweep_id,key,now))
+            if cur.rowcount:
+                conn.execute('INSERT INTO verification_sweep_dispatch VALUES (?,?) ON CONFLICT(sweep_id) DO UPDATE SET last_kind=excluded.last_kind',(sweep_id,key.split(':',1)[0]))
             return bool(cur.rowcount)
 
     def requeue_first_sweep_infrastructure(self,key,delay=30):
@@ -355,7 +384,11 @@ class Features:
         due=time.time()+delay
         with self.db() as conn:
             cur=conn.execute("UPDATE verification_sweep_attempts SET outcome='queued',started=0,finished=0,due=MAX(due,?) WHERE key=? AND outcome='started' AND sweep_id=(SELECT MAX(id) FROM verification_sweeps)",(due,key))
-            if cur.rowcount:conn.execute('INSERT INTO metadata_waits VALUES (?,?) ON CONFLICT(key) DO UPDATE SET expires=MAX(expires,excluded.expires)',(key,due))
+            if cur.rowcount:
+                conn.execute('INSERT INTO metadata_waits VALUES (?,?) ON CONFLICT(key) DO UPDATE SET expires=MAX(expires,excluded.expires)',(key,due))
+                # A resolved metadata dependency got its reserved handoff. Once
+                # source admission waits, return it to ordinary rotating work.
+                conn.execute("UPDATE verification_metadata_dependencies SET state='closed' WHERE key=? AND sweep_id=(SELECT MAX(id) FROM verification_sweeps) AND state='resumed'",(key,))
         return bool(cur.rowcount)
 
     def finish_first_sweep_attempt(self,key,outcome,diagnostic=None,attempt_started=None):
@@ -1799,11 +1832,6 @@ class Features:
                     # continue checking other titles rather than stalling.
                     source_wait=self.g.get('SourceProviderWait')
                     if source_wait and isinstance(error,source_wait):
-                        if sweep_attempt:
-                            with self.db() as conn:
-                                conn.execute("UPDATE verification_sweep_attempts SET outcome='queued',started=0,finished=0 WHERE key=? AND outcome='started' AND sweep_id=(SELECT max(id) FROM verification_sweeps)",(key,))
-                            sweep_attempt=False
-                            budget.worker_deadline=previous_attempt_deadline
                         reason=getattr(error,'reason',None)
                         # A queue timeout can consume six minutes before this
                         # handler runs. Keep the first-sweep item queued, but
@@ -1813,8 +1841,15 @@ class Features:
                         elif reason=='queue_timeout':retry_after=900
                         elif reason in ('cooldown','recovery'):retry_after=getattr(error,'retry_after',None) or 300
                         else:retry_after=30
-                        with self.db() as conn:
-                            conn.execute('INSERT OR REPLACE INTO metadata_waits VALUES (?,?)',(key,time.time()+retry_after))
+                        if sweep_attempt:
+                            # Rotate this unfinished title behind untouched
+                            # work even after its short provider wait expires.
+                            self.requeue_first_sweep_infrastructure(key,retry_after)
+                            sweep_attempt=False
+                            budget.worker_deadline=previous_attempt_deadline
+                        else:
+                            with self.db() as conn:
+                                conn.execute('INSERT INTO metadata_waits VALUES (?,?) ON CONFLICT(key) DO UPDATE SET expires=MAX(expires,excluded.expires)',(key,time.time()+retry_after))
                         message=('Source providers awaiting recovery; retry scheduled in '+str(max(1,int(retry_after)))+' seconds'
                                  if reason=='recovery' else
                                  'Source provider queue at capacity; title retained for retry'
