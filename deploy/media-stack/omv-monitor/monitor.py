@@ -523,8 +523,10 @@ def overview(data=DATA,snapshot=None):
                 recovery=c.execute("SELECT count(*),count(distinct key) FROM receipts WHERE scope='preparation' AND code='provider_recovery' AND finished>=?",(now-3600,)).fetchone()
                 add('Provider recovery waits in last hour',str(recovery[1])+' titles / '+str(recovery[0])+' events','Source feeds awaiting recovery or cached-empty expiry; these are queued prerequisites, not failed media checks')
                 add('Worker operations in last hour',r.get('worker_job',(0,0))[0],'Operations are separate from whole-title first attempts')
-                for bucket,count in c.execute("SELECT bucket,count FROM buckets WHERE count>0 AND bucket NOT LIKE '%/ok/%' AND bucket NOT LIKE '%/passed/%' AND bucket NOT LIKE '%/operation_ok/%' ORDER BY count DESC LIMIT 5"):
+                for bucket,count in c.execute("SELECT bucket,count FROM buckets WHERE count>0 AND bucket NOT LIKE 'root/%' AND bucket NOT LIKE '%/ok/%' AND bucket NOT LIKE '%/passed/%' AND bucket NOT LIKE '%/operation_ok/%' ORDER BY count DESC LIMIT 5"):
                     add('Latest title outcome: '+bucket.replace('/',' · '),f'{count:,}','Distinct titles per scope with this latest result; decreases when a later result replaces it')
+                for bucket,count in c.execute("SELECT bucket,count FROM buckets WHERE count>0 AND bucket LIKE 'root/%' ORDER BY count DESC LIMIT 5"):
+                    add('Reported root cause: '+bucket[5:].replace('/',' · '),f'{count:,}','Diagnostic-only cause captured before aggregate source exhaustion; current titles per scope. Existing retry and verification decisions are unchanged.')
         except (sqlite3.Error,OSError):add('Durable diagnostic history','Temporarily unavailable','Existing verification and saved proofs continue')
     return rows
 

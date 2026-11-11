@@ -1,6 +1,6 @@
 # Windows V6 verification workers
 
-Launcher package **0.4.11** uses verifier image **0.4.11**. It adds HEVC Main 8-bit SDR verification up to 1080p after the owner TV picture/audio test. Replay/seek acceptance remains tracked separately; HDR, Main10, 4K and AV1 are excluded. Verifiers
+Launcher package **0.4.12** uses verifier image **0.4.12**. It preserves bounded root-cause diagnostics when candidate exhaustion hides an earlier rejection, without changing retry/fallback or V6 decisions. HEVC Main 8-bit SDR up to 1080p remains supported after the owner TV picture/audio test. Replay/seek acceptance remains tracked separately; HDR, Main10, 4K and AV1 are excluded. Verifiers
 run with Docker `--init` to reap orphaned decoder children after cancellations.
 Start/Update automatically drains and recreates containers with a mismatched
 image or missing init while preserving identities, config, data and backend state.
@@ -185,3 +185,13 @@ A request failure retains the task/result for the existing retry path; requests 
 Windows probe/decode reads use an ephemeral loopback proxy scoped to each exact file request. Only newly delivered byte ranges reset the 45-second no-progress watchdog; duplicate ranges and other readers do not. Cancelling an operation closes its own upstream read and subprocess. V6 speed measurements continue on the direct path. Initial-sweep jobs carry an optional bounded execution policy: 240 seconds after claim plus a separate 30-second receipt margin, independent of provider discovery and queue waiting. Jobs without that policy retain legacy behavior. No V6 sample, speed, audio or identity requirements are relaxed. Specific checkpoint codes survive preparation wrappers; configured execution limits and measured elapsed time remain distinct.
 
 The 0.4.10 full-fleet rollout requires the image fixtures and repository gate first. Retain each lane's known 0.4.4 container for rollback; observe all eight candidate workers together rather than waiting an hour per lane. Ordinary source rejections remain sweep outcomes; infrastructure, acknowledgement, process or resource regressions require rollback and investigation.
+
+## Diagnostic evidence in 0.4.12
+
+Optional `diagnostic.root_cause` and `diagnostic.source_failures` retain up to 20
+structured, deduplicated source failures. Assigned hashes are validated against
+the server-held job. No exception messages, URLs or FFmpeg stderr are reported.
+Existing operational diagnostic fields remain unchanged and still control retry
+and fallback behavior. OMV shows separate root-cause counts; old clients remain
+compatible but cannot supply this additional evidence. Package availability
+does not establish physical installation: confirm the reported client version.

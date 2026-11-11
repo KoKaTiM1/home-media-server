@@ -1,4 +1,5 @@
 """Private compact verification history; one writer, idempotent queue receipts."""
+from source_failure_diagnostics import sanitize as sanitize_failure_evidence
 import json,re,sqlite3,time
 from contextlib import closing
 from pathlib import Path
@@ -20,19 +21,33 @@ class DiagnosticLedger:
         accepted=[]
         with closing(self.connect()) as c, c:
             for ident,raw in events:
-                e=json.loads(raw);key=e['key'];scope=e.get('scope','worker_job');finished=e['finished'];bucket='/'.join((scope,e['outcome'],e['category'] or 'none',e['code'] or 'unknown'))
+                e=json.loads(raw);safe=sanitize_failure_evidence(e);e.pop('root_cause',None);e.pop('source_failures',None);e.update(safe);raw=json.dumps(e,sort_keys=True)
+                key=e['key'];scope=e.get('scope','worker_job');finished=e['finished'];bucket='/'.join((scope,e['outcome'],e['category'] or 'none',e['code'] or 'unknown'))
                 added=c.execute('INSERT OR IGNORE INTO receipts VALUES (?,?,?,?,?,?,?)',(ident,scope,key,finished,e['outcome'],e['category'],e['code'])).rowcount
                 if added:
                     c.execute('INSERT INTO reason_counts VALUES (?,?,?,?,1) ON CONFLICT(scope,key,category,code) DO UPDATE SET count=count+1',(scope,key,e['category'],e['code']))
                     c.execute('INSERT INTO attempts VALUES (?,?,?,?,?)',(ident,scope,key,finished,raw))
-                    old=c.execute('SELECT finished,bucket FROM latest WHERE scope=? AND key=?',(scope,key)).fetchone()
+                    old=c.execute('SELECT finished,bucket,payload FROM latest WHERE scope=? AND key=?',(scope,key)).fetchone()
                     if not old or finished>=old[0]:
                         if old:c.execute('UPDATE buckets SET count=count-1 WHERE bucket=?',(old[1],))
+                        # Separate diagnostic-only root buckets from the existing
+                        # operational outcome buckets and receipt classification.
+                        if old:
+                            prior=root_bucket(json.loads(old[2]))
+                            if prior:c.execute('UPDATE buckets SET count=count-1 WHERE bucket=?',(prior,))
+                        current=root_bucket(e)
+                        if current:c.execute('INSERT INTO buckets VALUES (?,1) ON CONFLICT(bucket) DO UPDATE SET count=count+1',(current,))
                         c.execute('INSERT INTO buckets VALUES (?,1) ON CONFLICT(bucket) DO UPDATE SET count=count+1',(bucket,))
                         c.execute('INSERT OR REPLACE INTO latest VALUES (?,?,?,?,?,?)',(scope,key,ident,finished,bucket,raw))
                     c.execute('DELETE FROM attempts WHERE scope=? AND key=? AND id NOT IN (SELECT id FROM attempts WHERE scope=? AND key=? ORDER BY finished DESC,id DESC LIMIT 3)',(scope,key,scope,key))
                 accepted.append(ident)
         return accepted
+
+def root_bucket(event):
+    if event.get('outcome') in ('ok','passed','operation_ok'):return None
+    root=sanitize_failure_evidence(event).get('root_cause')
+    if root:return '/'.join(('root',event.get('scope','worker_job'),root['category'],root['code']))
+    return None
 
 def final_event(row,version,phases,accepted=None):
     """Project trusted queue fields; never copy arbitrary payload/error text."""
@@ -47,13 +62,16 @@ def final_event(row,version,phases,accepted=None):
     outcome=row['outcome']
     if outcome=='ok':outcome=('ok' if row['operation']=='verify_title' else 'operation_ok') if accepted else 'unaccepted_ok'
     created=row['created'];claimed=row['claimed_at'] or 0;finished=row['finished']
-    return {'scope':'worker_job','key':row['key'],'attempt_id':row['id'],'finished':finished,'operation':row['operation'],
+    event={'scope':'worker_job','key':row['key'],'attempt_id':row['id'],'finished':finished,'operation':row['operation'],
             'worker_version':version if isinstance(version,str) and re.fullmatch(r'\d{1,3}\.\d{1,3}\.\d{1,3}',version) else 'legacy',
             'outcome':outcome,'category':row['failure_category'],'code':row['checkpoint_code'] or row['cancel_code'],
             'failure_type':row['failure_type'],'phase':row['phase'],'provider':provider,'source_hash':source_hash,'source_id':row['sid'],
             'execution_budget_seconds':row['execution_seconds'],'execution_profile':'first_sweep' if params.get('execution_policy',{}).get('profile')=='first_sweep' else 'legacy',
             'queue_seconds':round(max(0,(claimed or finished)-created),3),'execution_seconds':round(max(0,finished-claimed),3) if claimed else 0,
             'active_seconds':row['active_seconds'],'lock_wait_seconds':row['lock_wait_seconds'],'phase_seconds':json.loads(row['worker_phase_seconds']) or dict(phases),'phase_timing':'worker_reported' if json.loads(row['worker_phase_seconds']) else 'coordinator_observed'}
+    if outcome not in ('ok','operation_ok'):
+        event.update(sanitize_failure_evidence(diagnostic,{c.get('infoHash') for c in candidates if isinstance(c,dict)}))
+    return event
 
 
 def classify_error(error):

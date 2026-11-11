@@ -1822,6 +1822,8 @@ class Features:
                 except Exception as error:
                     from verification_diagnostics import classify_error
                     attempt_diagnostic=classify_error(error)
+                    from source_failure_diagnostics import sanitize as sanitize_failure_evidence
+                    attempt_diagnostic.update(sanitize_failure_evidence(getattr(error,'source_failure_evidence',{})))
                     from verification_jobs import CANCEL_CODES
                     interruption_code=getattr(budget,'remote_cancel_code','')
                     if interruption_code in CANCEL_CODES and interruption_code!='unclassified' and type(error).__name__ in ('Checkpoint','ClientCancelled','PlaybackBusy','LocalTitleCheckpoint'):

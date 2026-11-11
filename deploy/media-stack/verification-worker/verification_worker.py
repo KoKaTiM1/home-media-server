@@ -90,7 +90,7 @@ class API:
     def request(self,path,body=None):
         c=self.connection()
         try:
-            data=json.dumps({'protocol':PROTOCOL,'client_version':'0.4.11',**body},allow_nan=False).encode() if body is not None else None
+            data=json.dumps({'protocol':PROTOCOL,'client_version':'0.4.12',**body},allow_nan=False).encode() if body is not None else None
             c.request('POST' if body is not None else 'GET',PREFIX+path,data,{'Authorization':'Bearer '+self.token,'Content-Type':'application/json'})
             response=c.getresponse();raw=response.read(2*1024*1024+1)
             endpoint=getattr(c,'worker_endpoint','unknown')
@@ -344,6 +344,9 @@ def main():
                         shutil.rmtree(folder/'title-jobs'/task['job_id'],ignore_errors=True)
                     diagnostic=result.get('diagnostic',{})
                     if isinstance(diagnostic,dict) and diagnostic.get('category'):status('Local title checkpoint: '+str(diagnostic.get('category'))+'; '+str(diagnostic.get('failure_type',''))+' code='+str(diagnostic.get('code','unclassified')))
+                    from source_failure_diagnostics import sanitize as sanitize_failure_evidence
+                    root=sanitize_failure_evidence(diagnostic).get('root_cause')
+                    if root:status('Reported root cause: '+root['category']+'; '+root['code']+'; '+root['phase'])
                     status('Server acknowledged '+task['operation']+' ('+result['status']+'); '+str(completed)+' operations acknowledged on this worker (not final titles)')
                 elif reply.get('ack')=='stale':
                     try:

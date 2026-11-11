@@ -19,25 +19,7 @@ SAFE_DIAGNOSTIC_CODES=frozenset((
     'ffmpeg_signal_exit','ffmpeg_nonzero_exit','ffmpeg_stderr_exit'))
 
 
-def ffmpeg_failure_code(returncode, stderr):
-    """Map FFmpeg output to a fixed safe code; never return stderr content."""
-    text=stderr.lower() if isinstance(stderr,bytes) else str(stderr).encode(errors='replace').lower()
-    patterns=(
-        ((b'cannot allocate memory',b'resource temporarily unavailable',b'pthread_create failed'),'ffmpeg_resource'),
-        ((b'connection refused',b'connection reset',b'http error',b'server returned'),'ffmpeg_transport'),
-        ((b'input/output error',),'ffmpeg_io'),
-        ((b'unknown decoder',b'no decoder for',b'decoder not found'),'ffmpeg_decoder_missing'),
-        ((b'matches no streams',b'stream map',b'could not find output stream'),'ffmpeg_stream_mapping'),
-        ((b'moov atom not found',b'moov atom is missing'),'ffmpeg_missing_index'),
-        ((b'invalid data found when processing input',),'ffmpeg_invalid_data'),
-        ((b'error while decoding',b'corrupt decoded frame',b'corrupt input'),'ffmpeg_decode_error'),
-        ((b'unexpected eof',b'end of file',b'partial file'),'ffmpeg_truncated_input'))
-    for markers,code in patterns:
-        if any(marker in text for marker in markers):return code
-    if returncode<0:return 'ffmpeg_signal_exit'
-    if returncode:return 'ffmpeg_nonzero_exit'
-    if text:return 'ffmpeg_stderr_exit'
-    return 'unclassified'
+from source_failure_diagnostics import ffmpeg_failure_code, record as record_source_failure, sanitize as sanitize_failure_evidence
 
 
 def failure_diagnostic(error, stage, selected=None):
@@ -65,6 +47,7 @@ def verify(payload,state,output,budget_seconds=470):
     a.torr_headers=lambda:{}
     diagnostic={};lock_wait_seconds=0.0;run_started=time.monotonic()
     def record_failure(error,stage,selected=None):
+        record_source_failure(a.BUDGET,error,stage,(selected or {}).get('hash'))
         diagnostic.clear();diagnostic.update(failure_diagnostic(error,stage,selected))
     current_phase='torrent resolution';phase_started=time.monotonic();phase_totals={}
     progress=state/'progress.json'
@@ -170,9 +153,17 @@ def verify(payload,state,output,budget_seconds=470):
         result={'status':'ok','data':{'selected':playback['selected'],'info':info,'proof':proof,'raw_samples':samples,'files':files}}
     except Exception as error:
         # Only bounded categories/type names cross the PC boundary.
-        if time.monotonic()>=deadline:
+        budget_expired=time.monotonic()>=deadline
+        if budget_expired:
             record_failure(Checkpoint('Local verification budget','local_work_budget'),current_phase)
         elif not diagnostic or diagnostic.get('failure_type')!=type(error).__name__ or diagnostic.get('code')!=getattr(error,'code','unclassified'):record_failure(error,current_phase)
+        # Legacy diagnostic fields deliberately remain operationally identical.
+        evidence=sanitize_failure_evidence(getattr(error,'source_failure_evidence',{}))
+        if budget_expired:
+            # The parent's actual deadline remains terminal even if an older
+            # caught rejection or wrapper checkpoint carries richer evidence.
+            evidence['root_cause']={k:diagnostic[k] for k in ('category','failure_type','phase','code')}
+        diagnostic.update(evidence)
         result={'status':'checkpoint','reason':'transport','diagnostic':diagnostic,'data':{'backend':'windows-torrent'}}
     finally:proxy.close()
     phase_totals[current_phase]=phase_totals.get(current_phase,0)+time.monotonic()-phase_started

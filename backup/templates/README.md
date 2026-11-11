@@ -143,7 +143,7 @@ See [the helper guide](deploy/media-stack/metadata-worker/README.md) for setup
 and recovery. Runtime credentials, queues and local databases remain private.
 
 Optional Windows source verification is implemented separately from metadata
-fetching. Worker package 0.4.11 (verifier image 0.4.11) supports a drained single-lane update and retained-container rollback; it also includes
+fetching. Worker package 0.4.12 (verifier image 0.4.12) supports a drained single-lane update and retained-container rollback; it also includes
 1–16 workers and 1–8 private TorrServer backends. The Debian server validates all
 submitted evidence. See [worker operation and recovery](deploy/media-stack/verification-worker/README.md)
 for sizing, preserved-data updates and measured-throughput limits. Issue [#4](../../issues/4)
@@ -172,3 +172,9 @@ Worker package 0.4.11 adds HEVC Main 8-bit SDR up to 1080p to the shared server/
 Worker 0.4.10 additionally bounds first-sweep execution to four minutes, independently of source discovery and queue waiting, and tracks exact-request progress for a 45-second probe/decode stall watchdog. Deployment acceptance is measured across the eight-worker fleet with retained rollback containers; the package version alone is not proof of a completed rollout.
 
 Torrent discovery supports an optional private Jackett fallback after Torrentio and MediaFusion. Discovery candidates still require full V6 acceptance; provider health and retry status are visible in OMV. See the catalogue guide for configuration and limitations.
+
+Worker package 0.4.12 adds bounded source root-cause evidence and separate OMV
+reporting when aggregate candidate exhaustion hides an earlier rejection. Its
+operational diagnostic fields, retry/fallback policy and V6 rules are unchanged.
+Older workers remain compatible; package publication alone does not confirm the
+physical Windows installation. Confirm connected client versions after updating.

@@ -30,6 +30,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 from source_discovery import failure_state, success_state, search_parameters, torznab_streams, series_title_matches
 from features import Features
+from source_failure_diagnostics import scope as failure_scope, record as record_source_failure, tag as diagnostic_tag
 from metadata_jobs import MetadataJobs, MetadataBusy, InvalidSubmission, from_marker as metadata_coordinator
 from reliability import Reliability, Checkpoint, SourceFailure, DecodeFailure, SourceStalled, SourceTooSlow, AUDIO_CODECS, VERSION, rank, METADATA_SECONDS, WORK_SECONDS
 from embedded_subtitles import EmbeddedSubtitles
@@ -206,6 +207,7 @@ def playback_phase(key,phase):
     try:
         yield
     except Exception as error:
+        record_source_failure(BUDGET,error,phase)
         playback_event(key,phase,started,'cancelled' if isinstance(error,ClientCancelled) else 'failed',error)
         raise
     else:playback_event(key,phase,started,'ok')
@@ -1783,6 +1785,7 @@ def add_mediafusion_after_slow_primary(key,saved):
     combined=list(saved);seen={candidate.get('infoHash','').lower() for candidate in combined}
     for candidate in choices:
         infohash=candidate['infoHash'].lower()
+        BUDGET.diagnostic_source_hash=infohash
         if infohash not in seen:
             seen.add(infohash);combined.append(candidate)
     combined.sort(key=rank,reverse=True)
@@ -2004,15 +2007,15 @@ def resolve(key,deadline=None):
                         raise Checkpoint('Torrent metadata pending; retry other titles','metadata_pending')
                     continue
                 raise SourceStalled('Metadata unavailable')
-            if status.get('hash',infohash).lower()!=infohash:raise SourceFailure('Torrent identity changed')
+            if status.get('hash',infohash).lower()!=infohash:raise diagnostic_tag(SourceFailure('Torrent identity changed'),'source_identity_mismatch')
             if exact:
                 matches=[f for f in status['file_stats'] if f.get('id')==exact['index'] and f.get('path')==exact['filename'] and f.get('length')==exact['length']]
-                if len(matches)!=1:raise SourceFailure('Exact source file changed')
+                if len(matches)!=1:raise diagnostic_tag(SourceFailure('Exact source file changed'),'source_file_changed')
                 selected={**exact,'source_provider':source_provider}
             else:
                 try:f=choose_file(status['file_stats'],key,candidate.get('fileIdx'),candidate.get('behaviorHints',{}).get('filename'))
-                except ValueError:raise SourceFailure('Source file selection rejected') from None
-                if key.startswith('movie:') and not candidate_matches({**candidate,'behaviorHints':{'filename':f['path']}},key):raise SourceFailure('Movie filename does not match requested title/year')
+                except ValueError:raise diagnostic_tag(SourceFailure('Source file selection rejected'),'source_file_unmatched') from None
+                if key.startswith('movie:') and not candidate_matches({**candidate,'behaviorHints':{'filename':f['path']}},key):raise diagnostic_tag(SourceFailure('Movie filename does not match requested title/year'),'source_title_mismatch')
                 selected={'hash':infohash,'index':f['id'],'filename':f['path'],'length':f['length'],
                     'source_name':candidate.get('title',''),'file_count':len(status['file_stats']),'torrent_url':candidate.get('torrentUrl'),'link':candidate.get('torrentUrl') or magnet,
                     'source_provider':source_provider}
@@ -2026,6 +2029,7 @@ def resolve(key,deadline=None):
             return remember('resolved:'+key,selected,900)
         except (ClientCancelled,PlaybackBusy,Checkpoint):raise
         except Exception as error:
+            record_source_failure(BUDGET,error,'torrent resolution',infohash)
             remaining(1)
             if deadline and deadline-time.monotonic()<.5:raise Checkpoint('Source checkpoint') from None
             if getattr(BUDGET,'speculative',False):raise
@@ -2037,7 +2041,7 @@ def resolve(key,deadline=None):
         from verification_remote import producer_phase
         producer_phase(globals(),key,'waiting for source metadata')
         raise Checkpoint('Torrent metadata pending; retry other titles','metadata_pending')
-    raise SourceFailure('No working compatible torrent source available')
+    raise diagnostic_tag(SourceFailure('No working compatible torrent source available'),'source_candidates_exhausted')
 
 
 def upstream(selected):
@@ -2309,7 +2313,7 @@ def prepared(key,background=False,audio_index=None,cancel=None,source_id=None):
     if background:deadline=min(deadline,getattr(BUDGET,'worker_deadline',deadline))
     cleanup=None if background else start_foreground_cleanup(key)
     F.consume_rechecks()
-    with validation_attempt(background),request_budget(deadline,cancel),playback_phase(key,'preparation'):
+    with failure_scope(BUDGET),validation_attempt(background),request_budget(deadline,cancel),playback_phase(key,'preparation'):
         # Give idle background transport a short head start on releasing memory.
         # Cleanup remains asynchronous if TorrServer is slow or unavailable.
         if cleanup is not None and not cleanup.is_set():cleanup.wait(min(1.5,remaining(1.5)))
@@ -2460,12 +2464,13 @@ def prepare_locked(key,background,audio_index,deadline):
             elif not background:playback_failure(key,error)
             raise
         try:
+            BUDGET.diagnostic_source_hash=selected.get('hash')
             with playback_phase(key,'video_probe'):info=verified['info'] if verified else probe(selected,key,deadline=deadline)
             video=next((s for s in info.get('streams',[]) if s.get('codec_type')=='video' and not s.get('disposition',{}).get('attached_pic')),{})
             if video.get('codec_name')=='h264' and video.get('pix_fmt') not in ('yuv420p','yuvj420p'):
-                raise DecodeFailure('Unsupported H264 pixel format')
+                raise diagnostic_tag(DecodeFailure('Unsupported H264 pixel format'),'source_video_format')
             try:validate_video(video)
-            except ValueError:raise DecodeFailure('Source requires unsupported video decoding') from None
+            except ValueError:raise diagnostic_tag(DecodeFailure('Source requires unsupported video decoding'),'source_video_format') from None
             audio=[t for t in info.get('streams',[]) if t.get('codec_type')=='audio']
             ordered=sorted(audio,key=lambda t:0 if t.get('codec_name')=='aac' and t.get('profile')=='LC' else 1)
             selected_audio=next((t for t in ordered if t['index']==audio_index),None) if audio_index is not None else next((t for lang in ('eng','en','heb','he') for t in ordered if t.get('tags',{}).get('language')==lang),ordered[0] if ordered else None)
@@ -2476,7 +2481,7 @@ def prepare_locked(key,background,audio_index,deadline):
                 selected_audio=next((t for t in audio if t['index']==accepted_audio),selected_audio)
             if audio_index is not None and selected_audio is None:raise ValueError('Audio track not found')
             needs_conversion=selected_audio is not None and (selected_audio.get('codec_name')!='aac' or selected_audio.get('profile')!='LC')
-            if needs_conversion and float(info.get('format',{}).get('duration') or 0)<=0:raise SourceFailure('Converted VOD requires known duration')
+            if needs_conversion and float(info.get('format',{}).get('duration') or 0)<=0:raise diagnostic_tag(SourceFailure('Converted VOD requires known duration'),'source_duration_missing')
             track_index=selected_audio['index'] if selected_audio else None
             changed_audio=bool(verified and not background and (verified['proof'].get('selected_audio_index')!=track_index or verified['proof'].get('audio_conversion')!=needs_conversion))
             if changed_audio:
@@ -2499,6 +2504,7 @@ def prepare_locked(key,background,audio_index,deadline):
             if cancel and cancel():raise ClientCancelled('Client disconnected') from None
             if getattr(BUDGET,'speculative',False):raise
             remaining(1)
+            record_source_failure(BUDGET,error,'title validation',selected.get('hash'))
             playback_event(key,'source_rejected',time.monotonic(),'failed',error)
             if not isinstance(error,SourceFailure):raise
             request_mediafusion_after_slow_primary(

@@ -254,6 +254,11 @@ class DecodeJobs:
                              for candidate in candidates))
             if not matched:diagnostic.pop('source_hash',None)
             result['diagnostic']=diagnostic
+        from source_failure_diagnostics import sanitize as sanitize_failure_evidence
+        if isinstance(result.get('diagnostic'),dict):
+            d=dict(result['diagnostic']);d.pop('root_cause',None);d.pop('source_failures',None)
+            d.update(sanitize_failure_evidence(result['diagnostic']))
+            result['diagnostic']=d
         raw=json.dumps(result,sort_keys=True,separators=(',',':'),allow_nan=False)
         if len(raw.encode())>2*1024*1024:raise InvalidJob('Result too large')
         digest=hashlib.sha256(raw.encode()).hexdigest();self.seen(worker)
@@ -265,6 +270,13 @@ class DecodeJobs:
             r=self.owned(c,worker,task)
             if not r:return 'stale'
             diagnostic=result.get('diagnostic',{})
+            if isinstance(diagnostic,dict):
+                params=json.loads(r['params'] or '{}')
+                assigned={x.get('infoHash') for x in params.get('candidates',[]) if isinstance(x,dict)}
+                safe=sanitize_failure_evidence(diagnostic,assigned)
+                diagnostic=dict(diagnostic);diagnostic.pop('root_cause',None);diagnostic.pop('source_failures',None)
+                diagnostic.update(safe);result['diagnostic']=diagnostic
+                raw=json.dumps(result,sort_keys=True,separators=(',',':'),allow_nan=False)
             category=diagnostic.get('category','') if isinstance(diagnostic,dict) else ''
             failure_type=diagnostic.get('failure_type','') if isinstance(diagnostic,dict) else ''
             if category not in ('torrent_timeout','stream_stall','speed_rejected','decoder','resource','coordinator','transport','interrupted','validation'):category=''

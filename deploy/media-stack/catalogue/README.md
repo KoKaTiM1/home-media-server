@@ -794,7 +794,7 @@ Fallback calls share their own process lock, 15-second spacing, Retry-After-awar
 
 The optional pinned Jackett Compose service has private persistent configuration, no published host port and a bounded memory/CPU budget. Private `source-providers.json` enables it with `jackett_enabled`, `jackett_url: "http://jackett:9117"`, and `jackett_indexers` containing separate movie/series lists. Provision its API credential into `/data/jackett-api-key`; never place credentials in source files or public examples. Configure and test indexers with Jackett's supported configuration interface before enabling them in this adapter. The current enabled adapters are YTS for movies and The Pirate Bay for episodes. EZTV's browser challenge prevented its acceptance, so it is not queried. This is not a promise of coverage or continued availability.
 
-Discovery tries Torrentio, then MediaFusion, then the enabled Jackett indexers when earlier providers fail or return no compatible candidates. MediaFusion queue admission is bounded to 30 seconds when Jackett is enabled, leaving the existing overall work deadline in control. Each indexer has its own lock, pacing, cooldown and capability query. Supported IMDb lookup is preferred; text searches use existing local original-title metadata plus supported year/season/episode parameters. Movie results must return the requested IMDb ID, and existing title/year checks still apply. Text-only episode results must match an existing series name or alias, the exact season/episode, and a non-conflicting release year. The returned physical filename is checked again before proof import, including results from older Windows clients. Hashes are deduplicated and full V6 codec/speed/decode requirements remain unchanged. Indexer download/proxy URLs and credentials are never forwarded to Windows. Unverified candidates have only the existing temporary listing cache; only passed V6 sources become approved sources. Existing Windows 0.4.11 workers require no image update.
+Discovery tries Torrentio, then MediaFusion, then the enabled Jackett indexers when earlier providers fail or return no compatible candidates. MediaFusion queue admission is bounded to 30 seconds when Jackett is enabled, leaving the existing overall work deadline in control. Each indexer has its own lock, pacing, cooldown and capability query. Supported IMDb lookup is preferred; text searches use existing local original-title metadata plus supported year/season/episode parameters. Movie results must return the requested IMDb ID, and existing title/year checks still apply. Text-only episode results must match an existing series name or alias, the exact season/episode, and a non-conflicting release year. The returned physical filename is checked again before proof import, including results from older Windows clients. Hashes are deduplicated and full V6 codec/speed/decode requirements remain unchanged. Indexer download/proxy URLs and credentials are never forwarded to Windows. Unverified candidates have only the existing temporary listing cache; only passed V6 sources become approved sources. Independent-indexer discovery remains compatible with Windows 0.4.11. Enriched root-cause reporting requires worker 0.4.12.
 
 OMV counters show per-provider HTTP state, cooldown/retry time, completed lookup attempts since counter initialization and latest raw/compatible result counts. Local capacity/cooldown waits are not upstream requests. A successful empty listing differs from a provider failure, and a failure is not cached as a genuine empty listing. Provider outages do not establish title unavailability. The source-supply work and subsequent live observation remain tracked in issue #4.
 
@@ -840,3 +840,21 @@ inspection. If one kind has no eligible work, the other proceeds. Existing manua
 rechecks, V5 audit precedence, source claims, holds, provider pacing/cooldowns and
 V6 acceptance remain authoritative. These scheduling waits are prerequisites,
 not completed media checks or proof of unavailable torrents.
+
+### Diagnostic-only source failure evidence
+
+Preparation collects rejection evidence in scoped memory before aggregate source
+exhaustion can replace it. Optional `root_cause` and `source_failures` fields
+contain fixed category/type/phase/code values and assigned source hashes only,
+with at most 20 deduplicated records. Aggregate exhaustion retains the earlier
+specific rejection; actual interruption/resource/budget termination retains its
+own cause. Successful proof acceptance is unaffected. No raw error messages,
+URLs, credentials or decoder stderr are persisted by this extension.
+
+The existing diagnostic fields remain the operational inputs for retries,
+exclusions and fallback. New receiver code validates evidence against stored job
+candidates for all providers, preserves result replay idempotence, and exports
+the evidence before result-body cleanup. The existing ledger keeps separate
+root-cause buckets that decrease on a later success; OMV labels them separately
+from operational outcomes. There is no historical reclassification or proof
+rewrite. Version 0.4.11 clients remain supported; 0.4.12 supplies the new fields.

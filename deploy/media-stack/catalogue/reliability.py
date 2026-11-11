@@ -4,6 +4,7 @@ Torrent-wide counters are deliberately excluded from the stall clock: TorrServer
 cannot attribute them to a file. The raw proxy records unique delivered ranges
 for each individual sample request instead.
 """
+from source_failure_diagnostics import phase as failure_phase, tag as diagnostic_tag, ffmpeg_failure_code
 import fcntl
 from contextlib import contextmanager
 import http.client
@@ -232,7 +233,7 @@ class Reliability:
         # Separate CLI workers and HTTP handlers share a torrent lease. An
         # existing unrelated reader disables attribution rather than borrowing
         # its progress. Native playback is never stopped to acquire this lock.
-        with self.lock('global-verification'),self.lock('torrent:'+selected.get('hash','local')):
+        with failure_phase(self.g['BUDGET'],phase,selected.get('hash')),self.lock('global-verification'),self.lock('torrent:'+selected.get('hash','local')):
             baseline=self.cache_state(selected)
             attributable=bool(baseline.get('Hash')) and not baseline.get('Readers')
             return self.run_locked(command,key,phase,selected,token,deadline,attributable)
@@ -249,8 +250,8 @@ class Reliability:
                         if process.returncode<0 or re.search(rb'Cannot allocate memory|Resource temporarily unavailable|pthread_create failed',err,re.I):raise ResourceCheckpoint('Verification resource limit; retry serially')
                         if process.returncode or (command[command.index('-v')+1]=='error' and err):
                             if not selected.get('local') and not (self.g['cached']('sample-progress:'+token) or {}).get('bytes'):
-                                raise Checkpoint('Sample transport delivered no exact-source bytes')
-                            raise DecodeFailure('Playback sample process failed')
+                                raise diagnostic_tag(Checkpoint('Sample transport delivered no exact-source bytes'),'sample_transport_empty')
+                            raise diagnostic_tag(DecodeFailure('Playback sample process failed'),ffmpeg_failure_code(process.returncode,err))
                         return subprocess.CompletedProcess(command,process.returncode,out,err)
                     except subprocess.TimeoutExpired as waiting:
                         err=waiting.stderr or b''
@@ -288,7 +289,7 @@ class Reliability:
         try:
             result=media_execute('sample',params,source,lambda command,phase:self.run(command,key,phase,selected,token,deadline),self.g['DATA'])
             return {'position':position,'seconds':seconds,**evidence(result['crc'],seconds,audio_index is not None)}
-        except (MissingVideoFrames,MissingSelectedAudio):raise DecodeFailure('Decoded sample coverage incomplete') from None
+        except (MissingVideoFrames,MissingSelectedAudio):raise diagnostic_tag(DecodeFailure('Decoded sample coverage incomplete'),'sample_coverage_incomplete') from None
 
     @staticmethod
     def speed_proof_valid(proof,local=False):
@@ -413,16 +414,17 @@ class Reliability:
     def verify(self,key,selected,info,audio_index,conversion,deadline):
         if conversion:
             track=next(s for s in info['streams'] if s.get('index')==audio_index)
-            if track.get('codec_name') not in AUDIO_CODECS:raise DecodeFailure('Unsupported audio conversion')
+            if track.get('codec_name') not in AUDIO_CODECS:raise diagnostic_tag(DecodeFailure('Unsupported audio conversion'),'source_audio_format')
         duration=float(info.get('format',{}).get('duration') or 0)
-        if duration<10 or not math.isfinite(duration):raise SourceFailure('No usable sample duration')
+        if duration<10 or not math.isfinite(duration):raise diagnostic_tag(SourceFailure('No usable sample duration'),'source_duration_missing')
         with self.db() as c:row=c.execute('SELECT v.proof,COALESCE(m.requested,0) FROM validation v LEFT JOIN manual_rechecks m ON m.key=v.key WHERE v.key=?',(key,)).fetchone()
         prior=json.loads(row[0]) if row and row[0] else {}
         requested=row[1] if row else 0
         sequence=int(prior.get('audit_sequence',-1))+1
         later=round(min(duration-2,max(6,duration*(.25,.5,.75)[sequence%3])),3)
         accepted=self.decode_proof(key,selected,audio_index,conversion)
-        speed=self.speed_verify(key,selected,info,deadline)
+        with failure_phase(self.g['BUDGET'],'speed verification',selected.get('hash')):
+            speed=self.speed_verify(key,selected,info,deadline)
         if accepted:
             return {**accepted,'version':VERSION,'decode_reused':True,'decode_checked_at':accepted.get('decode_checked_at',accepted['checked_at']),
                     'checked_at':time.time(),'speed':speed}
