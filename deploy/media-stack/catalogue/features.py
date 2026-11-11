@@ -19,6 +19,9 @@ import urllib.request as R
 import xml.etree.ElementTree as ET
 
 
+from source_coverage import source_retry_delay
+
+
 class Features:
     def __init__(self, runtime):
         self.g=runtime
@@ -53,6 +56,8 @@ class Features:
         conn.execute('CREATE TABLE IF NOT EXISTS verification_holds(key TEXT PRIMARY KEY,expires REAL NOT NULL,reason TEXT)')
         conn.execute('CREATE TABLE IF NOT EXISTS verification_claims(key TEXT PRIMARY KEY,token TEXT,owner TEXT,expires REAL)')
         conn.execute('CREATE TABLE IF NOT EXISTS metadata_waits(key TEXT PRIMARY KEY,expires REAL NOT NULL)')
+        conn.execute('CREATE TABLE IF NOT EXISTS source_coverage_retries(key TEXT PRIMARY KEY,attempts INTEGER NOT NULL,next_retry REAL NOT NULL,coverage TEXT NOT NULL,updated REAL NOT NULL)')
+        conn.execute('CREATE INDEX IF NOT EXISTS source_coverage_due ON source_coverage_retries(next_retry)')
         conn.execute('CREATE TABLE IF NOT EXISTS verification_retry_waits(key TEXT PRIMARY KEY,attempts INTEGER NOT NULL,category TEXT NOT NULL,next_retry REAL NOT NULL)')
         conn.execute('CREATE INDEX IF NOT EXISTS metadata_waits_due ON metadata_waits(expires)')
         conn.execute('''CREATE TABLE IF NOT EXISTS verification_sweeps(
@@ -98,6 +103,50 @@ class Features:
         parts=str(metadata_key).split(':')
         return len(parts)==3 and parts[0]=='meta' and bool(self.local_index_metadata(parts[1],parts[2]))
 
+    def clear_source_coverage_retry(self,conn,key):
+        conn.execute('DELETE FROM metadata_waits WHERE key=? AND expires<=(SELECT next_retry FROM source_coverage_retries WHERE key=?)',(key,key))
+        conn.execute('DELETE FROM source_coverage_retries WHERE key=?',(key,))
+
+    def has_coverage_retry(self,key):
+        with self.db() as conn:return bool(conn.execute('SELECT 1 FROM source_coverage_retries WHERE key=?',(key,)).fetchone())
+
+    def defer_source_coverage(self,key,coverage,claim,first_sweep,attempt_started):
+        from source_coverage import SourceCoverage
+        tracker=SourceCoverage([r['provider'] for r in coverage.get('providers',[])])
+        now=time.time()
+        for row in coverage.get('providers',[]):
+            tracker.record(row['provider'],row['status'],row['observed'],row['expires'],row.get('rows',0),row.get('reason'))
+        safe=tracker.partial(now)
+        signature=self.g.get('source_config_signature');current_signature=signature() if callable(signature) else None
+        if not safe or callable(signature) and coverage.get('configuration')!=current_signature:return False
+        if callable(signature):safe['configuration']=current_signature
+        with self.db() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            if not conn.execute('SELECT 1 FROM verification_claims WHERE key=? AND token=? AND expires>?',(key,claim,now)).fetchone():return False
+            if conn.execute("SELECT 1 FROM manual_rechecks WHERE key=? AND status='pending'",(key,)).fetchone():return False
+            if conn.execute('SELECT 1 FROM verification_holds WHERE key=? AND expires>?',(key,now)).fetchone():return False
+            prior=conn.execute('SELECT attempts,updated FROM source_coverage_retries WHERE key=?',(key,)).fetchone()
+            if prior and prior[1]>=attempt_started:return False
+            if conn.execute('SELECT 1 FROM validation WHERE key=? AND checked>?',(key,attempt_started)).fetchone():return False
+            if first_sweep:
+                cur=conn.execute("UPDATE verification_sweep_attempts SET outcome='deferred',finished=? WHERE key=? AND outcome='started' AND sweep_id=(SELECT MAX(id) FROM verification_sweeps)",(now,key))
+                if not cur.rowcount:return False
+            attempts=(prior[0] if prior else 0)+1;due=now+source_retry_delay(attempts)
+            conn.execute('INSERT OR REPLACE INTO source_coverage_retries VALUES (?,?,?,?,?)',(key,attempts,due,json.dumps(safe,sort_keys=True),now))
+            conn.execute('INSERT INTO metadata_waits VALUES (?,?) ON CONFLICT(key) DO UPDATE SET expires=MAX(expires,excluded.expires)',(key,due))
+            event={'scope':'first_sweep' if first_sweep else 'source_coverage_retry','key':key,'finished':now,'outcome':'deferred','category':'provider_coverage','code':'partial_provider_coverage','failure_type':'PartialSourceCoverage','provider':'mixed','coverage':safe,'next_retry':due,'execution_seconds':round(max(0,now-attempt_started),3)}
+            conn.execute('INSERT INTO verification_attempt_outbox VALUES (?,?)',(uuid.uuid4().hex,json.dumps(event,sort_keys=True)))
+        return True
+
+    def due_coverage_retry(self,conn,now):
+        return conn.execute("""SELECT r.key FROM source_coverage_retries r JOIN validation v ON v.key=r.key
+            WHERE r.next_retry<=? AND v.next_check<=? AND (v.state!='verified' OR coalesce(json_extract(v.proof,'$.version'),0)<6)
+            AND NOT EXISTS(SELECT 1 FROM verification_claims c WHERE c.key=r.key AND c.expires>?)
+            AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=r.key AND h.expires>?)
+            AND NOT EXISTS(SELECT 1 FROM metadata_waits m WHERE m.expires>? AND (r.key=m.key OR r.key LIKE m.key||':%'))
+            AND NOT EXISTS(SELECT 1 FROM manual_rechecks m WHERE m.key=r.key AND m.status='pending')
+            ORDER BY r.next_retry LIMIT 1""",(now,now,now,now,now)).fetchone()
+
     def defer_verification(self,key,category):
         with self.db() as conn:
             row=conn.execute('SELECT attempts FROM verification_retry_waits WHERE key=?',(key,)).fetchone()
@@ -108,6 +157,7 @@ class Features:
         return due
     def clear_verification_retry(self,key):
         with self.db() as conn:
+            self.clear_source_coverage_retry(conn,key)
             conn.execute('DELETE FROM metadata_waits WHERE key=? AND EXISTS(SELECT 1 FROM verification_retry_waits WHERE key=?)',(key,key))
             conn.execute('DELETE FROM verification_retry_waits WHERE key=?',(key,))
 
@@ -865,6 +915,7 @@ class Features:
                             conn.execute("INSERT INTO validation(key,state,priority,next_check,reason) VALUES (?,'pending',1000,0,'User requested fresh verification') ON CONFLICT(key) DO UPDATE SET state='pending',priority=MAX(priority,1000),next_check=0,reason='User requested fresh verification'",(key,))
                             conn.execute('DELETE FROM metadata_waits WHERE key=? AND EXISTS(SELECT 1 FROM verification_retry_waits WHERE key=?)',(key,key))
                             conn.execute('DELETE FROM verification_retry_waits WHERE key=?',(key,))
+                            self.clear_source_coverage_retry(conn,key)
                             conn.execute("INSERT INTO manual_rechecks VALUES (?,?,?,'pending') ON CONFLICT(key) DO UPDATE SET requested=excluded.requested,request_id=excluded.request_id,status='pending'",(key,requested,ident))
                             # Preserve current resolved transport for any existing
                             # viewer. The worker clears it immediately before its
@@ -903,11 +954,12 @@ class Features:
                 conn.execute('UPDATE manual_rechecks SET status=? WHERE key=?',('passed' if ok else 'failed',key))
             conn.execute('DELETE FROM metadata_waits WHERE key=? AND EXISTS(SELECT 1 FROM verification_retry_waits WHERE key=?)',(key,key))
             conn.execute('DELETE FROM verification_retry_waits WHERE key=?',(key,))
+            self.clear_source_coverage_retry(conn,key)
             attempts=conn.execute('SELECT attempts FROM validation WHERE key=?',(key,)).fetchone()[0]
             attempts=0 if ok else attempts+1
             # Preserve successful proof even after failure, but never let it
             # override a newer failed check. Backoff: 6h, 12h, 1d ... max 30d.
-            delay=min(30*86400,21600*2**min(max(0,attempts-1),7))
+            delay=source_retry_delay(attempts)
             conn.execute('UPDATE validation SET state=?,attempts=?,next_check=?,checked=?,proof=COALESCE(?,proof),reason=? WHERE key=?',
                 ('verified' if ok else 'unavailable',attempts,0 if ok else now+delay,now,json.dumps(proof) if proof else None,reason[:160],key))
             conn.execute('UPDATE audio_recheck SET completed=? WHERE key=?',(now,key))
@@ -1716,6 +1768,7 @@ class Features:
                         speed_audit_reserved=bool(row)
                     if not row:
                         row=conn.execute("SELECT v.key FROM manual_rechecks m JOIN validation v ON v.key=m.key WHERE m.status='pending' AND v.next_check<=? AND NOT EXISTS(SELECT 1 FROM verification_claims vc WHERE vc.key=v.key AND vc.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM verification_holds h WHERE h.key=v.key AND h.expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM metadata_waits mw WHERE mw.expires>unixepoch() AND (v.key=mw.key OR v.key LIKE mw.key||':%')) ORDER BY m.requested LIMIT 1",(time.time(),)).fetchone()
+                    if not row and slot%5==0:row=self.due_coverage_retry(conn,time.time())
                     if not row and sweep_candidate:row=(sweep_candidate[1],)
                     # Outside a waiting first sweep, pending audits precede
                     # discovery; the fifth slot may also perform a daily refresh.
@@ -1834,6 +1887,21 @@ class Features:
                     # A lease held by the metadata PC is a scheduling wait, not
                     # a source failure. Its short SQL exclusion lets this batch
                     # continue checking other titles rather than stalling.
+                    from source_coverage import PartialSourceCoverage
+                    if isinstance(error,PartialSourceCoverage):
+                        # Fence the generic finally before a transaction can fail.
+                        # A failed retry/outbox commit must never complete the sweep.
+                        was_sweep=sweep_attempt;sweep_original=False;sweep_attempt=False
+                        budget.worker_deadline=previous_attempt_deadline
+                        try:
+                            committed=not getattr(budget,'remote_cancel_code','') and self.defer_source_coverage(key,error.coverage,claim,was_sweep,attempt_started)
+                        except sqlite3.Error as failure:
+                            if callable(diagnostic_logger):diagnostic_logger(failure,'worker attempt')
+                            committed=False
+                        if not committed and was_sweep:self.requeue_first_sweep_infrastructure(key)
+                        self.remember(worker_key,{'message':'Partial source search retained for long-backoff retry' if committed else 'Partial search interrupted; retained for another attempt','started':time.time()},180)
+                        checked+=1
+                        continue
                     source_wait=self.g.get('SourceProviderWait')
                     if source_wait and isinstance(error,source_wait):
                         reason=getattr(error,'reason',None)

@@ -100,3 +100,5 @@ Playback events shows the latest 200 structured foreground failure/checkpoint ev
 The progress overview also reports catalogue-metadata prerequisite waits. Those
 remain in the initial-sweep remaining count until source verification runs;
 metadata arrival alone does not increase V6 passes or completed checks.
+
+Partial provider coverage retries have a separate counter and due count. These are completed but incomplete-coverage searches scheduled on the 6h-to-30d source retry route, not confirmed missing media, successful proofs or admission-only waits.

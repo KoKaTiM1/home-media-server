@@ -1635,7 +1635,7 @@ def jackett_streams(key,priority=0):
         previous=cached(completed_key)
         if previous is not None:
             completed_expiries.append(cached_expiry(completed_key))
-            source_provider_event('jackett','compatible' if previous else 'empty','hit',len(previous))
+            source_provider_event('jackett','compatible' if previous else 'empty','hit',len(previous),indexer=indexer)
             if previous:
                 combined.extend(previous);break
             continue
@@ -1672,7 +1672,7 @@ def jackett_streams(key,priority=0):
                     # not force this completed search to run again.
                     remember(completed_key,clean[:20],1800 if clean else 900)
                     completed_expiries.append(cached_expiry(completed_key))
-                    source_provider_event('jackett','compatible' if clean else 'empty',provider_rows=len(rows),stats=stats,raw_stats=raw_stats)
+                    source_provider_event('jackett','compatible' if clean else 'empty',provider_rows=len(rows),stats=stats,raw_stats=raw_stats,indexer=indexer)
                     state=cached(control) or {};state.update(raw_rows=raw_stats['raw_rows'],provider_rows=len(rows),compatible=len(clean),identity_rejected=raw_stats['identity_rejected'])
                     remember(control,state,90000)
                     combined.extend(clean)
@@ -1694,7 +1694,7 @@ def jackett_streams(key,priority=0):
                     provider_failed(control,error,15)
                     raise
         except (Checkpoint,urllib.error.URLError,TimeoutError,ValueError,ET.ParseError) as error:
-            source_provider_event('jackett','error',error=error)
+            source_provider_event('jackett','error',error=error,indexer=indexer)
             failure=error
     if not combined and failure:
         if isinstance(failure,SourceProviderWait) and failure.reason not in ('cooldown','recovery'):raise failure
@@ -1813,8 +1813,10 @@ def source_provider_error_category(error):
     return 'other'
 
 
-def source_provider_event(provider,outcome,cache='miss',provider_rows=None,stats=None,error=None,primary_cache=None,raw_stats=None):
+def source_provider_event(provider,outcome,cache='miss',provider_rows=None,stats=None,error=None,primary_cache=None,raw_stats=None,indexer=None):
     """Emit low-cardinality lookup telemetry without title/source identifiers."""
+    try:note_discovery_coverage(provider,outcome,cache,provider_rows,stats,error,raw_stats,indexer)
+    except Exception:pass # Missing evidence cannot establish partial completion.
     event={'provider':provider,'outcome':outcome,'cache':cache}
     if provider_rows is not None:event['provider_rows']=max(0,int(provider_rows))
     if stats is not None:
@@ -1868,7 +1870,65 @@ def add_mediafusion_after_slow_primary(key,saved):
     return remember('streams:'+key,combined,1800)
 
 
+def discovery_coverage(key):
+    from source_coverage import SourceCoverage
+    cfg=source_provider_config();providers=['torrentio'];kind=key.split(':')[0]
+    if cfg.get('mediafusion_enabled'):providers.append('mediafusion')
+    if cfg.get('jackett_enabled'):
+        providers.extend('jackett:'+i for i in cfg.get('jackett_indexers',{}).get(kind,[]))
+    coverage=SourceCoverage(providers);coverage.configuration=source_config_signature();now=time.time()
+    for provider in providers:
+        if provider=='torrentio':
+            cachekey='torrentio-empty:'+key;rows=[] if cached(cachekey) else None;control='source-provider-control'
+        elif provider=='mediafusion':cachekey='mediafusion:'+key;rows=cached(cachekey);control='mediafusion-provider-control'
+        else:
+            indexer=provider.split(':')[1];cachekey=jackett_indexer_cache_key(indexer,key);rows=cached(cachekey);control='jackett-'+indexer+'-control'
+        if isinstance(rows,list):
+            clean=filter_streams_with_diagnostics({'streams':rows})[0] if provider=='mediafusion' else rows
+            coverage.record(provider,'candidates' if clean else 'filtered' if rows else 'empty',now,cached_expiry(cachekey),len(rows))
+        else:
+            state=cached(control) or {}
+            if state.get('cooldown',0)>now:coverage.record(provider,'unavailable',now,state['cooldown'],reason='cooldown')
+    return coverage
+
+
+def note_discovery_coverage(provider,outcome,cache,provider_rows,stats,error,raw_stats,indexer):
+    coverage=getattr(BUDGET,'source_coverage',None)
+    if coverage is None:return
+    label='jackett:'+indexer if provider=='jackett' and indexer else provider
+    now=time.time();key=getattr(BUDGET,'source_coverage_key','')
+    if outcome in ('empty','compatible'):
+        raw=(raw_stats or {}).get('raw_rows',provider_rows or 0)
+        cachekey=('mediafusion:'+key if provider=='mediafusion' else jackett_indexer_cache_key(indexer,key) if provider=='jackett' and indexer else 'torrentio-empty:'+key)
+        expires=cached_expiry(cachekey) or now+(300 if provider=='torrentio' else 900)
+        coverage.record(label,'candidates' if outcome=='compatible' else 'filtered' if raw else 'empty',now,expires,raw)
+    elif error is not None:
+        reason=source_provider_error_category(error)
+        if reason.startswith('wait_'):reason=reason[5:]
+        unavailable=reason in ('cooldown','network','timeout','invalid_response') or re.fullmatch('http_[1-5][0-9]{2}',reason)
+        retry=getattr(error,'retry_after',None)
+        coverage.record(label,'unavailable' if unavailable else 'waiting',now,now+(retry if isinstance(retry,(int,float)) and retry>0 else 300),reason=reason)
+
+
 def stream_candidates(key):
+    from source_coverage import PartialSourceCoverage
+    background=getattr(BUDGET,'validation_background',False)
+    enabled=background and (getattr(BUDGET,'first_sweep_attempt',False) or F.has_coverage_retry(key)) and F.manual_recheck_state(key)!='pending'
+    if not enabled:return stream_candidates_impl(key)
+    previous=(getattr(BUDGET,'source_coverage',None),getattr(BUDGET,'source_coverage_key',None))
+    coverage=discovery_coverage(key);BUDGET.source_coverage=coverage;BUDGET.source_coverage_key=key
+    try:
+        return stream_candidates_impl(key)
+    except SourceProviderWait:
+        evidence=coverage.partial(time.time())
+        if evidence:
+            evidence['configuration']=coverage.configuration
+            raise PartialSourceCoverage(evidence) from None
+        raise
+    finally:BUDGET.source_coverage,BUDGET.source_coverage_key=previous
+
+
+def stream_candidates_impl(key):
     # Stable, publisher-distributed open-film source for setup/playback checks.
     # Preserve HTTP web seeds by adding its actual .torrent rather than a magnet.
     open_film={'infoHash':'dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c',
@@ -2378,6 +2438,7 @@ def validation_attempt(background):
 
 
 def prepared(key,background=False,audio_index=None,cancel=None,source_id=None):
+    from source_coverage import PartialSourceCoverage
     if source_id:
         option=RUSSIAN.prepare_option(key,source_id)
         if option:return option
@@ -2402,6 +2463,8 @@ def prepared(key,background=False,audio_index=None,cancel=None,source_id=None):
                 if deadline-time.monotonic()<.1:raise PlaybackBusy('Preparation already in progress')
         try:
             with REL.lock(key):return prepare_locked(key,background,audio_index,deadline)
+        except PartialSourceCoverage:
+            raise
         except MetadataPending:
             # Preserve the scheduling signal through the real preparation
             # wrapper; it must reach the worker's continue-with-other-title path.

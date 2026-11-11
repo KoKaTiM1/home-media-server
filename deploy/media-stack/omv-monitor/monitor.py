@@ -236,6 +236,10 @@ def counts(data=DATA,refresh=False):
                     for stage,category,error_type,status,count in conn.execute('SELECT stage,category,error_type,status,SUM(attempts) FROM metadata_retry_details WHERE hour>=? GROUP BY stage,category,error_type,status ORDER BY stage,category,error_type,status',(hour,))}
             add('Metadata preparation pool',online,f'{active} fetching; {pending} outstanding parents; {ready} resumed titles')
             add('New metadata admission','Paused' if paused and paused[0] else 'Open','Existing catalogue and waiting work are retained; ready titles continue')
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='source_coverage_retries'").fetchone():
+            coverage=conn.execute('SELECT count(*),coalesce(sum(next_retry<=?),0) FROM source_coverage_retries',(time.time(),)).fetchone()
+            summary.update(partial_coverage_retries=coverage[0],partial_coverage_due=coverage[1])
+            add('Partial provider coverage retries',coverage[0],f'{coverage[1]} due; completed partial searches, not confirmed missing sources; 6h to 30d retry')
         if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='verification_sweeps'").fetchone():
             sweep=conn.execute('SELECT id,started,baseline_total,completed FROM verification_sweeps ORDER BY id DESC LIMIT 1').fetchone()
             if sweep:
@@ -362,6 +366,7 @@ def overview(data=DATA,snapshot=None):
             detail=(f"{values.get('v6_audit_pending',max(0,v6_total-v6_done)):,} awaiting; "
                     f"{values.get('v6_audit_passed',0):,} passed; {values.get('v6_audit_failed',0):,} failed")
             add('V6 speed audit',f'{v6_done:,} / {v6_total:,}',detail)
+        if 'partial_coverage_retries' in values:add('Partial provider coverage retries',f"{values['partial_coverage_retries']:,}",f"{values.get('partial_coverage_due',0):,} due; separate from confirmed failures and admission-only waits; 6h to 30d retry")
         if values.get('first_sweep_total') is not None:
             detail=(f"{100*values.get('first_sweep_attempted',0)/values['first_sweep_total']:.1f}% attempted; " if values['first_sweep_total'] else '')
             detail+=f"{values.get('first_sweep_passed',0):,} passed, {values.get('first_sweep_failed',0):,} failed, "

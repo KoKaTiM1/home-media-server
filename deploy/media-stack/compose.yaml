@@ -106,6 +106,7 @@ services:
       - /srv/dev-disk-by-uuid-<APPDATA_FILESYSTEM_UUID>/appdata/verification-worker:/verification-queue
       - /srv/dev-disk-by-uuid-<APPDATA_FILESYSTEM_UUID>/catalogue:/catalogue
       - ./catalogue/app.py:/app/app.py:ro
+      - ./catalogue/source_coverage.py:/app/source_coverage.py:ro
       - ./catalogue/source_discovery.py:/app/source_discovery.py:ro
       - ./catalogue/source_failure_diagnostics.py:/app/source_failure_diagnostics.py:ro
       - ./catalogue/features.py:/app/features.py:ro

@@ -26,6 +26,15 @@ class MonitorTests(unittest.TestCase):
             self.assertEqual(len(rows),1);self.assertEqual(rows[0]['title'],'Fixture title')
             self.assertEqual(rows[0]['recheck'],'pending');self.assertEqual(rows[0]['category'],'decode failure')
             self.assertNotIn('url',rows[0])
+    def test_partial_source_retries_have_separate_overview_card(self):
+        with tempfile.TemporaryDirectory() as directory:
+            data=Path(directory);snapshot=data/'snapshot.json'
+            snapshot.write_text(json.dumps({'time':time.time(),'summary':{'total':10,'v6':2,'partial_coverage_retries':3,'partial_coverage_due':1}}))
+            rows={r['name']:r for r in m.overview(data,snapshot)}
+            self.assertEqual(rows['Partial provider coverage retries']['value'],'3')
+            self.assertIn('1 due',rows['Partial provider coverage retries']['detail'])
+            self.assertIn('separate from confirmed failures',rows['Partial provider coverage retries']['detail'])
+
     def test_dynamic_registry_counts_distinct_torrent_backends(self):
         import sys
         sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'catalogue'))
