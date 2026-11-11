@@ -11,6 +11,7 @@ from pathlib import Path
 from reliability import Checkpoint, Reliability, SourceFailure
 from verification_media import validate_result,validate_video
 from verification_jobs import WorkerWait
+from source_discovery import DEFAULT_TRACKER,tracker_sources,magnet_tracker_sources
 
 class EmptyTorrentCandidates(SourceFailure):
     pass
@@ -26,8 +27,9 @@ class LocalTitleCheckpoint(Checkpoint):
         self.failure_category=category if category in ('torrent_timeout','stream_stall','speed_rejected','decoder','resource','coordinator','transport','interrupted','validation') else 'transport'
 
 
-def magnet(infohash):
-    return 'magnet:?'+urlencode({'xt':'urn:btih:'+infohash,'tr':'udp://tracker.opentrackr.org:1337/announce'})
+def magnet(infohash,sources=None):
+    trackers=[DEFAULT_TRACKER]+[s[8:] for s in tracker_sources(sources) if s[8:]!=DEFAULT_TRACKER]
+    return 'magnet:?'+urlencode([('xt','urn:btih:'+infohash)]+[('tr',t) for t in trackers])
 
 def validate_task(p):
     if not isinstance(p,dict) or p.get('schema')!=1 or not re.fullmatch(r'(movie:tt[0-9]{5,12}|series:tt[0-9]{5,12}:[0-9]+:[0-9]+)',p.get('key','')):raise ValueError('Invalid title job')
@@ -39,6 +41,7 @@ def validate_task(p):
         # The only publisher URL supported for the public canary; all other
         # jobs use public hash magnets, never server credentials/signed URLs.
         if c.get('torrentUrl') not in (None,'https://webtorrent.io/torrents/big-buck-bunny.torrent'):raise ValueError('Invalid publisher source')
+        if 'sources' in c and (not isinstance(c['sources'],list) or c['sources']!=tracker_sources(c['sources'])):raise ValueError('Invalid tracker hints')
         x=c.get('_exact')
         if x and (x.get('hash')!=c['infoHash'] or type(x.get('index')) is not int or x['index']<1 or type(x.get('length')) is not int or x['length']<=0 or not isinstance(x.get('filename'),str)):raise ValueError('Invalid exact file')
     policy=p.get('execution_policy')
@@ -83,11 +86,15 @@ def payload(g,key):
             x['_source_imdb']=c.get('_source_imdb') or (imdb if c.get('_exact') else None)
         if x['provider'] not in ('torrentio','mediafusion','other'):x['provider']='none'
         providers.add(x['provider'])
+        sources=tracker_sources(c.get('sources',[]))
+        if c.get('_exact'):
+            sources=tracker_sources(sources+magnet_tracker_sources(c['_exact'].get('link')))
+        if sources:x['sources']=sources
         if c.get('fileIdx') is not None:x['fileIdx']=int(c['fileIdx'])
         if c.get('torrentUrl')=='https://webtorrent.io/torrents/big-buck-bunny.torrent':x['torrentUrl']=c['torrentUrl']
         if c.get('_exact'):
             e=c['_exact'];x['_exact']={k:e[k] for k in ('hash','index','filename','length')}
-            x['_exact']['link']=x.get('torrentUrl') or magnet(h)
+            x['_exact']['link']=x.get('torrentUrl') or magnet(h,sources)
         candidates.append(x)
         # During the initial catalogue sweep, let the Windows verifier spend
         # its bounded metadata wait on the best-ranked source only. If it

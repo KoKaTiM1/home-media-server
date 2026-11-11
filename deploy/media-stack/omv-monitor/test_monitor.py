@@ -52,6 +52,18 @@ class MonitorTests(unittest.TestCase):
             self.assertIn('2 healthy TorrServers',by['Windows local torrent']['value'])
             self.assertIn('8 workers / 2 TorrServers',by['Windows requested topology']['value'])
 
+    def test_indexer_adapter_and_underlying_reasons_are_distinct_and_safe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            data=Path(directory);now=time.time()
+            with sqlite3.connect(data/'catalogue.sqlite') as c:
+                c.execute('CREATE TABLE cache(key TEXT PRIMARY KEY,value TEXT,expires REAL)')
+                for indexer,details in [('yts',{'indexer_failure':'connection_reset'}),('thepiratebay',{'indexer_failure':'upstream_http_429','upstream_http_status':429})]:
+                    c.execute('INSERT INTO cache VALUES (?,?,?)',('jackett-'+indexer+'-control',json.dumps({'status':400,'cooldown':now+60,**details}),now+1000))
+            rows={r['name']:r for r in m.provider_health_rows(data,now)}
+            self.assertIn('Last HTTP 400',rows['Jackett yts discovery']['detail'])
+            self.assertIn('underlying indexer connection reset',rows['Jackett yts discovery']['detail'])
+            self.assertIn('underlying upstream HTTP 429',rows['Jackett thepiratebay discovery']['detail'])
+
     def test_lan_page_prioritizes_current_verifier_and_gateway(self):
         units={'media-verification-coordinator.service':{'ActiveState':'active','Result':'success','UnitFileState':'enabled'}}
         with patch.object(m,'systemd',return_value=units),patch.object(m,'context',return_value={}):rows=m.workers()

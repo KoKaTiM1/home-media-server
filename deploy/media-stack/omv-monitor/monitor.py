@@ -156,6 +156,10 @@ def provider_health_rows(data,now):
             wait=max(0,int(state.get('cooldown',0)-now))
             value='Cooldown' if wait else 'Ready' if state.get('status')==200 else 'Awaiting response'
             status=state.get('status');detail='Last HTTP '+str(status) if status else 'No successful HTTP response recorded'
+            if provider=='jackett':
+                reason=state.get('indexer_failure')
+                if reason=='connection_reset':detail+='; underlying indexer connection reset'
+                elif reason=='upstream_http_429' and state.get('upstream_http_status')==429:detail+='; underlying upstream HTTP 429'
             if state.get('updated'):detail+='; response '+span(max(0,now-state['updated']))+' ago'
             if wait:detail+='; next recovery attempt in '+span(wait)
             if 'requests' in state:detail+='; completed lookup attempts since counter initialization: '+str(state['requests'])

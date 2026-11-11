@@ -28,7 +28,7 @@ import urllib.request as R
 import uuid
 import xml.etree.ElementTree as ET
 import zipfile
-from source_discovery import failure_state, success_state, search_parameters, torznab_streams, series_title_matches
+from source_discovery import failure_state, success_state, search_parameters, torznab_streams, series_title_matches, tracker_sources, indexer_error_details
 from features import Features
 from source_failure_diagnostics import scope as failure_scope, record as record_source_failure, tag as diagnostic_tag
 from metadata_jobs import MetadataJobs, MetadataBusy, InvalidSubmission, from_marker as metadata_coordinator
@@ -498,11 +498,19 @@ def provider_failed(control_key, error, spacing):
     headers=getattr(error,'headers',None)
     jitter=int.from_bytes(os.urandom(2),'big')%31
     state=failure_state(cached(control_key),status,headers,spacing,time.time(),jitter)
+    for name in ('adapter_http_status','indexer_failure','upstream_http_status'):state.pop(name,None)
+    details=getattr(error,'indexer_details',{})
+    if isinstance(details,dict):
+        if details.get('adapter_http_status')==status and type(status) is int:state['adapter_http_status']=status
+        if details.get('indexer_failure') in ('unknown','connection_reset','upstream_http_429'):state['indexer_failure']=details['indexer_failure']
+        if details.get('upstream_http_status')==429:state['upstream_http_status']=429
     remember(control_key,state,max(90000,state['cooldown']-time.time()+60))
 
 
 def provider_succeeded(control_key,spacing):
-    remember(control_key,success_state(cached(control_key),spacing,time.time()),90000)
+    state=success_state(cached(control_key),spacing,time.time())
+    for name in ('adapter_http_status','indexer_failure','upstream_http_status'):state.pop(name,None)
+    remember(control_key,state,90000)
 
 
 @contextmanager
@@ -1456,7 +1464,9 @@ def mediafusion_streams(key,priority=0):
                 origin=re.search(r'🔗\s*([^\n]+)',description)
                 if not origin or 'torrentio' in origin[1].casefold():continue
                 filename=str((row.get('behaviorHints') or {}).get('filename') or '')
-                rows.append({**row,'title':filename+'\n'+description,'_provider':'mediafusion'})
+                candidate={**row,'title':filename+'\n'+description,'_provider':'mediafusion'}
+                if 'sources' in row:candidate['sources']=tracker_sources(row['sources'])
+                rows.append(candidate)
             provider_succeeded('mediafusion-provider-control',15)
             return remember('mediafusion:'+key,rows,1800 if rows else 900)
         except urllib.error.HTTPError as error:
@@ -1623,6 +1633,19 @@ def jackett_streams(key,priority=0):
                     combined.extend(clean)
                     if clean:break
                 except (urllib.error.URLError,TimeoutError,ValueError,ET.ParseError) as error:
+                    if isinstance(error,urllib.error.HTTPError):
+                        # Jackett can wrap an upstream reset/429 as HTTP400.
+                        # Bound inspection; the adapter status still owns backoff.
+                        try:
+                            response=getattr(error,'fp',None)
+                            sock=getattr(getattr(getattr(response,'fp',None),'raw',None),'_sock',None)
+                            if sock is not None:sock.settimeout(remaining(1))
+                            body=error.read(8193)
+                        except Exception:body=None
+                        finally:
+                            try:error.close()
+                            except Exception:pass
+                        error.indexer_details=indexer_error_details(error.code,body)
                     provider_failed(control,error,15)
                     raise
         except (Checkpoint,urllib.error.URLError,TimeoutError,ValueError,ET.ParseError) as error:
@@ -1756,7 +1779,14 @@ def source_provider_event(provider,outcome,cache='miss',provider_rows=None,stats
     if raw_stats is not None:
         for name in ('raw_rows','malformed_rows','torrentio_origin_rows','named_origin_rows','missing_or_unknown_origin_rows','identity_rejected'):
             event['raw_'+name if name!='raw_rows' else name]=max(0,int(raw_stats.get(name,0)))
-    if error is not None:event['error']=source_provider_error_category(error)
+    if error is not None:
+        event['error']=source_provider_error_category(error)
+        if provider=='jackett':
+            details=getattr(error,'indexer_details',{})
+            if isinstance(details,dict):
+                if type(details.get('adapter_http_status')) is int and 100<=details['adapter_http_status']<=599:event['adapter_http_status']=details['adapter_http_status']
+                if details.get('indexer_failure') in ('unknown','connection_reset','upstream_http_429'):event['indexer_failure']=details['indexer_failure']
+                if details.get('upstream_http_status')==429:event['upstream_http_status']=429
     if primary_cache is not None:event['primary_cache']=primary_cache
     try:
         if cache=='miss' and outcome in ('compatible','empty') and provider in ('torrentio','mediafusion','jackett'):

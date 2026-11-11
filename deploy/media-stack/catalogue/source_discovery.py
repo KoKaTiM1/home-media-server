@@ -7,6 +7,51 @@ from urllib.parse import parse_qs, urlsplit
 import xml.etree.ElementTree as ET
 
 
+# Fixed public announce endpoints. Provider URLs never become arbitrary fetches.
+DEFAULT_TRACKER='udp://tracker.opentrackr.org:1337/announce'
+PUBLIC_TRACKERS=frozenset((DEFAULT_TRACKER,
+ 'udp://open.stealth.si:80/announce',
+ 'udp://tracker.torrent.eu.org:451/announce',
+ 'udp://exodus.desync.com:6969/announce',
+ 'udp://open.demonii.com:1337/announce',
+ 'https://tracker.gbitt.info:443/announce',
+ 'https://tracker.renfei.net:443/announce',
+ 'https://tracker.tamersunion.org:443/announce'))
+
+
+def tracker_sources(values):
+    """Keep at most eight distinct, exact approved tracker hints."""
+    if not isinstance(values,list):return []
+    out=[]
+    for value in values[:128]:
+        if (isinstance(value,str) and len(value)<=512 and value.startswith('tracker:')
+            and value[8:] in PUBLIC_TRACKERS and value not in out):out.append(value)
+        if len(out)==8:break
+    return out
+
+
+def magnet_parameters(link):
+    if not isinstance(link,str) or not link.startswith('magnet:?') or len(link)>16384:return {}
+    try:return parse_qs(urlsplit(link).query,max_num_fields=128)
+    except ValueError:return {}
+
+
+def magnet_tracker_sources(link):
+    return tracker_sources(['tracker:'+value for value in magnet_parameters(link).get('tr',[])])
+
+
+def indexer_error_details(status,body):
+    """Diagnostic labels only; never retain response text or change backoff."""
+    if type(status) is not int or not 100<=status<=599:return {}
+    out={'adapter_http_status':status,'indexer_failure':'unknown'}
+    if not isinstance(body,bytes) or len(body)>8192:return out
+    text=body.decode('utf-8','replace')
+    if re.search(r'(?i)\b429\s+too\s+many\s+requests\b|\bstatus\s*[:=]\s*TooManyRequests\b',text):
+        out.update(indexer_failure='upstream_http_429',upstream_http_status=429)
+    elif re.search(r'(?i)\bconnection reset by peer\b|\bSocketException\s*\(104\)',text):out['indexer_failure']='connection_reset'
+    return out
+
+
 def retry_after_seconds(headers, now):
     value = headers.get('Retry-After', '') if headers else ''
     try:
@@ -101,7 +146,7 @@ def torznab_streams(raw, key, stats=None):
         link = attrs.get('magneturl') or item.findtext('link') or ''
         infohash = attrs.get('infohash', '')
         if not infohash and link.startswith('magnet:?'):
-            for xt in parse_qs(urlsplit(link).query).get('xt', []):
+            for xt in magnet_parameters(link).get('xt', []):
                 if xt.lower().startswith('urn:btih:'):infohash = xt[9:];break
         if re.fullmatch('[A-Z2-7a-z]{32}', infohash):
             try:infohash = base64.b32decode(infohash.upper()).hex()
@@ -109,9 +154,11 @@ def torznab_streams(raw, key, stats=None):
         if not re.fullmatch('[a-fA-F0-9]{40}', infohash):continue
         seeds = attrs.get('seeders', '0')
         seeds = seeds if seeds.isdigit() else '0'
+        hints=magnet_tracker_sources(link)
         rows.append({'infoHash': infohash.lower(), 'title': title + '\nseeders: ' + seeds,
                      'behaviorHints': {'filename': title}, '_provider': 'jackett',
-                     **({'_source_imdb':key.split(':')[1]} if bound else {})})
+                     **({'_source_imdb':key.split(':')[1]} if bound else {}),
+                     **({'sources':hints} if hints else {})})
     return rows
 
 

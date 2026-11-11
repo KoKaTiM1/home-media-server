@@ -801,7 +801,7 @@ OMV counters show per-provider HTTP state, cooldown/retry time, completed lookup
 
 ### Optional fallback queue admission
 
-The private `source-providers.json` may set `mediafusion_queue_slots` to an integer from 1 to 32. Omit the setting to retain the existing unrestricted waiter queue. A proposed controlled value is 8 for a 16-producer installation; it requires a measured live comparison before acceptance. The limit counts background active and waiting tickets. Already admitted callers keep their place; priority requests cannot evict them. Overflow returns a scheduling deferral, retains any primary-negative cache, and leaves the first-sweep item queued for its existing short retry. It does not mark the source unavailable or finish its verification attempt. Provider spacing, cooldown, foreground fail-fast behavior and all V6 evidence checks are preserved. Removing the setting restores unrestricted admission.
+The private `source-providers.json` may set `mediafusion_queue_slots` to an integer from 1 to 32. Omit the setting to retain the existing unrestricted waiter queue. The current controlled value is 2 when Jackett fallback is enabled: this fits the 30-second queue window and 15-second provider spacing. Its sustained effect must be measured after deployment. The limit counts background active and waiting tickets. Already admitted callers keep their place; priority requests cannot evict them. Overflow returns a scheduling deferral, retains any primary-negative cache, and leaves the first-sweep item queued for its existing short retry. It does not mark the source unavailable or finish its verification attempt. Provider spacing, cooldown, foreground fail-fast behavior and all V6 evidence checks are preserved. Removing the setting restores unrestricted admission.
 
 ## Durable verification receipts
 
@@ -865,3 +865,10 @@ rewrite. Version 0.4.11 clients remain supported; 0.4.12 supplies the new fields
 An explicitly reported Windows `metadata_pending` checkpoint for an assigned source now finishes the first-sweep attempt as deferred and uses the existing retry schedule. It does not immediately request Debian fallback or permanently reject the title. The current best-source metadata wait remains bounded; subsequent retries may discover other eligible sources. Backend/connectivity failures, invalid Windows results, other failure categories and work outside the first sweep retain their existing fallback behavior. Cancellation takes precedence over deferral.
 
 OMV separately shows first-sweep torrent metadata deferrals and actual Debian fallback lock admissions. These cumulative counters start with this release; requested fallback, scheduling-only deferrals, Windows operations and first-sweep outcomes remain distinct metrics. V6 source identity, speed and decoded-sample requirements are unchanged. No Windows image update is required.
+
+
+### Bounded tracker hints and indexer error attribution
+
+Candidate tracker hints are retained through Torznab magnet parsing and Windows job construction, including rebuilt magnets for exact sources. Only eight fixed public announce endpoints are accepted; arbitrary hosts, credentials, query strings, local endpoints and duplicate hints are discarded. The default tracker remains present. Cached provider candidates are filtered again at the Windows boundary. Exact source identity and V6 requirements remain unchanged. Existing Windows 0.4.12 consumes the optional `sources` field; this server release requires no PC image update.
+
+Jackett failures may include bounded diagnostic labels for adapter HTTP status and a confirmed upstream 429 or connection reset. Only fixed labels/status numbers are retained, never response bodies or exception text. These diagnostics do not change backoff: the actual adapter status and existing Retry-After policy remain authoritative. A later successful lookup clears old underlying-error labels.
