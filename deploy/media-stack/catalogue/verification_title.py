@@ -91,8 +91,8 @@ def payload(g,key):
         candidates.append(x)
         # During the initial catalogue sweep, let the Windows verifier spend
         # its bounded metadata wait on the best-ranked source only. If it
-        # cannot resolve, the Debian fallback can immediately try the next
-        # source instead of repeating the same long wait on the PC.
+        # cannot resolve metadata, defer the title until its normal retry.
+        # Other local failures retain the existing Debian fallback.
         if len(candidates)>=(1 if first_sweep else 20):break
     if fallback_marker:
         # After a source failed V6 speed validation, try newly discovered
@@ -270,8 +270,18 @@ def _execute_title(g,key,cancel,execution_seconds):
                         diagnostic=result.get('diagnostic',{})
                         failure_category=diagnostic.get('category','transport') if isinstance(diagnostic,dict) else 'transport'
                         failure_code=(diagnostic.get('code') or 'unclassified') if isinstance(diagnostic,dict) else 'unclassified'
-                        if failure_code=='metadata_pending':defer_local_metadata_source(g,key,p,diagnostic)
                         if result.get('reason')=='interrupted':raise Checkpoint('Verification interrupted')
+                        metadata_deferred=defer_local_metadata_source(g,key,p,diagnostic) if failure_code=='metadata_pending' else False
+                        if metadata_deferred and getattr(g['BUDGET'],'first_sweep_attempt',False):
+                            # A first sweep spends one bounded metadata window
+                            # on its assigned source. Let the ordinary retry
+                            # scheduler revisit it instead of immediately
+                            # occupying Debian's serialized fallback lane.
+                            q.count('windows_local_metadata_deferred')
+                            error=LocalTitleCheckpoint('transport','metadata_pending')
+                            from source_failure_diagnostics import sanitize
+                            error.source_failure_evidence=sanitize(diagnostic)
+                            raise error
                         # A speed-rejected Torrentio-only list may benefit from
                         # the existing paced fallback on the server's next
                         # background preparation. Other failures do not trigger
@@ -333,6 +343,7 @@ def _execute_title(g,key,cancel,execution_seconds):
             # Initial-sweep producers move on promptly when fallback is occupied.
             with g['request_budget'](deadline,cancel):
                 with g['REL'].lock('windows-local-server-fallback',wait=not getattr(g['BUDGET'],'first_sweep_attempt',False)):
+                    q.count('windows_local_fallback_admitted')
                     g['prepared'](key,background=True,cancel=cancel)
         finally:g['BUDGET'].remote_verification=old
         return True

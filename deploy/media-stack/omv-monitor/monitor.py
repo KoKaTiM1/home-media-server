@@ -441,6 +441,8 @@ def overview(data=DATA,snapshot=None):
             tone='success' if local_backends and control.get('local_torrent_permitted') else ('muted' if not capable else 'error')
             add('Windows local torrent',f'{local_backends} healthy TorrServers / {capable} capable workers',detail,tone)
             add('Windows local V6 passes',f"{totals.get('windows_local_titles_verified',0):,}",f"{totals.get('windows_local_server_fallbacks',0):,} requested Debian fallback; {totals.get('windows_local_fallback_deferred',0):,} deferred for its resource gate; {totals.get('windows_local_invalid_results',0):,} invalid Windows results rejected",'success')
+            add('Windows torrent metadata deferred',f"{totals.get('windows_local_metadata_deferred',0):,}",'First-sweep metadata waits sent to the existing retry schedule; no immediate Debian fallback. Not permanent failures.')
+            add('Windows Debian fallback admitted',f"{totals.get('windows_local_fallback_admitted',0):,}",'Actual fallback lock admissions since this counter was introduced; requests and scheduling-only deferrals are separate.')
         else:
             add('Windows local torrent','Awaiting updated PC package','Existing Windows sample workers remain compatible; Debian verification continues')
         queue_capacity=capacity*max(1,min(8,int(control.get('prefetch_per_lane',1))))

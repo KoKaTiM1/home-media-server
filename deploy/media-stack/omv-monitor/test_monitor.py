@@ -34,6 +34,8 @@ class MonitorTests(unittest.TestCase):
             root=Path(directory);data=root/'catalogue';data.mkdir()
             q=DecodeJobs(root/'verification-worker'/'queue.sqlite');q.initialize();q.configure(8,2)
             q.set('local_torrent_enabled',True);q.set('local_torrent_permitted',True)
+            for _ in range(3):q.count('windows_local_metadata_deferred')
+            for _ in range(2):q.count('windows_local_fallback_admitted')
             for i in range(1,9):q.seen('fixture-'+str(i),i);q.backend_health('fixture-'+str(i),True,'torrent-'+str(1+(i-1)//4))
             with q.db(True) as c:
                 now=time.time()
@@ -44,6 +46,9 @@ class MonitorTests(unittest.TestCase):
             self.assertIn('queue_timeout: 1',by['Windows cancellation reasons']['value'])
             self.assertIn('10.0s queued / 12.0s lock wait / 40.0s active',by['Windows time per reported attempt']['value'])
             self.assertEqual(by['Windows lanes']['value'],'8 / 8')
+            self.assertEqual(by['Windows torrent metadata deferred']['value'],'3')
+            self.assertEqual(by['Windows Debian fallback admitted']['value'],'2')
+            self.assertIn('retry schedule',by['Windows torrent metadata deferred']['detail'])
             self.assertIn('2 healthy TorrServers',by['Windows local torrent']['value'])
             self.assertIn('8 workers / 2 TorrServers',by['Windows requested topology']['value'])
 

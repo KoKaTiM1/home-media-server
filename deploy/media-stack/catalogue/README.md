@@ -858,3 +858,10 @@ the evidence before result-body cleanup. The existing ledger keeps separate
 root-cause buckets that decrease on a later success; OMV labels them separately
 from operational outcomes. There is no historical reclassification or proof
 rewrite. Version 0.4.11 clients remain supported; 0.4.12 supplies the new fields.
+
+
+### First-sweep torrent metadata deferral
+
+An explicitly reported Windows `metadata_pending` checkpoint for an assigned source now finishes the first-sweep attempt as deferred and uses the existing retry schedule. It does not immediately request Debian fallback or permanently reject the title. The current best-source metadata wait remains bounded; subsequent retries may discover other eligible sources. Backend/connectivity failures, invalid Windows results, other failure categories and work outside the first sweep retain their existing fallback behavior. Cancellation takes precedence over deferral.
+
+OMV separately shows first-sweep torrent metadata deferrals and actual Debian fallback lock admissions. These cumulative counters start with this release; requested fallback, scheduling-only deferrals, Windows operations and first-sweep outcomes remain distinct metrics. V6 source identity, speed and decoded-sample requirements are unchanged. No Windows image update is required.

@@ -432,6 +432,108 @@ class TitleTests(unittest.TestCase):
         stack.enter_context(patch.object(self.q,'poll',return_value=('result',{'status':'checkpoint','reason':'transport'})))
         return stack
 
+    def metadata_result(self,reason='transport',source_hash=None):
+        diagnostic={'category':'transport','code':'metadata_pending',
+                    'root_cause':{'category':'transport','code':'metadata_pending',
+                                  'failure_type':'Checkpoint','phase':'torrent resolution'}}
+        if source_hash is not None:diagnostic['source_hash']=source_hash
+        return {'status':'checkpoint','reason':reason,'diagnostic':diagnostic}
+
+    def test_first_sweep_metadata_pending_defers_without_entering_busy_fallback(self):
+        self.fallback_fixture(True);self.hold_fallback_slot()
+        prior={'version':6,'fixture':'preserve-original-proof'}
+        with a.F.db() as c:
+            c.execute("INSERT INTO validation(key,state,checked,proof) VALUES (?,'verified',123,?)",(KEY,json.dumps(prior)))
+        with patch.object(self.q,'poll',return_value=('result',self.metadata_result())),patch.object(a,'prepared') as prepared:
+            with self.assertRaises(Checkpoint) as caught:execute_title(a.__dict__,KEY)
+        self.assertEqual(caught.exception.code,'metadata_pending')
+        self.assertEqual(caught.exception.source_failure_evidence['root_cause']['code'],'metadata_pending')
+        prepared.assert_not_called()
+        totals=self.q.status()['totals']
+        self.assertEqual(totals.get('windows_local_metadata_deferred'),1)
+        self.assertEqual(totals.get('windows_local_server_fallbacks',0),0)
+        self.assertEqual(totals.get('windows_local_fallback_admitted',0),0)
+        self.assertTrue(a.cached('source-excluded:'+KEY+':'+HASH))
+        with a.F.db() as c:
+            row=c.execute('SELECT state,checked,proof FROM validation WHERE key=?',(KEY,)).fetchone()
+        self.assertEqual(row[:2],('verified',123));self.assertEqual(json.loads(row[2]),prior)
+        with self.q.db() as c:
+            self.assertEqual(c.execute("SELECT count(*) FROM decode_jobs WHERE state IN ('pending','leased','result')").fetchone()[0],0)
+        self.assertTrue(a.BUDGET.remote_verification);self.assertIsNone(a.BUDGET.cancel)
+
+    def test_first_sweep_metadata_pending_does_not_use_free_fallback_either(self):
+        self.fallback_fixture(True)
+        with patch.object(self.q,'poll',return_value=('result',self.metadata_result())),patch.object(a,'prepared') as prepared:
+            with self.assertRaises(Checkpoint) as caught:execute_title(a.__dict__,KEY)
+        self.assertEqual(caught.exception.code,'metadata_pending');prepared.assert_not_called()
+
+    def test_metadata_deferral_finishes_sweep_schedules_retry_and_releases_claim(self):
+        from contextlib import ExitStack
+        with a.F.db() as c:
+            c.execute("INSERT INTO validation(key,state,priority,proof) VALUES (?,'pending',1,?)",(KEY,json.dumps({'fixture':'untouched'})))
+        a.F.start_verification_sweep()
+        with ExitStack() as stack:
+            for name in ('seed_validation','repair_cached_series'):
+                stack.enter_context(patch.object(a.F,name))
+            stack.enter_context(patch.object(a.REL,'schedule'))
+            stack.enter_context(patch.object(a.F,'foreground_busy',return_value=False))
+            stack.enter_context(patch.object(a.F,'jf',return_value=[]))
+            stack.enter_context(patch.object(a.F,'first_sweep_candidate',return_value=((1,KEY),True)))
+            stack.enter_context(patch.object(a.F,'metadata_admission_blocked',return_value=False))
+            stack.enter_context(patch.object(a.BUDGET,'deadline',None,create=True))
+            stack.enter_context(patch.object(a.BUDGET,'cancel',None,create=True))
+            stack.enter_context(patch.object(a.BUDGET,'worker_deadline',time.monotonic()+60,create=True))
+            stack.enter_context(patch('verification_remote.jobs',return_value=self.q))
+            stack.enter_context(patch('verification_title.payload',return_value=self.payload))
+            stack.enter_context(patch.object(self.q,'poll',return_value=('result',self.metadata_result())))
+            stack.enter_context(patch.object(a,'prepared',side_effect=lambda *args,**kwargs:execute_title(a.__dict__,KEY,kwargs.get('cancel'))))
+            a.F.warm_availability(limit=1)
+        with a.F.db() as c:
+            self.assertEqual(c.execute('SELECT count(*) FROM verification_claims').fetchone()[0],0)
+            self.assertEqual(c.execute('SELECT outcome FROM verification_sweep_attempts WHERE key=?',(KEY,)).fetchone()[0],'deferred')
+            retry=c.execute('SELECT category,next_retry FROM verification_retry_waits WHERE key=?',(KEY,)).fetchone()
+            self.assertEqual(retry[0],'transport');self.assertGreater(retry[1],time.time()+290)
+            self.assertEqual(json.loads(c.execute('SELECT proof FROM validation WHERE key=?',(KEY,)).fetchone()[0]),{'fixture':'untouched'})
+            events=[json.loads(row[0]) for row in c.execute('SELECT payload FROM verification_attempt_outbox')]
+            self.assertTrue(any(e['scope']=='first_sweep' and e['code']=='metadata_pending' and e['outcome']=='deferred' for e in events))
+        self.assertEqual(self.q.status()['totals'].get('windows_local_metadata_deferred'),1)
+
+    def test_later_metadata_retry_still_runs_debian_fallback(self):
+        self.fallback_fixture(False)
+        with patch.object(self.q,'poll',return_value=('result',self.metadata_result())),patch.object(a,'prepared') as prepared:
+            self.assertTrue(execute_title(a.__dict__,KEY))
+        prepared.assert_called_once()
+        totals=self.q.status()['totals']
+        self.assertEqual(totals.get('windows_local_metadata_deferred',0),0)
+        self.assertEqual(totals.get('windows_local_server_fallbacks'),1)
+        self.assertEqual(totals.get('windows_local_fallback_admitted'),1)
+
+    def test_interrupted_metadata_result_is_not_a_source_deferral(self):
+        self.fallback_fixture(True)
+        with patch.object(self.q,'poll',return_value=('result',self.metadata_result('interrupted'))),patch.object(a,'prepared') as prepared:
+            with self.assertRaises(Checkpoint) as caught:execute_title(a.__dict__,KEY)
+        self.assertNotEqual(caught.exception.code,'metadata_pending')
+        self.assertIsNone(a.cached('source-excluded:'+KEY+':'+HASH))
+        self.assertEqual(self.q.status()['totals'].get('windows_local_metadata_deferred',0),0)
+        prepared.assert_not_called()
+
+    def test_unassigned_metadata_hash_cannot_bypass_fallback(self):
+        self.fallback_fixture(True)
+        with patch.object(self.q,'poll',return_value=('result',self.metadata_result(source_hash='b'*40))),patch.object(a,'prepared') as prepared:
+            self.assertTrue(execute_title(a.__dict__,KEY))
+        prepared.assert_called_once()
+        self.assertEqual(self.q.status()['totals'].get('windows_local_metadata_deferred',0),0)
+
+    def test_backend_failure_and_generic_root_metadata_keep_fallback(self):
+        self.fallback_fixture(True)
+        # Diagnostic-only roots must not silently change operational policy.
+        result=self.metadata_result();result['diagnostic']['code']='local_transport'
+        with patch.object(self.q,'poll',return_value=('result',result)),patch.object(a,'prepared') as prepared:
+            self.assertTrue(execute_title(a.__dict__,KEY))
+        prepared.assert_called_once()
+        self.assertEqual(self.q.status()['totals'].get('windows_local_fallback_admitted'),1)
+        self.assertEqual(self.q.status()['totals'].get('windows_local_metadata_deferred',0),0)
+
     def hold_fallback_slot(self):
         import hashlib,fcntl
         folder=a.DATA/'preparation-locks';folder.mkdir(parents=True,exist_ok=True)
