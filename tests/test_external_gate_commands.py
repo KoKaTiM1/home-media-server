@@ -25,14 +25,25 @@ class ExternalGateCommandChecks(unittest.TestCase):
         self.assertNotIn("run", build)
         self.assertEqual(commands[1][1:3], ["image", "rm"])
 
-    def test_torrserver_gate_never_builds_or_runs_runtime_stage(self):
-        commands = self.run_main(check_torrserver_patch, [])
+    def test_torrserver_gate_uses_disposable_builder_and_effective_settings_check(self):
+        with patch.object(check_torrserver_patch, "check_settings") as effective:
+            commands = self.run_main(check_torrserver_patch, [])
+        effective.assert_called_once()
+        self.assertEqual(effective.call_args.args[0], ROOT)
+        self.assertEqual(effective.call_args.kwargs, {"entrypoint": "/tmp/torrserver"})
         build = commands[0]
         self.assertEqual(build[:3], ["docker", "build", "--pull=false"])
         self.assertIn("builder", build)
         self.assertNotIn("compose", build)
         self.assertNotIn("run", build)
         self.assertEqual(commands[1][1:3], ["image", "rm"])
+
+    def test_failed_torrserver_build_does_not_run_effective_settings_check(self):
+        with patch.object(sys, "argv", [check_torrserver_patch.__file__, "--repository", str(ROOT)]), \
+             patch.object(check_torrserver_patch.subprocess, "run", return_value=type("Result", (), {"returncode": 1})()), \
+             patch.object(check_torrserver_patch, "check_settings") as effective:
+            self.assertEqual(check_torrserver_patch.main(), 1)
+            effective.assert_not_called()
 
     def test_plugin_gate_uses_locked_package_versions_and_offline_tests(self):
         dockerfile = (ROOT / "plugin-source/dynamic-library/Gate.Dockerfile").read_text()

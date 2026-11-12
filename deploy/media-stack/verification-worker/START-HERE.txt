@@ -1,3 +1,4 @@
+Launcher package 0.4.13; verifier image remains 0.4.12, TorrServer remains 0.3.0.
 Launcher package 0.4.12; verifier image 0.4.12. Use UpdateLane for a one-worker canary.
 Windows verification worker 0.4.12; previous package behavior and V6 proof rules retained.
 
@@ -13,3 +14,5 @@ The updater checks configuration, credentials, resource budget and image checksu
 03-LOGS.cmd shows combined progress. Ctrl+C only closes logs.
 04-STOP-ALL.cmd drains workers and stops torrent backends without deleting data.
 Read README.md for capacity limits, fallback and recovery.
+
+Keep torrserver_settings.py beside worker.ps1. Settings repair drains affected workers, backs up configuration, preserves custom values and verifies effective BitTorr settings. A recovery marker blocks restart after an unverified repair; ask the administrator to inspect the retained backups.

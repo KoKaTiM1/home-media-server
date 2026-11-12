@@ -13,6 +13,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='launcher-checks-') as directory:
         test=Path(directory)
         shutil.copy2(ROOT/'worker.ps1',test/'worker.ps1')
+        shutil.copy2(ROOT/'torrserver_settings.py',test/'torrserver_settings.py')
         for name in ('mock-docker.ps1','test-launchers.ps1'):shutil.copy2(ROOT/'checks'/name,test/name)
         fake=test/'docker.exe';fake.write_text('#!/bin/sh\nexec pwsh -NoProfile -File /test/mock-docker.ps1 "$@"\n');fake.chmod(0o755)
         for leaf in ('config','data','data-2','data-3','data-4'):

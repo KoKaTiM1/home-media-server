@@ -23,6 +23,8 @@ foreach($C in $S.containers.Values){Assert $C.State.Running 'Container not runni
 foreach($Leaf in $Before.Keys){Assert ((Get-Content -Raw ('/test/'+$Leaf+'/preserve.txt')) -eq $Before[$Leaf]) 'Data overwritten'}
 Assert (Test-Path /test/torrent-state/config/settings.json) 'Legacy backend state missing'
 Assert (Test-Path /test/torrent-state-2/config/settings.json) 'Second backend state missing'
+# Fresh launch must produce the nested engine schema, not ignored flat keys.
+foreach($N in 1..2){$Folder=if($N -eq 1){'torrent-state'}else{'torrent-state-'+$N};$V=Get-Content -Raw ('/test/'+$Folder+'/config/settings.json')|ConvertFrom-Json;Assert ($V.BitTorr.CacheSize -eq 16777216 -and $V.BitTorr.PreloadCache -eq 0) 'Effective settings plan did not initialize BitTorr'}
 # Every verifier needs a reaper, and same-image legacy containers must migrate.
 foreach($C in $S.containers.Values){
  if($C.Config.Labels.'home-media.component' -eq 'verification-worker'){Assert $C.HostConfig.Init 'Verifier has no init/subreaper'}
@@ -75,6 +77,34 @@ Topology 8 2;$S=State;$S['low_memory']=$true;Save $S;$null=Run Start 1
 Assert (@(Calls|Where-Object {$_[0] -eq 'stop'}).Count -eq $Count) 'Budget rejection stopped containers'
 $S=State;$S['low_memory']=$false;$S['fail_configure']=$true;Save $S;$null=Run Start 1
 Assert (@(Calls|Where-Object {$_[0] -eq 'stop'}).Count -eq $Count) 'Coordinator failure stopped containers'
+$S=State;$S['fail_configure']=$false;$S['fail_settings_plan']=$true;Save $S
+$Stops=@(Calls|Where-Object {$_[0] -eq 'stop'}).Count
+$null=Run Start 1
+Assert (@(Calls|Where-Object {$_[0] -eq 'stop'}).Count -eq $Stops) 'Settings preflight failure drained containers'
+$S=State;$S['fail_settings_plan']=$false;Save $S
+$Path='/test/torrent-state/config/settings.json'
+$Legacy=@{CacheSize=16777216;PreloadCache=0;ReaderReadAHead=25;UseDisk=$false;RemoveCacheOnDrop=$true;ConnectionsLimit=25;DisableUPNP=$true;EnableIPv6=$false;StoreSettingsInJson=$true;Unrelated='preserve'}
+$Legacy|ConvertTo-Json -Depth 12|Set-Content $Path
+$null=Run Start
+Assert ((Get-Content -Raw $Path|ConvertFrom-Json).Unrelated -eq 'preserve') 'Legacy migration dropped unrelated fields'
+Assert (Test-Path '/test/torrent-state/config/settings.before-bootstrap-v1.fixture.file.json') 'Legacy settings backup missing'
+$Calls=Calls;$ApplyIndex=-1;$LastStop=-1
+for($I=0;$I -lt $Calls.Count;$I++){if($Calls[$I] -contains 'apply'){$ApplyIndex=$I};if($Calls[$I][0] -eq 'stop'){$LastStop=$I}}
+Assert ($ApplyIndex -gt $LastStop) 'Settings were applied before workers drained'
+# A valid custom nested cache is preserved byte-for-byte and needs no restart.
+$Custom=Get-Content -Raw $Path|ConvertFrom-Json -AsHashtable;$Custom.BitTorr.CacheSize=134217728;$Custom|ConvertTo-Json -Depth 12|Set-Content $Path
+$Original=Get-Content -Raw $Path;$Stops=@(Calls|Where-Object {$_[0] -eq 'stop'}).Count
+$null=Run Start
+Assert ((Get-Content -Raw $Path) -eq $Original) 'Custom nested settings were overwritten'
+Assert (@(Calls|Where-Object {$_[0] -eq 'stop'}).Count -eq $Stops) 'Custom settings caused an unnecessary drain'
+# Failed repair must not resume workers, including on a later Start with marker.
+$Legacy|ConvertTo-Json -Depth 12|Set-Content $Path
+$S=State;$S['fail_settings_apply']=$true;Save $S;$null=Run Start 1
+Assert (@((State).containers.Values|Where-Object {$_.State.Running -and $_.Config.Labels.'home-media.backend' -eq 'home-media-verification-torrserver'}).Count -eq 0) 'Settings failure resumed affected workers'
+$S=State;$S['fail_settings_apply']=$false;Save $S;$null=Run Start 1
+Remove-Item '/test/torrent-state/config/settings.bootstrap-v1.pending.json'
+$null=Run Start
+$Count=@(Calls|Where-Object {$_[0] -eq 'stop'}).Count
 $S=State;$S['fail_configure']=$false;$S.containers['home-media-verification-worker-4'].Config.Labels.'home-media.component'='foreign';Save $S
 $null=Run Start 1
 Assert (@(Calls|Where-Object {$_[0] -eq 'stop'}).Count -eq $Count) 'Foreign container was modified'

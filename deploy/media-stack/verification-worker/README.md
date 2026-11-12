@@ -1,6 +1,6 @@
 # Windows V6 verification workers
 
-Launcher package **0.4.12** uses verifier image **0.4.12**. It preserves bounded root-cause diagnostics when candidate exhaustion hides an earlier rejection, without changing retry/fallback or V6 decisions. HEVC Main 8-bit SDR up to 1080p remains supported after the owner TV picture/audio test. Replay/seek acceptance remains tracked separately; HDR, Main10, 4K and AV1 are excluded. Verifiers
+Launcher package **0.4.13** uses the unchanged verifier image **0.4.12** and TorrServer image **0.3.0**. This package repairs settings bootstrap; it does not change the decoder protocol or V6 policy. It preserves bounded root-cause diagnostics when candidate exhaustion hides an earlier rejection, without changing retry/fallback or V6 decisions. HEVC Main 8-bit SDR up to 1080p remains supported after the owner TV picture/audio test. Replay/seek acceptance remains tracked separately; HDR, Main10, 4K and AV1 are excluded. Verifiers
 run with Docker `--init` to reap orphaned decoder children after cancellations.
 Start/Update automatically drains and recreates containers with a mismatched
 image or missing init while preserving identities, config, data and backend state.
@@ -195,3 +195,14 @@ Existing operational diagnostic fields remain unchanged and still control retry
 and fallback behavior. OMV shows separate root-cause counts; old clients remain
 compatible but cannot supply this additional evidence. Package availability
 does not establish physical installation: confirm the reported client version.
+
+
+## Verified TorrServer settings bootstrap
+
+The launcher lets the engine create its complete defaults, then uses its settings API to persist the owned overrides in the supported `BitTorr` record. It checks effective and persisted settings before resuming workers. The earlier flat settings layout was ignored by the engine.
+
+Fresh backends initialize automatically. A legacy launcher file is migrated only when its flat fields match the known generated signature and its nested/effective owned fields still match the shipped defaults. Already-correct settings are idempotent; valid custom nested settings are preserved. Existing unrecognized flat or malformed files fail preflight before workers are drained. Only consumers of affected backends are drained/stopped; their containers, data and identities are retained. A backend image replacement also drains its consumers.
+
+Before applying, the helper saves the original file and full effective settings as `settings.before-bootstrap-v1.*.json` in that backend's private config directory. Unrelated fields are preserved. Readback failure attempts to restore the complete prior effective settings and leaves a `settings.bootstrap-v1.pending.json` recovery marker; affected workers stay stopped and subsequent starts fail preflight until an administrator reviews the backups and removes the marker after confirming recovery. Do not delete the marker merely to bypass an unresolved settings failure. Backups may contain private configuration and must not enter public source control.
+
+Keep `torrserver_settings.py` alongside `worker.ps1`; no worker or TorrServer image upgrade is needed for this package. Tests exercise fresh, legacy, custom, idempotent and rollback behavior, plus actual-engine API readback. This repair does not establish the cause of unavailable torrents or authorize Comet integration.

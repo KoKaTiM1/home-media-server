@@ -31,6 +31,26 @@ switch($A[0]) {
  }
  'run' {
   if($A -contains '--rm'){
+   if($A -contains '/settings-tool.py'){
+    $Mount=@($A|Where-Object {$_ -like 'type=bind,source=*,target=/state*'})[0]
+    $Config=$Mount.Split(',')[1].Substring(7);$Settings=Join-Path $Config 'settings.json'
+    $Wanted=@{CacheSize=16777216;PreloadCache=0;ReaderReadAHead=25;UseDisk=$false;RemoveCacheOnDrop=$true;ConnectionsLimit=25;DisableUPNP=$true;EnableIPv6=$false;StoreSettingsInJson=$true}
+    $Defaults=@{};foreach($K in $Wanted.Keys){$Defaults[$K]=$Wanted[$K]};$Defaults.CacheSize=67108864;$Defaults.PreloadCache=50;$Defaults.ReaderReadAHead=95;$Defaults.RemoveCacheOnDrop=$false;$Defaults.DisableUPNP=$false
+    function Matches($Value,$Expected){if($null -eq $Value){return $false};foreach($K in $Expected.Keys){if(-not $Value.ContainsKey($K) -or $Value[$K] -ne $Expected[$K]){return $false}};return $true}
+    $V=if(Test-Path $Settings){Get-Content -Raw $Settings|ConvertFrom-Json -AsHashtable}else{@{}}
+    if(Test-Path (Join-Path $Config 'settings.bootstrap-v1.pending.json')){exit 1}
+    if($A -contains 'plan'){
+     if($State.fail_settings_plan){exit 1}
+     $Mode=if($V.Count -eq 0){'initialize'}elseif(-not $V.ContainsKey('BitTorr')){if(Matches $V $Wanted){'migrate'}else{exit 1}}elseif(Matches $V.BitTorr $Wanted){'current'}elseif((Matches $V $Wanted) -and (Matches $V.BitTorr $Defaults)){'migrate'}else{'preserve_custom'}
+     @{action=$Mode;change=($Mode -in @('initialize','migrate'))}|ConvertTo-Json -Compress;exit 0
+    }
+    if($State.fail_settings_apply){Set-Content (Join-Path $Config 'settings.bootstrap-v1.pending.json') '{}';exit 1}
+    if(Test-Path $Settings){Copy-Item $Settings (Join-Path $Config 'settings.before-bootstrap-v1.fixture.file.json')}
+    if(-not $V.ContainsKey('BitTorr')){$V.BitTorr=$Defaults}
+    foreach($K in $Wanted.Keys){$V.BitTorr[$K]=$Wanted[$K]}
+    $V|ConvertTo-Json -Depth 15|Set-Content $Settings
+    @{status='applied_verified';changed=$true}|ConvertTo-Json -Compress;exit 0
+   }
    if($A -contains 'configure-capacity'){if($State.fail_configure){exit 1};$State['topology']=@{workers=[int]$A[$A.IndexOf('--workers')+1];torrservers=[int]$A[$A.IndexOf('--torrservers')+1]};Save}
    exit 0
   }

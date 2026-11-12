@@ -56,6 +56,22 @@ function Read-Topology {
 function Assert-Config {
  if(-not (Test-Path -LiteralPath (Join-Path $Root 'config/verification.local.json') -PathType Leaf)){throw 'Keep private config/verification.local.json in this folder'}
 }
+function Invoke-TorrentSettingsTool([int]$Number,[string]$Command,[string]$Mode='') {
+ $Config=Join-Path (Get-StatePath $Number) 'config'
+ New-Item -ItemType Directory -Force $Config|Out-Null
+ $Helper=Join-Path $Root 'torrserver_settings.py'
+ if(-not (Test-Path -LiteralPath $Helper -PathType Leaf)){throw 'Settings helper missing; extract the complete launcher package'}
+ $Net=if($Command -eq 'plan'){'none'}else{$Network}
+ $Mount='type=bind,source='+$Config+',target=/state'
+ if($Command -eq 'plan'){$Mount+=',readonly'}
+ $Arguments=@('run','--rm','--network',$Net,'--read-only','--memory','128m','--cap-drop','ALL','--security-opt','no-new-privileges',
+  '--mount',('type=bind,source='+$Helper+',target=/settings-tool.py,readonly'),'--mount',$Mount,
+  '--entrypoint','python',$Image,'/settings-tool.py',$Command,'--config','/state/settings.json')
+ if($Command -eq 'apply'){$Arguments+=@('--mode',$Mode,'--url',('http://'+(Get-TorrentName $Number)+':8090'))}
+ $Raw=& docker.exe @Arguments
+ if($LASTEXITCODE -ne 0){throw 'TorrServer settings check/repair failed; affected workers remain stopped; configuration backups retained'}
+ return ($Raw|ConvertFrom-Json)
+}
 function Invoke-WorkerTool([int]$Lane,[string]$Command) {
  $Data=Get-DataPath $Lane
  New-Item -ItemType Directory -Force $Data|Out-Null
@@ -105,6 +121,9 @@ function Start-All {
  Invoke-DockerExecutable image inspect $Image --format '{{.Id}}'|Out-Null
  Invoke-DockerExecutable image inspect $TorrentImage --format '{{.Id}}'|Out-Null
  $Workers=@(Get-ManagedContainers);$Backends=@(Get-Torrents)
+ # Validate every settings file before changing topology or draining workers.
+ $SettingsPlans=@{}
+ foreach($N in 1..$T.torrservers){$SettingsPlans[(Get-TorrentName $N)]=Invoke-TorrentSettingsTool $N 'plan'}
  if($T.workers -gt @($Workers|Where-Object {$_.State.Running}).Count -or $T.torrservers -gt @($Backends|Where-Object {$_.State.Running}).Count){Assert-Budget $T}
  Configure-Server $T
  $Found=& docker.exe network ls --filter ('name=^'+$Network+'$') --format '{{.Name}}'
@@ -117,7 +136,19 @@ function Start-All {
   $Expected=Get-TorrentName $Backend
   if($Lane -gt $T.workers -or $C.Config.Image -ne $Image -or $C.Config.Labels.'home-media.backend' -ne $Expected -or $C.HostConfig.Init -ne $true){$Change+=$C}
  }
- Stop-Workers $Change
+ $Pause=@($Change)
+ foreach($C in $Workers){
+  $Backend=$C.Config.Labels.'home-media.backend'
+  if($Backend -and $SettingsPlans.ContainsKey($Backend) -and $SettingsPlans[$Backend].change){
+   if(-not @($Pause|Where-Object {$_.Name -eq $C.Name}).Count){$Pause+=$C}
+  }
+  # A backend image replacement also requires draining its consumers first.
+  $Existing=@($Backends|Where-Object {$_.Name.TrimStart('/') -eq $Backend})
+  if($Existing.Count -gt 0 -and $Existing[0].Config.Image -ne $TorrentImage){
+   if(-not @($Pause|Where-Object {$_.Name -eq $C.Name}).Count){$Pause+=$C}
+  }
+ }
+ Stop-Workers $Pause
  foreach($C in $Change){Invoke-DockerExecutable rm $C.Name.TrimStart('/')}
  foreach($C in $Backends){
   $Name=$C.Name.TrimStart('/');$N=if($Name -eq 'home-media-verification-torrserver'){1}else{[int]($Name.Split('-')[-1])}
@@ -130,11 +161,15 @@ function Start-All {
   $Name=Get-TorrentName $N;$Current=Get-Container $Name
   $State=Get-StatePath $N;$Config=Join-Path $State 'config'
   New-Item -ItemType Directory -Force $Config|Out-Null
-  $Settings=Join-Path $Config 'settings.json'
-  if(-not (Test-Path -LiteralPath $Settings)){'{"CacheSize":16777216,"PreloadCache":0,"ReaderReadAHead":25,"UseDisk":false,"RemoveCacheOnDrop":true,"ConnectionsLimit":25,"DisableUPNP":true,"EnableIPv6":false,"StoreSettingsInJson":true}'|Set-Content -Encoding Ascii -LiteralPath $Settings}
+  # The engine creates its full defaults; the API persists the BitTorr record.
   if(-not $Current){
    Invoke-DockerExecutable run --detach --name $Name --label 'home-media.component=verification-torrent' --restart unless-stopped --network $Network --memory 2g --cpus 2 --pids-limit 128 --cap-drop ALL --security-opt no-new-privileges --log-opt max-size=2m --log-opt max-file=2 --tmpfs '/tmp:rw,nosuid,nodev,size=128m' --env 'TS_LOG_PATH=/tmp/server.log' --env 'TS_TORR_DIR=/tmp/torrents' --mount ('type=bind,source='+$Config+',target=/opt/ts/config') $TorrentImage
   }elseif(-not $Current.State.Running){Invoke-DockerExecutable start $Name}
+  $Plan=$SettingsPlans[$Name]
+  if($Plan.change){
+   $Result=Invoke-TorrentSettingsTool $N 'apply' $Plan.action
+   Write-Host ($Name+': settings '+$Result.status)
+  }
  }
  foreach($Lane in 1..$T.workers){
   $Name=Get-LaneName $Lane;$Current=Get-Container $Name

@@ -11,11 +11,11 @@ import tempfile
 import zipfile
 
 ROOT=Path(__file__).resolve().parent
-VERSION='0.4.12'
+VERSION='0.4.13'
 IMAGE_VERSION='0.4.12'
 IMAGES=('home-media-verification-worker:'+IMAGE_VERSION,
         'home-media-verification-torrserver:0.3.0')
-FILES=('worker.ps1','START-HERE.txt','README.md','config.example.json',
+FILES=('worker.ps1','torrserver_settings.py','START-HERE.txt','README.md','config.example.json',
        '01-UPDATE-AND-START.cmd','02-START-ALL.cmd','03-LOGS.cmd','04-STOP-ALL.cmd')
 
 IMAGE_SMOKE="""import os,pathlib
@@ -32,7 +32,7 @@ def digest(path):
         for chunk in iter(lambda:source.read(1024*1024),b''):value.update(chunk)
     return value.hexdigest()
 
-def build(destination=Path('<SERVICE_HOME>/verification-worker-v0.4.12.zip')):
+def build(destination=Path('<SERVICE_HOME>/verification-worker-v0.4.13.zip')):
     subprocess.run(['docker','run','--rm','--network','none','--read-only','--cap-drop','ALL','--security-opt','no-new-privileges','--entrypoint','python',IMAGES[0],'-c',IMAGE_SMOKE],check=True)
     with tempfile.TemporaryDirectory(prefix='verification-worker-package-') as temporary:
         temporary=Path(temporary);folder=temporary/'HomeMediaVerificationWorker';folder.mkdir()
@@ -53,7 +53,7 @@ def build(destination=Path('<SERVICE_HOME>/verification-worker-v0.4.12.zip')):
             assert archive.testzip() is None
             names=archive.namelist()
             assert len([name for name in names if name.lower().endswith('.cmd')])==4
-            assert len(names)==10
+            assert len(names)==11
             assert not any('/data' in name or 'torrent-state/' in name or '.local.json' in name for name in names)
         destination.parent.mkdir(parents=True,exist_ok=True)
         staged=destination.with_suffix(destination.suffix+'.tmp')
