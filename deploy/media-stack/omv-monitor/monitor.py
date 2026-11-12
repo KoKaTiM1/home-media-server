@@ -538,7 +538,16 @@ def overview(data=DATA,snapshot=None):
             with closing(sqlite3.connect('file:'+str(ledger)+'?mode=ro',uri=True,timeout=1)) as c:
                 recent=c.execute("SELECT scope,count(*),count(distinct key) FROM receipts WHERE finished>=? GROUP BY scope",(now-3600,)).fetchall()
                 r={scope:(events,titles) for scope,events,titles in recent}
-                add('First sweep completed in last hour',r.get('first_sweep',(0,0))[1],'Distinct previously untouched keys that completed a first attempt; receipts since diagnostic rollout; includes passes, source failures and deferred sources')
+                # These codes mean the verifier did not reach a substantive
+                # source/result outcome. Keep their durable receipts, but do
+                # not present them as completed first-sweep checks.
+                scheduling=c.execute("""WITH per_key AS (
+                    SELECT key,
+                      MAX(CASE WHEN code IS NULL OR code NOT IN ('preparation_lock_busy','preparation_budget') THEN 1 ELSE 0 END) AS substantive,
+                      MAX(CASE WHEN code IN ('preparation_lock_busy','preparation_budget') THEN 1 ELSE 0 END) AS scheduling
+                    FROM receipts WHERE scope='first_sweep' AND finished>=? GROUP BY key
+                ) SELECT COALESCE(SUM(substantive),0),COALESCE(SUM(CASE WHEN substantive=0 AND scheduling=1 THEN 1 ELSE 0 END),0) FROM per_key""",(now-3600,)).fetchone()
+                add('First sweep outcomes in last hour',scheduling[0],f"Distinct titles with a substantive first-attempt result or source deferral; excludes {scheduling[1]:,} titles that only hit preparation-lock or preparation-budget checkpoints")
                 add('Preparation waits in last hour',r.get('preparation',(0,0))[0],'Scheduling/provider/metadata waits; these do not complete the first sweep')
                 recovery=c.execute("SELECT count(*),count(distinct key) FROM receipts WHERE scope='preparation' AND code='provider_recovery' AND finished>=?",(now-3600,)).fetchone()
                 add('Provider recovery waits in last hour',str(recovery[1])+' titles / '+str(recovery[0])+' events','Source feeds awaiting recovery or cached-empty expiry; these are queued prerequisites, not failed media checks')

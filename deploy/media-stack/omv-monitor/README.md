@@ -108,6 +108,10 @@ durations separately. An admission wait that never reached the provider shows
 `HTTP not started`; the timing is per provider (and per Jackett indexer) and is
 not an average or a historical total. This helps distinguish a busy local
 queue from a slow provider response without exposing titles, URLs or secrets.
+The last-hour first-sweep outcome metric counts distinct titles with a result
+or source deferral. Titles that only hit `preparation_lock_busy` or
+`preparation_budget` are excluded and identified in the metric detail, because
+those checkpoints did not produce a substantive source outcome.
 
 When Media verification is enabled, it spans the first dashboard row at full width. Other enabled widgets follow underneath in a responsive 1/2/3/4-column grid at the native OMV breakpoints. Cards retain native compact height, padding and text size, with a 220px desktop target width and 140px phone target width. Hover popups use larger 14px text, extra padding and up to 480px width, bounded to the viewport; unrelated tooltips are unchanged. Full titles, values and details remain available on hover. Metrics are presented in four sections: Library & progress, Workers & current activity, Discovery & metadata, and Results & diagnostics. Values and RPCs are unchanged; native cards stay owned by OMV and the presentation adds no source requests. The existing tooltip retains full detail. No enabled-widget preferences, worker settings or phone table behavior are modified; dashboards without Media verification retain their native layout.
 
