@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-11-12T00:33:27.693248+00:00",
+  "created_utc": "2026-11-12T01:18:44.388570+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -17,7 +17,7 @@
     "backup/test_export_privacy.py": "d1be3e2707805f7ca2ee3430ca7bf114d9e20240cfcbc0e3e8ccf6dad99385cc",
     "deploy/media-stack/README.md": "312a6c152769ba5fab9a34d22f6c4bc301815187151a7298b3ab68e5333b9ffd",
     "deploy/media-stack/catalogue/Dockerfile": "070b30cb23e216e54f75177b07232a5beaa4d876b9733951c921dd96d452c636",
-    "deploy/media-stack/catalogue/README.md": "3de9a97a7a4f013dc89cd4233c0cd8aa7b4c5fb7183fac3d69a74785f51ae46d",
+    "deploy/media-stack/catalogue/README.md": "c2fc748d0c3853dcc918e2cad713bba41d4a57eccb1af4f907c2c85b02aa7c8c",
     "deploy/media-stack/catalogue/app.py": "128f2f7eda7070e77449a5ee8b903205f33cd19aa34582cf485d9a598356183b",
     "deploy/media-stack/catalogue/bootstrap.py": "002cb58a203f36b9ee66d83900cf939a273e73e75637dfd8b342a67b48edfad9",
     "deploy/media-stack/catalogue/check_audio_conversion.py": "669463dd9be988b0becf34db0014739e559e2f1fa6c350be11d5dd4a81c4a899",
@@ -30,6 +30,7 @@
     "deploy/media-stack/catalogue/check_show_counts.py": "00d7dee1c65c6e3800f01193a59156b98383b3129e84809b865a79503db4ddf0",
     "deploy/media-stack/catalogue/check_subtitle_delivery.py": "cc143d9c5ad787bcfc3e66a8b26cb48e465afb487d5d2e4e35872486bbc439f9",
     "deploy/media-stack/catalogue/check_tv_recovery.py": "52bf401d509aa7e45cbb0e5c83db15935e39fbd4842a9146ac44be7b3ab4afbc",
+    "deploy/media-stack/catalogue/comet_trial.py": "3a64b726221e6349b45f77e1f4bd2434fbdfb9f1d9848c2467ff07b5b258ee0d",
     "deploy/media-stack/catalogue/embedded_subtitles.py": "88cbb7199b92a5c1f5cde75d3483be1ec50d6cf470e69d0975113b1deca96d39",
     "deploy/media-stack/catalogue/features.py": "e25217de6dcb6a7eb797f0a0dc42e81d272e0ccb0e45fcc11fba8f2113d7d0a8",
     "deploy/media-stack/catalogue/local_progress.py": "66234d6630aae1faba9171075133272096a5ce067ad9fcebf140b38dd2e3d627",
@@ -43,6 +44,7 @@
     "deploy/media-stack/catalogue/source_failure_diagnostics.py": "132bf662ad348dcf0ac4c4068139053ddb0ebc9cd72998e595d9577a728d2263",
     "deploy/media-stack/catalogue/test_app.py": "47bf82b58a80aae9832a207fc3a65821226a129ef0ec65b5eff1d007467af60f",
     "deploy/media-stack/catalogue/test_claim_renewal.py": "ef734d2eb6317acc8ea0bd077387b1f5ff5b60a5605dba28ea8a5c8d4b15c719",
+    "deploy/media-stack/catalogue/test_comet_trial.py": "74b2b06f8980886e1798dc52a6c590b8da58126b8ce0cb21eda913abe87a573d",
     "deploy/media-stack/catalogue/test_details.py": "abdcf510dd3f0ee28bf74569f2eaecb9e3e75a73068ba2ae33ed91849da20f95",
     "deploy/media-stack/catalogue/test_durable_playback.py": "8ffe3fc524752064f869d051f066839c40ad4ba232b11b8880b9da15bc18a268",
     "deploy/media-stack/catalogue/test_embedded_subtitles.py": "1f7f92b7489e59412c5ec6da28889f4d3f41aacaf0662665d90e81add7cd9feb",
