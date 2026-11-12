@@ -470,9 +470,10 @@ def overview(data=DATA,snapshot=None):
             phase=value.get('phase','')
             producer_phases[phase]=producer_phases.get(phase,0)+1
         preparing=sum(count for phase,count in producer_phases.items() if phase in
-                      ('source preparation','preparation','torrent_resolution','waiting for source metadata',
+                      ('source preparation','provider slot wait','provider lookup','preparation','torrent_resolution','waiting for source metadata',
                        'video_probe','waiting for speed check','speed verification'))
-        labels={'torrent_resolution':'source lookup','waiting for source metadata':'metadata wait',
+        labels={'source preparation':'source preparation','provider slot wait':'provider slot wait',
+                'provider lookup':'provider lookup','torrent_resolution':'source lookup','waiting for source metadata':'metadata wait',
                 'waiting for speed check':'speed-check wait','speed verification':'speed check',
                 'waiting for decoder':'waiting for decoder','video_probe':'probe preparation'}
         phase_summary=', '.join(f'{labels[phase]} {count}' for phase,count in producer_phases.items() if phase in labels)

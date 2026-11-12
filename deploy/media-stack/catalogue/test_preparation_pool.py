@@ -67,6 +67,18 @@ class PoolTests(unittest.TestCase):
         with self.jobs.db(True) as c:self.jobs.put(c,'provider_slot',time.time()+60)
         self.assertFalse(app.fetch_waiting_metadata(self.jobs))
         with app.F.db() as c:self.assertEqual(c.execute('SELECT count(*) FROM verification_metadata_fetch').fetchone()[0],0)
+
+    def test_background_windows_provider_slot_reports_wait_and_lookup_phases(self):
+        app.BUDGET.validation_background=True
+        app.BUDGET.remote_verification=True
+        app.BUDGET.preparation_key=KEY
+        app.BUDGET.remote_slot=3
+        stages=[]
+        with patch.object(app,'_report_provider_stage',side_effect=lambda control,phase:stages.append((control,phase))):
+            with app.serialized_provider_slot(app.DATA/'test-provider.lock','jackett-yts-control') as timing:
+                self.assertGreaterEqual(timing['queue_wait_ms'],0)
+        self.assertEqual(stages,[('jackett-yts-control','provider slot wait'),
+                                 ('jackett-yts-control','provider lookup')])
     def test_old_import_timer_does_not_fetch_when_pool_enabled(self):
         self.assertFalse(app.F.metadata_admission_blocked(KEY))
         with patch.object(app,'fetch_waiting_metadata',side_effect=AssertionError('pool owns fetching')),patch('metadata_jobs.MetadataJobs.seed'):

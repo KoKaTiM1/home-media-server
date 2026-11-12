@@ -342,6 +342,22 @@ class SourceProviderWait(Checkpoint):
         super().__init__(message);self.provider=provider;self.reason=reason;self.retry_after=retry_after
 
 
+def _report_provider_stage(control_key,phase):
+    """Update the active Windows producer stage without affecting discovery."""
+    if not (getattr(BUDGET,'validation_background',False)
+            and getattr(BUDGET,'remote_verification',False)):
+        return
+    key=getattr(BUDGET,'preparation_key',None)
+    if not isinstance(key,str):return
+    provider=('torrentio' if control_key=='source-provider-control' else
+              'mediafusion' if control_key=='mediafusion-provider-control' else
+              'jackett' if control_key.startswith('jackett-') and control_key.endswith('-control') else 'none')
+    try:
+        from verification_remote import producer_phase
+        producer_phase(globals(),key,phase,provider)
+    except Exception:pass # Telemetry must never change provider admission.
+
+
 def _provider_wait(message,control_key,reason,retry_after=None,started=None):
     error=SourceProviderWait(message,control_key,reason,retry_after)
     if started is not None:
@@ -377,6 +393,8 @@ def serialized_provider_slot(lock_path,control_key,priority=0,queue_slots=None,q
         for name in ('worker_deadline','deadline'):
             limit=getattr(BUDGET,name,None)
             if limit is not None:deadline=min(deadline,limit)
+    _report_provider_stage(control_key,'provider slot wait')
+    last_stage_heartbeat=slot_started
     state=cached(control_key) or {}
     cooldown=state.get('cooldown',0)-time.time()
     if cooldown>0:_provider_wait('Source provider cooldown active',control_key,'cooldown',cooldown,slot_started)
@@ -478,9 +496,13 @@ def serialized_provider_slot(lock_path,control_key,priority=0,queue_slots=None,q
                 try:fcntl.flock(guard,fcntl.LOCK_UN)
                 finally:guard.close()
     def wait_slice(seconds):
+        nonlocal last_stage_heartbeat
         cancel=getattr(BUDGET,'cancel',None)
         if cancel and cancel():raise ClientCancelled('Client disconnected')
         time.sleep(min(.5,seconds))
+        if background and time.monotonic()-last_stage_heartbeat>=10:
+            _report_provider_stage(control_key,'provider slot wait')
+            last_stage_heartbeat=time.monotonic()
     try:
         while True:
             if background and not ticket_turn():
@@ -512,6 +534,7 @@ def serialized_provider_slot(lock_path,control_key,priority=0,queue_slots=None,q
             except BaseException:
                 if not lock.closed:lock.close()
                 raise
+        _report_provider_stage(control_key,'provider lookup')
         try:yield {'queue_wait_ms':max(0,min(600000,int((time.monotonic()-slot_started)*1000)))}
         finally:
             if ticket is not None:

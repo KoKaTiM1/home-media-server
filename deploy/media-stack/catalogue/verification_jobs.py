@@ -102,7 +102,7 @@ class DecodeJobs:
         return min(32,capacity*max(1,min(8,int(self.setting(c,'prefetch_per_lane',1)))))
     def producer(self,slot,key,phase,provider='none'):
         if slot not in range(1,33) or not re.fullmatch('(movie:tt[0-9]{5,12}|series:tt[0-9]{5,12}:[0-9]+:[0-9]+)',key):raise InvalidJob('Invalid producer')
-        if phase not in ('source preparation','torrent_resolution','waiting for source metadata','video_probe','preparation',
+        if phase not in ('source preparation','provider slot wait','provider lookup','torrent_resolution','waiting for source metadata','video_probe','preparation',
                          'waiting for decoder','waiting for speed check','speed verification','probe','sample','title validation','finished','windows local torrent','server fallback'):
             raise InvalidJob('Invalid producer phase')
         if provider not in ('torrentio','mediafusion','jackett','mixed','other','none'):raise InvalidJob('Invalid source provider')

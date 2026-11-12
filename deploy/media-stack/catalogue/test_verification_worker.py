@@ -169,6 +169,8 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(self.q.status()['jobs']['leased'],4)
         self.q.producer(32,KEY,'source preparation')
         with self.assertRaises(InvalidJob):self.q.producer(33,KEY,'source preparation')
+        self.q.producer(1,KEY,'provider slot wait','jackett')
+        self.q.producer(1,KEY,'provider lookup','mediafusion')
         self.q.set('prefetch_per_lane',100)
         self.assertEqual(self.q.status()['windows_queue_capacity'],32)
     def test_server_observes_completed_windows_work_without_two_second_gap(self):

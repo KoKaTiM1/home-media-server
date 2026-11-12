@@ -180,6 +180,14 @@ class MonitorTests(unittest.TestCase):
             with patch.object(m,'context',return_value=activity):rows=m.overview(data,snapshot)
             values={row['name']:row for row in rows}
             self.assertEqual(values['Current torrent provider']['value'],'None')
+            with sqlite3.connect(queue/'queue.sqlite') as c:
+                c.execute('UPDATE control SET value=? WHERE key=?',(json.dumps({'key':'series:tt1234567:1:2','phase':'provider slot wait','provider':'jackett','updated':time.time()}),'producer:3'))
+            with patch.object(m,'context',return_value=activity):rows=m.overview(data,snapshot)
+            values={row['name']:row for row in rows}
+            detail=values['Windows decode queue']['detail']
+            self.assertIn('server preparing 1 titles',detail)
+            self.assertIn('provider slot wait 1',detail)
+            self.assertEqual(values['Current torrent provider']['value'],'Jackett independent indexer')
 
     def test_preparation_pool_and_admission_are_separate_from_v6_passes(self):
         with tempfile.TemporaryDirectory() as directory:
