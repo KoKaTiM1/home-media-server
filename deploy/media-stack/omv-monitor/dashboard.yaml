@@ -10,13 +10,18 @@ data:
   title: Media verification
   description: Final source-check progress and current Windows verification activity.
   grid:
+    class: home-media-verification-grid
     item:
       title: '{{ name }}'
       content: '{{ value }}'
-      tooltip: '{{ detail }}'
+      tooltip: |-
+        {{ name }}
+        {{ value }}
+
+        {{ detail }}
       class: 'omv-text-center omv-background-color-pair-{{ tone }}'
       contentClass: omv-text-truncate
-      minWidth: 180px
+      minWidth: 140px
     store:
       proxy:
         service: HomeMediaWorkers

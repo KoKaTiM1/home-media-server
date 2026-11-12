@@ -89,3 +89,73 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mode, {once: true});
   else mode();
 })();
+
+
+/* Organize only the Media verification grid. Native Angular cards/data remain
+   owned by OMV; ordering uses CSS, never reparents cards or rewrites values. */
+(() => {
+  'use strict';
+  const groups = [
+    {name: 'Library & progress', metrics: [
+      'V6 verified sources', 'Verified movies', 'Verified shows',
+      'Initial V6 first sweep', 'V6 passes in last hour',
+      'First sweep completed in last hour', 'Not yet V6 verified',
+      'Unavailable / retry', 'Partial provider coverage retries',
+      'V6 speed audit', 'Verification overview']},
+    {name: 'Workers & current activity', metrics: [
+      'Windows worker', 'Windows lanes', 'Windows decode queue',
+      'Windows working on', 'Windows batch', 'Current torrent provider',
+      'Windows local torrent', 'Windows requested topology']},
+    {name: 'Discovery & metadata', metrics: [
+      'Torrentio discovery', 'MediaFusion discovery',
+      'Waiting for catalogue metadata', 'Metadata preparation pool',
+      'New metadata admission', 'Metadata fetch retries (24h)',
+      'Provider recovery waits in last hour', 'Preparation waits in last hour']},
+    {name: 'Results & diagnostics', metrics: [
+      'Windows titles attempted in last hour', 'Windows final passes',
+      'Windows local V6 passes', 'Worker operations in last hour',
+      'Windows torrent metadata deferred', 'Windows Debian fallback admitted',
+      'Windows time per reported attempt', 'Windows speed checkpoint reasons',
+      'Windows recent failure categories', 'Windows cancellation reasons',
+      'Latest PC operation issue', 'Windows installed client versions']}
+  ];
+  let frame = 0;
+  function refresh() {
+    frame = 0;
+    document.querySelectorAll('.home-media-verification-grid').forEach(grid => {
+      const counts = [0, 0, 0, 0];
+      [...grid.children].filter(card => card.classList.contains('item')).forEach((card, index) => {
+        const title = (card.querySelector('.title')?.textContent || '').trim();
+        let group = groups.findIndex(entry => entry.metrics.includes(title));
+        if (group < 0) group = title.endsWith(' discovery') ? 2 : 3;
+        let rank = groups[group].metrics.indexOf(title);
+        if (group === 2 && title.startsWith('Jackett ') && title.endsWith(' discovery')) rank = 2;
+        else if (group === 2 && rank >= 2) rank += 3;
+        const order = String(group * 1000 + 1 + (rank < 0 ? 100 + index : rank));
+        if (card.style.order !== order) card.style.order = order;
+        counts[group]++;
+      });
+      groups.forEach((group, index) => {
+        let heading = grid.querySelector('[data-home-media-section="' + index + '"]');
+        if (!counts[index]) { if (heading) heading.remove(); return; }
+        if (!heading) {
+          heading = document.createElement('div');
+          heading.className = 'home-media-section-heading';
+          heading.dataset.homeMediaSection = String(index);
+          heading.setAttribute('role', 'heading');
+          heading.setAttribute('aria-level', '3');
+          heading.style.order = String(index * 1000);
+          heading.textContent = group.name;
+          grid.append(heading);
+        }
+      });
+    });
+  }
+  const schedule = () => { if (!frame) frame = requestAnimationFrame(refresh); };
+  function start() {
+    new MutationObserver(schedule).observe(document.body, {childList: true, subtree: true});
+    schedule();
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, {once: true});
+  else start();
+})();

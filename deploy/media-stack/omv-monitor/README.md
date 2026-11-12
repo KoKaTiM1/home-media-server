@@ -102,3 +102,7 @@ remain in the initial-sweep remaining count until source verification runs;
 metadata arrival alone does not increase V6 passes or completed checks.
 
 Partial provider coverage retries have a separate counter and due count. These are completed but incomplete-coverage searches scheduled on the 6h-to-30d source retry route, not confirmed missing media, successful proofs or admission-only waits.
+
+When Media verification is enabled, it spans the first dashboard row at full width. Other enabled widgets follow underneath in a responsive 1/2/3/4-column grid at the native OMV breakpoints. Cards retain native compact height, padding and text size, with a 220px desktop target width and 140px phone target width. Hover popups use larger 14px text, extra padding and up to 480px width, bounded to the viewport; unrelated tooltips are unchanged. Full titles, values and details remain available on hover. Metrics are presented in four sections: Library & progress, Workers & current activity, Discovery & metadata, and Results & diagnostics. Values and RPCs are unchanged; native cards stay owned by OMV and the presentation adds no source requests. The existing tooltip retains full detail. No enabled-widget preferences, worker settings or phone table behavior are modified; dashboards without Media verification retain their native layout.
+
+Hovering a Media verification card shows its full metric title, full value and explanatory detail, including when the compact card text is truncated.
