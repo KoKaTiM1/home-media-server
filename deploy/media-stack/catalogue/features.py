@@ -883,6 +883,20 @@ class Features:
         with self.db() as conn:
             conn.executemany('INSERT INTO validation(key,priority) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET priority=MAX(priority,excluded.priority)',((key,priority) for key in valid))
 
+    def archive_recheck(self,path,rejected=False):
+        """Archive committed events; archive failure must not replay their writes."""
+        try:
+            done=path.parent.parent/'processed';done.mkdir(parents=True,exist_ok=True)
+            path.replace(done/(path.name+'.rejected' if rejected else path.name))
+        except FileNotFoundError:pass # Another process already archived it.
+        except PermissionError:
+            now=time.monotonic()
+            with self.count_lock:
+                last=getattr(self,'recheck_archive_error_at',None)
+                emit=last is None or now-last>=60
+                if emit:self.recheck_archive_error_at=now
+            if emit:self.log('Local recheck archive permission denied; request records retained')
+
     def consume_rechecks(self):
         """Consume trusted, atomically written plugin events without HTTP secrets."""
         root=self.g['LIBRARY']/'.recheck-requests'
@@ -899,7 +913,13 @@ class Features:
                     if len(parts)>=3 and not 0<=int(parts[2])<=300:raise ValueError('Invalid season')
                     if len(parts)==4 and not 1<=int(parts[3])<=2000:raise ValueError('Invalid episode')
                 with self.db() as conn:
-                    inserted=conn.execute('INSERT OR IGNORE INTO recheck_requests VALUES (?,?,0)',(ident,requested)).rowcount
+                    # A committed event can remain here after a crash or an
+                    # archive permission failure. A read must not acquire the
+                    # SQLite writer again for that already-consumed event.
+                    # New events still use the atomic insert as the fence:
+                    # concurrent consumers can both miss this SELECT.
+                    recorded=conn.execute('SELECT 1 FROM recheck_requests WHERE id=?',(ident,)).fetchone()
+                    inserted=0 if recorded else conn.execute('INSERT OR IGNORE INTO recheck_requests VALUES (?,?,0)',(ident,requested)).rowcount
                     if inserted:
                         keys=set()
                         for scope in scopes:
@@ -924,15 +944,11 @@ class Features:
                             for prefix in ('prepared:','verified-prepared:'):
                                 conn.execute('DELETE FROM cache WHERE key=? OR (key>=? AND key<?)',(prefix+key,prefix+key+':',prefix+key+':\uffff'))
                         conn.execute('UPDATE recheck_requests SET count=? WHERE id=?',(len(keys),ident))
-                done=root/'processed';done.mkdir(parents=True,exist_ok=True)
-                try:path.replace(done/path.name)
-                except FileNotFoundError:pass # Another process committed it.
+                self.archive_recheck(path)
                 with self.count_lock:self.count_cache.clear()
             except (FileNotFoundError,PermissionError):continue
             except (ValueError,KeyError,TypeError,UnicodeError):
-                rejected=root/'processed';rejected.mkdir(parents=True,exist_ok=True)
-                try:path.replace(rejected/(path.name+'.rejected'))
-                except FileNotFoundError:pass
+                self.archive_recheck(path,rejected=True)
                 self.log('Invalid local recheck request rejected')
 
     def manual_recheck_state(self,key):

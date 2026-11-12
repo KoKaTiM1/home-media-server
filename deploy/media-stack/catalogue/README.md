@@ -524,7 +524,14 @@ Authenticated native DELETE is intercepted before filesystem removal; a failed
 report-queue write returns an error instead of falling back to deletion. The
 plugin writes an atomic private event under `.recheck-requests/pending` on the
 existing shared catalogue volume. The bridge commits it once and archives the
-event under `processed`. No public reporting mutation endpoint or new credential
+event under `processed`. Already committed events are checked without acquiring
+a database writer, so an archive failure cannot repeatedly rewrite their state.
+Archive permission failures emit a bounded diagnostic; fix directory access
+instead of deleting pending requests or resetting verification. The shared
+`.recheck-requests`, `pending` and `processed` directories must be writable by
+both the plugin and bridge through their existing media group (setgid directories,
+mode `2775`; no recursive changes to media files or world-write access).
+No public reporting mutation endpoint or new credential
 is introduced. OMV Media workers > Counts includes reports waiting, failed and
 passed. A past sample or a successful recheck still cannot guarantee future
 torrent availability or compatibility with every TV.

@@ -1,5 +1,6 @@
 """Report/delete is a durable fresh verification request, never file deletion."""
-import json,time,uuid,unittest
+import json,time,uuid,unittest,sqlite3,threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 import test_features as fixtures
@@ -73,5 +74,67 @@ class RecheckTests(unittest.TestCase):
   self.assertTrue((a.LIBRARY/'.recheck-requests/processed'/(path.name+'.rejected')).exists())
   self.report(['series:tt7654321']);a.F.consume_rechecks()
   self.assertEqual(a.F.source_state('series:tt7654321:1:1'),'pending')
+
+ def test_consumed_replay_does_not_need_writer_and_preserves_passed_proof(self):
+  path,now=self.report([KEY]);a.F.consume_rechecks();a.F.validation_result(KEY,True,proof={'keep':'proof'},attempt_started=now+1,background=True)
+  self.report([KEY],ident=path.stem,requested=now)
+  writer=a.db();writer.execute('BEGIN IMMEDIATE')
+  try:
+   with patch.object(a.F,'log') as log:a.F.consume_rechecks()
+  finally:writer.rollback();writer.close()
+  self.assertFalse(path.exists());self.assertEqual(a.F.source_state(KEY),'verified')
+  with a.F.db() as c:self.assertEqual(json.loads(c.execute('SELECT proof FROM validation WHERE key=?',(KEY,)).fetchone()[0]),{'keep':'proof'})
+
+ def test_archive_permission_failure_is_bounded_and_recovery_is_read_only(self):
+  path,now=self.report([KEY]);a.F.consume_rechecks();self.report([KEY],ident=path.stem,requested=now)
+  original=Path.mkdir
+  def denied(path,*args,**kwargs):
+   if path.name=='processed':raise PermissionError('private fixture detail')
+   return original(path,*args,**kwargs)
+  writer=a.db();writer.execute('BEGIN IMMEDIATE')
+  try:
+   with patch.object(Path,'mkdir',denied),patch.object(a.F,'log') as log,patch.object(a.F,'count_cache',{}):
+    a.F.consume_rechecks();a.F.consume_rechecks()
+    self.assertTrue(path.exists());self.assertEqual(log.call_count,1)
+    self.assertNotIn('private fixture',str(log.call_args));self.assertNotIn(path.stem,str(log.call_args))
+   a.F.consume_rechecks()
+  finally:writer.rollback();writer.close()
+  self.assertFalse(path.exists())
+  with a.F.db() as c:self.assertEqual(c.execute('SELECT COUNT(*) FROM recheck_requests').fetchone()[0],1)
+
+ def test_uncommitted_event_survives_writer_contention_then_consumes(self):
+  path,now=self.report([KEY]);writer=a.db();writer.execute('BEGIN IMMEDIATE')
+  original=a.db
+  def short_db():
+   c=original();c.execute('PRAGMA busy_timeout=10');return c
+  try:
+   with patch.object(a,'db',short_db):
+    with self.assertRaises(sqlite3.OperationalError):a.F.consume_rechecks()
+   self.assertTrue(path.exists())
+  finally:writer.rollback();writer.close()
+  a.F.consume_rechecks();self.assertFalse(path.exists());self.assertEqual(a.F.source_state(KEY),'pending')
+
+ def test_concurrent_first_consumption_has_one_transactional_winner(self):
+  path,now=self.report([KEY]);barrier=threading.Barrier(2);original=a.db;writes=[];guard=threading.Lock()
+  class ConcurrentConnection(a.Connection):
+   def execute(self,sql,*args,**kwargs):
+    result=super().execute(sql,*args,**kwargs)
+    if sql.startswith('SELECT 1 FROM recheck_requests WHERE id='):
+     row=result.fetchone();barrier.wait(timeout=5)
+     class OneRow:
+      def fetchone(self):return row
+     return OneRow()
+    if sql.startswith('INSERT OR IGNORE INTO recheck_requests'):
+     with guard:writes.append(result.rowcount)
+    return result
+  def connection():
+   c=sqlite3.connect(a.DATA/'catalogue.sqlite',timeout=5,factory=ConcurrentConnection)
+   return c
+  with patch.object(a,'db',connection):
+   with ThreadPoolExecutor(max_workers=2) as pool:list(pool.map(lambda _:a.Features(a.__dict__).consume_rechecks(),range(2)))
+  self.assertEqual(sorted(writes),[0,1]);self.assertFalse(path.exists())
+  with a.F.db() as c:
+   self.assertEqual(c.execute('SELECT COUNT(*) FROM recheck_requests').fetchone()[0],1)
+   self.assertEqual(c.execute('SELECT requested,status FROM manual_rechecks WHERE key=?',(KEY,)).fetchone(),(now,'pending'))
 
 if __name__=='__main__':unittest.main()

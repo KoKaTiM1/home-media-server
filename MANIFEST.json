@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-11-12T09:47:12.064676+00:00",
+  "created_utc": "2026-11-12T12:44:20.757575+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -17,7 +17,7 @@
     "backup/test_export_privacy.py": "d1be3e2707805f7ca2ee3430ca7bf114d9e20240cfcbc0e3e8ccf6dad99385cc",
     "deploy/media-stack/README.md": "312a6c152769ba5fab9a34d22f6c4bc301815187151a7298b3ab68e5333b9ffd",
     "deploy/media-stack/catalogue/Dockerfile": "070b30cb23e216e54f75177b07232a5beaa4d876b9733951c921dd96d452c636",
-    "deploy/media-stack/catalogue/README.md": "c2fc748d0c3853dcc918e2cad713bba41d4a57eccb1af4f907c2c85b02aa7c8c",
+    "deploy/media-stack/catalogue/README.md": "af93516d506743106e16d5e34184067ed50fe523a913d8368d81201b12721391",
     "deploy/media-stack/catalogue/app.py": "128f2f7eda7070e77449a5ee8b903205f33cd19aa34582cf485d9a598356183b",
     "deploy/media-stack/catalogue/bootstrap.py": "002cb58a203f36b9ee66d83900cf939a273e73e75637dfd8b342a67b48edfad9",
     "deploy/media-stack/catalogue/check_audio_conversion.py": "669463dd9be988b0becf34db0014739e559e2f1fa6c350be11d5dd4a81c4a899",
@@ -32,7 +32,7 @@
     "deploy/media-stack/catalogue/check_tv_recovery.py": "52bf401d509aa7e45cbb0e5c83db15935e39fbd4842a9146ac44be7b3ab4afbc",
     "deploy/media-stack/catalogue/comet_trial.py": "3a64b726221e6349b45f77e1f4bd2434fbdfb9f1d9848c2467ff07b5b258ee0d",
     "deploy/media-stack/catalogue/embedded_subtitles.py": "88cbb7199b92a5c1f5cde75d3483be1ec50d6cf470e69d0975113b1deca96d39",
-    "deploy/media-stack/catalogue/features.py": "e25217de6dcb6a7eb797f0a0dc42e81d272e0ccb0e45fcc11fba8f2113d7d0a8",
+    "deploy/media-stack/catalogue/features.py": "999c267413aa46caf9e031a51ac7f47890a2867c7803c924f8ecd1a75869e37f",
     "deploy/media-stack/catalogue/local_progress.py": "66234d6630aae1faba9171075133272096a5ce067ad9fcebf140b38dd2e3d627",
     "deploy/media-stack/catalogue/metadata-preparation.example.json": "37da46da8c81801090d7c30458296376e5d54e2067e0988ef08416b6c4c2c0ab",
     "deploy/media-stack/catalogue/metadata_jobs.py": "565754af294c80f1b3988532ac807da45da5a165e14bd90f5d71bc965feabd93",
@@ -65,7 +65,7 @@
     "deploy/media-stack/catalogue/test_playback_deadlines.py": "82dfa592a697d2eabde631908bb7acdbb4701b3afc04cbf46b2b2bc63f169613",
     "deploy/media-stack/catalogue/test_preparation_pool.py": "06b0df806ddc6b446d923b93f4a07cb8360bb9df5a08c93cd67d3cc24857122a",
     "deploy/media-stack/catalogue/test_provider_queue_alignment.py": "51bfb646e22dac917a049d280c85fd7445f5f27d9a668cee73c06187ff4cf244",
-    "deploy/media-stack/catalogue/test_recheck.py": "dbf72ed5627f444ac83152df11ddf3b389531a6a882058e9fcf834251dac64f1",
+    "deploy/media-stack/catalogue/test_recheck.py": "7905b9b078b82f40dee59a425c43b1ad8e1ce6bb3e1727cf12d7c6a8e237c766",
     "deploy/media-stack/catalogue/test_reliability.py": "d19c678adc7cb65b37370447e0f876efddd19b0b73a67a7b6f8ce43ab3d22461",
     "deploy/media-stack/catalogue/test_russian_audio.py": "708f3a496191b77d615df79ace9650bb7372fc62267f983bc538bd9e3cad0774",
     "deploy/media-stack/catalogue/test_scaling_retry.py": "276c47a595c77f0422ade1a859e337b1bf57b1ae736ea1545bfc9ce0694262b8",
