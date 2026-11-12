@@ -1899,6 +1899,10 @@ def source_provider_event(provider,outcome,cache='miss',provider_rows=None,stats
     try:note_discovery_coverage(provider,outcome,cache,provider_rows,stats,error,raw_stats,indexer)
     except Exception:pass # Missing evidence cannot establish partial completion.
     event={'provider':provider,'outcome':outcome,'cache':cache}
+    # Let throughput reviews exclude interactive browsing/playback lookups.
+    # These low-cardinality labels contain no title, source, or client data.
+    event['scope']='background' if getattr(BUDGET,'validation_background',False) else 'interactive'
+    event['executor']='remote' if getattr(BUDGET,'remote_verification',False) else 'server'
     if provider_rows is not None:event['provider_rows']=max(0,int(provider_rows))
     if stats is not None:
         for name in ('invalid_infohash','unsupported_release','unsupported_codec','unsupported_resolution',

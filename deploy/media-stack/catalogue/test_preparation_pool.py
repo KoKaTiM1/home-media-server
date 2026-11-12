@@ -698,12 +698,26 @@ class SourceDiagnosticsTests(unittest.TestCase):
 
     def test_source_event_contains_only_safe_low_cardinality_fields(self):
         import urllib.error
-        with patch.object(app,'log') as logger:
+        with patch.object(app.BUDGET,'validation_background',False,create=True), \
+             patch.object(app.BUDGET,'remote_verification',False,create=True), \
+             patch.object(app,'log') as logger:
             app.source_provider_event('torrentio','error',error=urllib.error.HTTPError(
                 'https://private.example/tt0000001','429','limited',{},None))
         event=logger.call_args.args[0]
         self.assertIn('"error":"http_429"',event)
+        self.assertIn('"scope":"interactive"',event)
+        self.assertIn('"executor":"server"',event)
         self.assertNotIn('private.example',event)
+        self.assertNotIn('tt0000001',event)
+
+    def test_source_event_marks_background_remote_scope_without_private_fields(self):
+        with patch.object(app.BUDGET,'validation_background',True,create=True), \
+             patch.object(app.BUDGET,'remote_verification',True,create=True), \
+             patch.object(app,'log') as logger:
+            app.source_provider_event('mediafusion','empty',provider_rows=0)
+        event=logger.call_args.args[0]
+        self.assertIn('"scope":"background"',event)
+        self.assertIn('"executor":"remote"',event)
         self.assertNotIn('tt0000001',event)
 
     def test_provider_timing_records_wait_and_http_separately_without_private_fields(self):

@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-11-12T19:58:45.678577+00:00",
+  "created_utc": "2026-11-12T20:52:33.920874+00:00",
   "scope": "project code/configuration/plugin artifacts; excludes secrets, runtime databases and media",
   "files": {
     ".gitignore": "c3005a6bb9b29281b21135b3c9a5aafde56c35e1307050d2719a39734d9c9680",
@@ -18,7 +18,7 @@
     "deploy/media-stack/README.md": "312a6c152769ba5fab9a34d22f6c4bc301815187151a7298b3ab68e5333b9ffd",
     "deploy/media-stack/catalogue/Dockerfile": "070b30cb23e216e54f75177b07232a5beaa4d876b9733951c921dd96d452c636",
     "deploy/media-stack/catalogue/README.md": "4b4586a123da9d75e9691dc9493c08bedc6937e26579feec26e5a7dd7a5726c2",
-    "deploy/media-stack/catalogue/app.py": "fb2ee0578c6e5590cc1263d81927c951fb719f3e04921514bd7b8b3cc261701d",
+    "deploy/media-stack/catalogue/app.py": "e35ad153bb4f7a462605d7af5d1cf73f95d75eca7918da19c2188edb27a85b2d",
     "deploy/media-stack/catalogue/bootstrap.py": "002cb58a203f36b9ee66d83900cf939a273e73e75637dfd8b342a67b48edfad9",
     "deploy/media-stack/catalogue/check_audio_conversion.py": "669463dd9be988b0becf34db0014739e559e2f1fa6c350be11d5dd4a81c4a899",
     "deploy/media-stack/catalogue/check_audio_subtitles.py": "f89e81cd25fa7767dddef438e63e8155a92e8689e5aeeaf5e27af306ed4eb02f",
@@ -63,7 +63,7 @@
     "deploy/media-stack/catalogue/test_partial_coverage.py": "e4f55507d2eb7c96d9db4908be902a6bba1b2c872422162d513dad316588d9d7",
     "deploy/media-stack/catalogue/test_partial_indexer_results.py": "42798c1841bb9a0ed5e576a09f6c05a3d5ded826a9380d470b8b0ea211d3cebc",
     "deploy/media-stack/catalogue/test_playback_deadlines.py": "82dfa592a697d2eabde631908bb7acdbb4701b3afc04cbf46b2b2bc63f169613",
-    "deploy/media-stack/catalogue/test_preparation_pool.py": "23f9f517dae177760cdf30d784fe352815a54b66699089a504541b2e85ce45c4",
+    "deploy/media-stack/catalogue/test_preparation_pool.py": "8577da2d7d605e599099e517d5d8a02ba7dee8675c090642c80ea43b0dfb8f3a",
     "deploy/media-stack/catalogue/test_provider_queue_alignment.py": "51bfb646e22dac917a049d280c85fd7445f5f27d9a668cee73c06187ff4cf244",
     "deploy/media-stack/catalogue/test_recheck.py": "7905b9b078b82f40dee59a425c43b1ad8e1ce6bb3e1727cf12d7c6a8e237c766",
     "deploy/media-stack/catalogue/test_reliability.py": "d19c678adc7cb65b37370447e0f876efddd19b0b73a67a7b6f8ce43ab3d22461",
