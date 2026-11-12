@@ -263,8 +263,17 @@ class SourcePacingTests(unittest.TestCase):
                 with app.source_provider_slot():self.fail('Concurrent upstream call')
         finally:release.set();thread.join(5)
         self.assertEqual(errors,[])
-        with self.assertRaises(app.Checkpoint):
-            with app.source_provider_slot():self.fail('Missing pacing delay')
+
+    def test_provider_slot_exposes_admission_wait_separately(self):
+        with app.serialized_provider_slot(app.DATA/'timing-provider.lock','timing-provider-control') as timing:
+            self.assertIsInstance(timing,dict)
+            self.assertIsInstance(timing.get('queue_wait_ms'),int)
+            self.assertGreaterEqual(timing['queue_wait_ms'],0)
+            self.assertNotIn('http_ms',timing)
+        with app.source_provider_slot() as primary_timing:
+            self.assertIsInstance(primary_timing,dict)
+            self.assertIsInstance(primary_timing.get('queue_wait_ms'),int)
+            self.assertGreaterEqual(primary_timing['queue_wait_ms'],0)
     def test_background_remote_waits_for_shared_slot_and_five_second_spacing(self):
         import threading
         from contextlib import ExitStack
@@ -656,6 +665,9 @@ class FallbackTests(unittest.TestCase):
         self.assertIsNone(app.cached('source-status:movie:tt0000001'))
 
 class SourceDiagnosticsTests(unittest.TestCase):
+    def setUp(self):fixtures.ImportTests.setUp(self)
+    def tearDown(self):fixtures.ImportTests.tearDown(self)
+
     def test_filter_diagnostics_match_the_existing_candidate_decisions(self):
         accepted={'infoHash':'a'*40,'title':'Example 1080p x264'}
         rows=[accepted,{'infoHash':'bad','title':'Example 1080p'},
@@ -681,6 +693,40 @@ class SourceDiagnosticsTests(unittest.TestCase):
         self.assertIn('"error":"http_429"',event)
         self.assertNotIn('private.example',event)
         self.assertNotIn('tt0000001',event)
+
+    def test_provider_timing_records_wait_and_http_separately_without_private_fields(self):
+        error=app.SourceProviderWait('Provider queue full','private-control-key','capacity',30)
+        error.queue_wait_ms=812
+        with patch.object(app,'log') as logger:
+            app.source_provider_event('jackett','error',error=error,indexer='yts')
+        event=logger.call_args.args[0]
+        self.assertIn('"queue_wait_ms":812',event)
+        self.assertNotIn('"http_ms"',event)
+        saved=app.cached('provider-timing:jackett:yts')
+        self.assertEqual(saved['queue_wait_ms'],812)
+        self.assertEqual(saved['result'],'wait_capacity')
+        self.assertNotIn('private-control-key',str(saved));self.assertNotIn('tt0000001',str(saved))
+
+    def test_provider_event_keeps_admitted_http_duration_separate_from_wait(self):
+        with patch.object(app,'log') as logger:
+            app.source_provider_event('mediafusion','empty',provider_rows=0,
+                                      timing={'queue_wait_ms':2400,'http_ms':735})
+        event=logger.call_args.args[0]
+        self.assertIn('"queue_wait_ms":2400',event)
+        self.assertIn('"http_ms":735',event)
+
+    def test_torrentio_fetch_records_queue_and_http_time_without_changing_success_state(self):
+        with patch.object(app,'fetch_raw',return_value={'streams':[]}) as request:
+            result=app.fetch(app.PROVIDER+'/stream/movie/tt0000001.json')
+        self.assertEqual(result,{'streams':[]});request.assert_called_once()
+        timing=app.BUDGET.provider_timings['torrentio']
+        self.assertIsInstance(timing['queue_wait_ms'],int)
+        self.assertIsInstance(timing['http_ms'],int)
+        self.assertEqual(app.cached('source-provider-control')['status'],200)
+        with patch.object(app,'log') as logger:
+            app.source_provider_event('torrentio','empty',provider_rows=0)
+        event=logger.call_args.args[0]
+        self.assertIn('"queue_wait_ms":',event);self.assertIn('"http_ms":',event)
 
     def test_source_diagnostic_logging_failure_does_not_interrupt_lookup(self):
         with patch.object(app,'log',side_effect=OSError('logger unavailable')):

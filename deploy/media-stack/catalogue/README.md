@@ -880,6 +880,14 @@ Candidate tracker hints are retained through Torznab magnet parsing and Windows 
 
 Jackett failures may include bounded diagnostic labels for adapter HTTP status and a confirmed upstream 429 or connection reset. Only fixed labels/status numbers are retained, never response bodies or exception text. These diagnostics do not change backoff: the actual adapter status and existing Retry-After policy remain authoritative. A later successful lookup clears old underlying-error labels.
 
+Provider discovery diagnostics also retain the latest admitted queue-wait and
+HTTP duration separately for Torrentio, MediaFusion and each Jackett indexer.
+Queue-capacity, pacing and cooldown rejections report the wait/admission outcome
+without an HTTP duration because no request was made. Times are bounded and
+low-cardinality; no title, source URL, credentials or response body is stored.
+These measurements are observational only and do not change provider order,
+queue capacity, pacing, cooldowns, retry policy or V6 acceptance.
+
 
 ### Indexed prepared-cache cleanup and SQLite diagnostics
 

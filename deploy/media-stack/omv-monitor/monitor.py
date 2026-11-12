@@ -146,7 +146,7 @@ def provider_health_rows(data,now):
     rows=[]
     try:
         with closing(sqlite3.connect('file:'+str(data/'catalogue.sqlite')+'?mode=ro',uri=True,timeout=1)) as conn:
-            states={k:json.loads(v) for k,v in conn.execute("SELECT key,value FROM cache WHERE (key IN ('source-provider-control','mediafusion-provider-control','provider-observation:torrentio','provider-observation:mediafusion','provider-observation:jackett') OR key GLOB 'jackett-*-control') AND expires>?",(now,))}
+            states={k:json.loads(v) for k,v in conn.execute("SELECT key,value FROM cache WHERE (key IN ('source-provider-control','mediafusion-provider-control','provider-observation:torrentio','provider-observation:mediafusion','provider-observation:jackett') OR key GLOB 'jackett-*-control' OR key GLOB 'provider-timing:*') AND expires>?",(now,))}
         pairs=[('Torrentio','source-provider-control','torrentio'),('MediaFusion','mediafusion-provider-control','mediafusion')]
         pairs += [('Jackett '+k[8:-8],k,'jackett') for k in sorted(states) if k.startswith('jackett-') and k.endswith('-control')]
         for label,key,provider in pairs:
@@ -166,6 +166,15 @@ def provider_health_rows(data,now):
             if observation:detail+='; latest listing: '+str(observation.get('provider_rows',0))+' candidates, '+str(observation.get('compatible',0))+' compatible'
             if provider=='jackett' and state.get('identity_rejected'):detail+='; '+str(state['identity_rejected'])+' identity mismatches rejected'
             if 'raw_rows' in observation and provider=='mediafusion':detail+='; '+str(observation['raw_rows'])+' raw provider rows'
+            timing_key='provider-timing:'+provider+(':'+key[8:-8] if provider=='jackett' else '')
+            timing=states.get(timing_key,{})
+            if timing.get('updated'):
+                timing_detail='; latest timing '+span(max(0,now-timing['updated']))+' ago'
+                if type(timing.get('queue_wait_ms')) is int:timing_detail+='; slot wait '+f"{timing['queue_wait_ms']/1000:.2f}s"
+                if type(timing.get('http_ms')) is int:timing_detail+='; HTTP '+f"{timing['http_ms']/1000:.2f}s"
+                else:timing_detail+='; HTTP not started'
+                if isinstance(timing.get('result'),str):timing_detail+='; '+timing['result']
+                detail+=timing_detail
             rows.append({'name':label+' discovery','value':value,'detail':detail})
     except (sqlite3.Error,OSError,ValueError,TypeError):pass
     return rows

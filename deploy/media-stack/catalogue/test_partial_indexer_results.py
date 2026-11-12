@@ -19,7 +19,7 @@ class PartialIndexerTests(unittest.TestCase):
   @contextmanager
   def slot(path,control,*args,**kwargs):
    if control=='jackett-knaben-control' and blocked[0]:raise app.SourceProviderWait('Full',control,'capacity',30)
-   yield
+   yield {'queue_wait_ms':0}
   def first(url,**kwargs):calls.append('first');return EMPTY
   with patch.object(app,'serialized_provider_slot',side_effect=slot),patch.object(app,'fetch',side_effect=first):
    with self.assertRaises(app.SourceProviderWait):app.jackett_streams(KEY)
@@ -33,7 +33,7 @@ class PartialIndexerTests(unittest.TestCase):
   @contextmanager
   def slot(path,control,*args,**kwargs):
    if control=='jackett-yts-control' and blocked[0]:raise app.SourceProviderWait('Full',control,'capacity',30)
-   yield
+   yield {'queue_wait_ms':0}
   with patch.object(app,'serialized_provider_slot',side_effect=slot),patch.object(app,'fetch',return_value=EMPTY):
    with self.assertRaises(app.SourceProviderWait):app.jackett_streams(KEY)
   blocked[0]=False
@@ -88,7 +88,7 @@ class PartialIndexerTests(unittest.TestCase):
   @contextmanager
   def slot(path,control,*args,**kwargs):
    if control=='jackett-knaben-control' and clock[0]==initial:raise app.SourceProviderWait('Full',control,'capacity',30)
-   yield
+   yield {'queue_wait_ms':0}
   initial=clock[0]
   with patch.object(app.time,'time',side_effect=lambda:clock[0]),patch.object(app,'serialized_provider_slot',side_effect=slot),patch.object(app,'fetch',return_value=EMPTY):
    with self.assertRaises(app.SourceProviderWait):app.jackett_streams(KEY)

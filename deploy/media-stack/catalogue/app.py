@@ -342,6 +342,13 @@ class SourceProviderWait(Checkpoint):
         super().__init__(message);self.provider=provider;self.reason=reason;self.retry_after=retry_after
 
 
+def _provider_wait(message,control_key,reason,retry_after=None,started=None):
+    error=SourceProviderWait(message,control_key,reason,retry_after)
+    if started is not None:
+        error.queue_wait_ms=max(0,min(600000,int((time.monotonic()-started)*1000)))
+    raise error from None
+
+
 def provider_capacity_retry_after(queue_slots,spacing_seconds=15,jitter_seconds=0):
     """Estimate how long an overflow caller should wait for a paced FIFO."""
     if type(queue_slots) is not int or not 1<=queue_slots<=32:
@@ -360,7 +367,7 @@ def serialized_provider_slot(lock_path,control_key,priority=0,queue_slots=None,q
     # lanes cannot repeatedly race one another for the next provider slot.
     # The existing provider pacing and cooldown remain authoritative.
     background=bool(getattr(BUDGET,'validation_background',False))
-    deadline=time.monotonic()
+    slot_started=time.monotonic();deadline=slot_started
     if background:
         # There are up to 16 producer lanes. Provider calls remain serialized
         # and paced (15s fallback/5s primary). A speed-rejected source gets a
@@ -372,7 +379,7 @@ def serialized_provider_slot(lock_path,control_key,priority=0,queue_slots=None,q
             if limit is not None:deadline=min(deadline,limit)
     state=cached(control_key) or {}
     cooldown=state.get('cooldown',0)-time.time()
-    if cooldown>0:raise SourceProviderWait('Source provider cooldown active',control_key,'cooldown',cooldown)
+    if cooldown>0:_provider_wait('Source provider cooldown active',control_key,'cooldown',cooldown,slot_started)
     ticket=None;ticket_fd=None;queue_dir=None
     if background:
         queue_dir=Path(str(lock_path)+'.waiters')
@@ -449,7 +456,7 @@ def serialized_provider_slot(lock_path,control_key,priority=0,queue_slots=None,q
                 # ticket name so simultaneous overflow callers spread out.
                 jitter=int.from_bytes(hashlib.sha256((ticket.name if ticket else control_key).encode()).digest()[:2],'big')%16
                 retry_after=provider_capacity_retry_after(queue_slots,queue_spacing_seconds,jitter)
-                raise SourceProviderWait('Source provider queue is full',control_key,'capacity',retry_after)
+                _provider_wait('Source provider queue is full',control_key,'capacity',retry_after,slot_started)
             priority_state=queue_dir/'priority-served'
             try:priority_served=priority_state.read_text().strip()=='1'
             except OSError:priority_served=False
@@ -478,34 +485,34 @@ def serialized_provider_slot(lock_path,control_key,priority=0,queue_slots=None,q
         while True:
             if background and not ticket_turn():
                 wait=deadline-time.monotonic()
-                if wait<=0:raise SourceProviderWait('Source provider slot wait budget exhausted',control_key,'queue_timeout') from None
+                if wait<=0:_provider_wait('Source provider slot wait budget exhausted',control_key,'queue_timeout',started=slot_started)
                 wait_slice(wait);continue
             lock=Path(lock_path).open('a')
             try:
                 try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
                 except BlockingIOError:
                     lock.close()
-                    if not background:raise SourceProviderWait('Source provider request already active',control_key,'busy') from None
+                    if not background:_provider_wait('Source provider request already active',control_key,'busy',started=slot_started)
                     wait=deadline-time.monotonic()
-                    if wait<=0:raise SourceProviderWait('Source provider slot wait budget exhausted',control_key,'queue_timeout') from None
+                    if wait<=0:_provider_wait('Source provider slot wait budget exhausted',control_key,'queue_timeout',started=slot_started)
                     wait_slice(wait);continue
                 state=cached(control_key) or {}
                 now=time.time()
                 if state.get('cooldown',0)>now:
                     lock.close()
-                    raise SourceProviderWait('Source provider cooldown active',control_key,'cooldown',max(1,state['cooldown']-now))
+                    _provider_wait('Source provider cooldown active',control_key,'cooldown',max(1,state['cooldown']-now),slot_started)
                 spacing=state.get('next',0)-now
                 if spacing>0:
                     lock.close()
-                    if not background:raise SourceProviderWait('Source provider pacing interval active',control_key,'pacing')
+                    if not background:_provider_wait('Source provider pacing interval active',control_key,'pacing',started=slot_started)
                     wait=deadline-time.monotonic()
-                    if wait<=0:raise SourceProviderWait('Source provider slot wait budget exhausted',control_key,'queue_timeout') from None
+                    if wait<=0:_provider_wait('Source provider slot wait budget exhausted',control_key,'queue_timeout',started=slot_started)
                     wait_slice(min(spacing,wait));continue
                 break
             except BaseException:
                 if not lock.closed:lock.close()
                 raise
-        try:yield
+        try:yield {'queue_wait_ms':max(0,min(600000,int((time.monotonic()-slot_started)*1000)))}
         finally:
             if ticket is not None:
                 # Let a speed-rejected-source fallback jump ahead once, then
@@ -560,8 +567,8 @@ def provider_succeeded(control_key,spacing):
 
 @contextmanager
 def source_provider_slot():
-    with serialized_provider_slot(DATA/'source-provider.lock','source-provider-control'):
-        try:yield
+    with serialized_provider_slot(DATA/'source-provider.lock','source-provider-control') as timing:
+        try:yield timing
         except (urllib.error.URLError,TimeoutError,ValueError) as error:
             provider_failed('source-provider-control',error,5)
             raise
@@ -570,8 +577,19 @@ def source_provider_slot():
 
 def fetch(url, data=None, headers=None, timeout=20, raw=False, method=None):
     if U.urlsplit(url).hostname==U.urlsplit(PROVIDER).hostname:
-        with source_provider_slot():
-            return fetch_raw(url,data,headers,timeout,raw,method)
+        # Keep the shared provider success/failure bookkeeping in this
+        # wrapper; the yielded admission duration is additional telemetry.
+        with source_provider_slot() as timing:
+            started=time.monotonic();error=None
+            try:return fetch_raw(url,data,headers,timeout,raw,method)
+            except Exception as caught:
+                error=caught;raise
+            finally:
+                measurement={**timing,'http_ms':max(0,min(600000,int((time.monotonic()-started)*1000)))}
+                BUDGET.provider_timings={**getattr(BUDGET,'provider_timings',{}),'torrentio':measurement}
+                if error is not None:
+                    error.queue_wait_ms=measurement.get('queue_wait_ms')
+                    error.http_ms=measurement['http_ms']
     return fetch_raw(url,data,headers,timeout,raw,method)
 
 
@@ -1495,10 +1513,13 @@ def mediafusion_streams(key,priority=0):
     if slots is not None and (type(slots) is not int or not 1<=slots<=32):raise Checkpoint('Invalid fallback queue capacity')
     with serialized_provider_slot(DATA/'mediafusion-provider.lock','mediafusion-provider-control',priority=priority,
                                   queue_slots=slots,queue_spacing_seconds=15,
-                                  wait_seconds=30 if cfg.get('jackett_enabled') else None):
+                                  wait_seconds=30 if cfg.get('jackett_enabled') else None) as timing:
         kind,imdb,*parts=key.split(':');ident=imdb+(':'+':'.join(parts) if parts else '')
+        measurement=dict(timing)
         try:
-            result=fetch(base+'/stream/'+kind+'/'+ident+'.json',timeout=15)
+            started=time.monotonic()
+            try:result=fetch(base+'/stream/'+kind+'/'+ident+'.json',timeout=15)
+            finally:measurement['http_ms']=max(0,min(600000,int((time.monotonic()-started)*1000)))
             if not isinstance(result,dict) or not isinstance(result.get('streams'),list):raise ValueError('Invalid fallback source response')
             raw_stats=mediafusion_origin_counts(result['streams'])
             remember('mediafusion-raw-counts:'+key,raw_stats,1800)
@@ -1513,16 +1534,21 @@ def mediafusion_streams(key,priority=0):
                 if 'sources' in row:candidate['sources']=tracker_sources(row['sources'])
                 rows.append(candidate)
             provider_succeeded('mediafusion-provider-control',15)
+            BUDGET.provider_timings={**getattr(BUDGET,'provider_timings',{}),'mediafusion':measurement}
             return remember('mediafusion:'+key,rows,1800 if rows else 900)
         except urllib.error.HTTPError as error:
+            error.queue_wait_ms=measurement.get('queue_wait_ms');error.http_ms=measurement['http_ms']
             provider_failed('mediafusion-provider-control',error,15)
             failure=Checkpoint('Fallback source provider unavailable')
             failure.provider_failure_category=source_provider_error_category(error)
+            failure.queue_wait_ms=measurement.get('queue_wait_ms');failure.http_ms=measurement['http_ms']
             raise failure from None
         except (urllib.error.URLError,TimeoutError,ValueError) as error:
+            error.queue_wait_ms=measurement.get('queue_wait_ms');error.http_ms=measurement['http_ms']
             provider_failed('mediafusion-provider-control',error,15)
             failure=Checkpoint('Fallback source provider unavailable')
             failure.provider_failure_category=source_provider_error_category(error)
+            failure.queue_wait_ms=measurement.get('queue_wait_ms');failure.http_ms=measurement['http_ms']
             raise failure from None
 
 
@@ -1640,20 +1666,26 @@ def jackett_streams(key,priority=0):
                 combined.extend(previous);break
             continue
         control='jackett-'+indexer+'-control'
+        timing={}
         try:
             with serialized_provider_slot(DATA/('jackett-'+indexer+'.lock'),control,priority=priority,
-                                          queue_slots=2,queue_spacing_seconds=15):
+                                          queue_slots=2,queue_spacing_seconds=15) as slot_timing:
+                timing['queue_wait_ms']=slot_timing['queue_wait_ms']
+                def timed_fetch(*args,**kwargs):
+                    started=time.monotonic()
+                    try:return fetch(*args,**kwargs)
+                    finally:timing['http_ms']=min(600000,timing.get('http_ms',0)+max(0,int((time.monotonic()-started)*1000)))
                 try:
                     endpoint=base+'/api/v2.0/indexers/'+indexer+'/results/torznab/api'
                     caps=cached('jackett-caps:'+indexer)
                     if caps is None:
-                        raw=fetch(endpoint+'?'+U.urlencode({'apikey':token,'t':'caps'}),raw=True,timeout=10)
+                        raw=timed_fetch(endpoint+'?'+U.urlencode({'apikey':token,'t':'caps'}),raw=True,timeout=10)
                         # Parse before caching, including provider-level XML errors.
                         search_parameters(raw,key,meta)
                         caps=remember('jackett-caps:'+indexer,raw.decode('utf-8'),86400)
                     query=search_parameters(caps.encode('utf-8') if isinstance(caps,str) else caps,key,meta)
                     query['apikey']=token
-                    raw=fetch(endpoint+'?'+U.urlencode(query),raw=True,timeout=15)
+                    raw=timed_fetch(endpoint+'?'+U.urlencode(query),raw=True,timeout=15)
                     raw_stats={}
                     rows=torznab_streams(raw,key,raw_stats)
                     provider_succeeded(control,15)
@@ -1672,12 +1704,14 @@ def jackett_streams(key,priority=0):
                     # not force this completed search to run again.
                     remember(completed_key,clean[:20],1800 if clean else 900)
                     completed_expiries.append(cached_expiry(completed_key))
-                    source_provider_event('jackett','compatible' if clean else 'empty',provider_rows=len(rows),stats=stats,raw_stats=raw_stats,indexer=indexer)
+                    source_provider_event('jackett','compatible' if clean else 'empty',provider_rows=len(rows),stats=stats,raw_stats=raw_stats,indexer=indexer,timing=timing)
                     state=cached(control) or {};state.update(raw_rows=raw_stats['raw_rows'],provider_rows=len(rows),compatible=len(clean),identity_rejected=raw_stats['identity_rejected'])
                     remember(control,state,90000)
                     combined.extend(clean)
                     if clean:break
                 except (urllib.error.URLError,TimeoutError,ValueError,ET.ParseError) as error:
+                    if timing.get('queue_wait_ms') is not None:error.queue_wait_ms=timing['queue_wait_ms']
+                    if 'http_ms' in timing:error.http_ms=timing['http_ms']
                     if isinstance(error,urllib.error.HTTPError):
                         # Jackett can wrap an upstream reset/429 as HTTP400.
                         # Bound inspection; the adapter status still owns backoff.
@@ -1694,6 +1728,8 @@ def jackett_streams(key,priority=0):
                     provider_failed(control,error,15)
                     raise
         except (Checkpoint,urllib.error.URLError,TimeoutError,ValueError,ET.ParseError) as error:
+            if timing.get('queue_wait_ms') is not None:error.queue_wait_ms=timing['queue_wait_ms']
+            if 'http_ms' in timing:error.http_ms=timing['http_ms']
             source_provider_event('jackett','error',error=error,indexer=indexer)
             failure=error
     if not combined and failure:
@@ -1706,6 +1742,7 @@ def jackett_streams(key,priority=0):
 
 
 def fallback_candidates(key,priority=0):
+    BUDGET.provider_timings={}
     failure=None;fallback=None
     cache='hit' if cached('mediafusion:'+key) is not None else 'miss'
     try:
@@ -1713,7 +1750,8 @@ def fallback_candidates(key,priority=0):
         if fallback is not None:
             choices,stats=filter_streams_with_diagnostics({'streams':fallback})
             source_provider_event('mediafusion','compatible' if choices else 'empty',cache,len(fallback),stats,
-                                  raw_stats=cached('mediafusion-raw-counts:'+key))
+                                  raw_stats=cached('mediafusion-raw-counts:'+key),
+                                  timing=getattr(BUDGET,'provider_timings',{}).get('mediafusion') if cache=='miss' else None)
             if choices:return choices
     except (Checkpoint,urllib.error.URLError,TimeoutError,ValueError) as error:
         source_provider_event('mediafusion','error',cache,error=error)
@@ -1813,7 +1851,27 @@ def source_provider_error_category(error):
     return 'other'
 
 
-def source_provider_event(provider,outcome,cache='miss',provider_rows=None,stats=None,error=None,primary_cache=None,raw_stats=None,indexer=None):
+def _safe_provider_timing(timing,error=None):
+    timing=timing if isinstance(timing,dict) else {}
+    values={}
+    for name in ('queue_wait_ms','http_ms'):
+        value=timing.get(name,getattr(error,name,None))
+        if type(value) is int and 0<=value<=600000:values[name]=value
+    return values
+
+
+def record_provider_timing(provider,timing,indexer=None,error=None):
+    values=_safe_provider_timing(timing,error)
+    if not values or provider not in ('torrentio','mediafusion','jackett'):return
+    if indexer is not None and (provider!='jackett' or not re.fullmatch('[a-z0-9-]{1,40}',str(indexer))):return
+    key='provider-timing:'+provider+(':'+indexer if indexer else '')
+    payload={'updated':time.time(),**values}
+    if error is not None:payload['result']=source_provider_error_category(error)
+    try:remember(key,payload,90000)
+    except Exception:pass
+
+
+def source_provider_event(provider,outcome,cache='miss',provider_rows=None,stats=None,error=None,primary_cache=None,raw_stats=None,indexer=None,timing=None):
     """Emit low-cardinality lookup telemetry without title/source identifiers."""
     try:note_discovery_coverage(provider,outcome,cache,provider_rows,stats,error,raw_stats,indexer)
     except Exception:pass # Missing evidence cannot establish partial completion.
@@ -1834,6 +1892,12 @@ def source_provider_event(provider,outcome,cache='miss',provider_rows=None,stats
                 if type(details.get('adapter_http_status')) is int and 100<=details['adapter_http_status']<=599:event['adapter_http_status']=details['adapter_http_status']
                 if details.get('indexer_failure') in ('unknown','connection_reset','upstream_http_429'):event['indexer_failure']=details['indexer_failure']
                 if details.get('upstream_http_status')==429:event['upstream_http_status']=429
+    if timing is None:
+        timing=getattr(BUDGET,'provider_timings',{}).get(indexer or provider)
+    measured=_safe_provider_timing(timing,error)
+    if measured:
+        event.update(measured)
+        record_provider_timing(provider,measured,indexer=indexer,error=error)
     if primary_cache is not None:event['primary_cache']=primary_cache
     try:
         if cache=='miss' and outcome in ('compatible','empty') and provider in ('torrentio','mediafusion','jackett'):
@@ -1929,6 +1993,7 @@ def stream_candidates(key):
 
 
 def stream_candidates_impl(key):
+    BUDGET.provider_timings={}
     # Stable, publisher-distributed open-film source for setup/playback checks.
     # Preserve HTTP web seeds by adding its actual .torrent rather than a magnet.
     open_film={'infoHash':'dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c',
