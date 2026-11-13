@@ -117,7 +117,7 @@ def verify(payload,state,output,budget_seconds=470):
                 except Exception as error:
                     record_failure(error,name);raise
                 finally:
-                    if operation:operation.stop.set()
+                    if operation:operation.request_stop('verifier_command_finished')
                     if proc.poll() is None:proc.kill()
                     proc.communicate()
         def sample(self,key,selected,info,audio_index,conversion,position,seconds,end):
@@ -140,7 +140,8 @@ def verify(payload,state,output,budget_seconds=470):
         db.execute('INSERT OR IGNORE INTO validation(key,state,proof,reason) VALUES (?,?,?,?)',(key,prior.get('state','pending'),json.dumps(prior['proof']) if prior.get('proof') else None,prior.get('reason','')))
         if prior.get('requested'):db.execute('INSERT OR IGNORE INTO manual_rechecks(key,requested,status) VALUES (?,?,?)',(key,prior['requested'],'pending'))
     # Start metadata retrieval without any connection to Debian's torrent engine.
-    proxy=ProgressProxy()
+    data_root=state.parent.parent
+    proxy=ProgressProxy(data_root/'proxy-lifecycle.jsonl',data_root/'proxy-lifecycle-observe-until')
     phase('torrent resolution')
     try:
         a.prepared(key,background=True)

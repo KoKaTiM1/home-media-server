@@ -24,6 +24,7 @@ from urllib.parse import urlsplit
 import uuid
 from verification_jobs import PROTOCOL,PREFIX,PHASES
 from verification_media import execute,validate_recipe,validate_result
+from local_progress import prune_lifecycle_artifacts
 
 LOG=logging.getLogger('verification-worker');STOP=threading.Event()
 class TransportWait(Exception):pass
@@ -90,7 +91,7 @@ class API:
     def request(self,path,body=None):
         c=self.connection()
         try:
-            data=json.dumps({'protocol':PROTOCOL,'client_version':'0.4.12',**body},allow_nan=False).encode() if body is not None else None
+            data=json.dumps({'protocol':PROTOCOL,'client_version':'0.4.13',**body},allow_nan=False).encode() if body is not None else None
             c.request('POST' if body is not None else 'GET',PREFIX+path,data,{'Authorization':'Bearer '+self.token,'Content-Type':'application/json'})
             response=c.getresponse();raw=response.read(2*1024*1024+1)
             endpoint=getattr(c,'worker_endpoint','unknown')
@@ -308,6 +309,7 @@ def main():
             temporary=folder/'status.tmp';temporary.write_text(json.dumps(summary,indent=2));temporary.replace(folder/'status.json')
             progress_log.write(message,summary.get('job_id'))
         while not STOP.is_set():
+            prune_lifecycle_artifacts(folder)
             try:
                 row=db.execute('SELECT task,result FROM current WHERE id=1').fetchone()
                 if not row:

@@ -1,6 +1,6 @@
 # Windows V6 verification workers
 
-Launcher package **0.4.13** uses the unchanged verifier image **0.4.12** and TorrServer image **0.3.0**. This package repairs settings bootstrap; it does not change the decoder protocol or V6 policy. It preserves bounded root-cause diagnostics when candidate exhaustion hides an earlier rejection, without changing retry/fallback or V6 decisions. HEVC Main 8-bit SDR up to 1080p remains supported after the owner TV picture/audio test. Replay/seek acceptance remains tracked separately; HDR, Main10, 4K and AV1 are excluded. Verifiers
+Launcher package **0.4.14** uses verifier image **0.4.13** and TorrServer image **0.3.0**. This package adds an opt-in, sanitized request lifecycle trace for proxy start/stop/handler close. The window is capped at one hour; the per-worker log is capped at 1 MiB and expires after 24 hours. It does not change the decoder protocol, V6 policy, torrent selection, cleanup behavior, or proof acceptance. The trace omits titles, hashes, URLs, IPs and media payloads. HEVC Main 8-bit SDR up to 1080p remains supported after the owner TV picture/audio test. Replay/seek acceptance remains tracked separately; HDR, Main10, 4K and AV1 are excluded. Verifiers
 run with Docker `--init` to reap orphaned decoder children after cancellations.
 Start/Update automatically drains and recreates containers with a mismatched
 image or missing init while preserving identities, config, data and backend state.
@@ -10,6 +10,17 @@ for rollback; `RollbackLane` restores it without deleting data.
 The optional Windows PC verifies torrent sources using the same V6 source, speed,
 video sample and audio requirements as Debian. Debian chooses candidates and
 validates every proof before changing library readiness.
+
+### Opt-in proxy lifecycle observation
+
+For a bounded investigation, create `data/proxy-lifecycle-observe-until` in one
+worker's data folder and write a Unix epoch expiry no more than 3,600 seconds in
+the future. The worker records only random trace/request IDs, fixed lifecycle
+event names, GET/HEAD method, elapsed milliseconds, bytes sent and coarse close
+reasons in `data/proxy-lifecycle.jsonl`. It records no title, source hash, URL,
+IP address or media payload. The file is capped at 1 MiB; expired records are
+pruned and the file is removed 24 hours after its last event. The worker removes
+the observation marker after it expires. Delete the marker to stop immediately.
 
 ## Configure capacity
 
@@ -186,7 +197,7 @@ Windows probe/decode reads use an ephemeral loopback proxy scoped to each exact 
 
 The 0.4.10 full-fleet rollout requires the image fixtures and repository gate first. Retain each lane's known 0.4.4 container for rollback; observe all eight candidate workers together rather than waiting an hour per lane. Ordinary source rejections remain sweep outcomes; infrastructure, acknowledgement, process or resource regressions require rollback and investigation.
 
-## Diagnostic evidence in 0.4.12
+## Diagnostic evidence in 0.4.13
 
 Optional `diagnostic.root_cause` and `diagnostic.source_failures` retain up to 20
 structured, deduplicated source failures. Assigned hashes are validated against
