@@ -198,6 +198,12 @@ def playback_failure(key,error):
         log('Playback recheck scheduling deferred');return False
 
 
+def exclude_stalled_playback_source(key,selected):
+    """Temporarily skip an exact source that cannot deliver startup bytes."""
+    try:REL.exclude(key,selected,900)
+    except (OSError,ValueError,sqlite3.Error):log('Stalled playback source exclusion deferred')
+
+
 @contextmanager
 def playback_phase(key,phase):
     started=time.monotonic()
@@ -3151,8 +3157,14 @@ class Handler(BaseHTTPRequestHandler):
             headers=torr_headers()
             if self.headers.get('Range'): headers['Range']=self.headers['Range']
             upstream_request=R.Request(upstream(selected),headers=headers,method=self.command)
-            with playback_phase(key,'upstream_open'):
-                upstream_response=REL.open_sample(self,upstream_request,max(.001,data_deadline-time.monotonic()))
+            try:
+                with playback_phase(key,'upstream_open'):
+                    upstream_response=REL.open_sample(self,upstream_request,max(.001,data_deadline-time.monotonic()))
+            except TimeoutError:
+                if parts[0]=='play' and not progress:
+                    exclude_stalled_playback_source(key,selected)
+                    raise SourceStalled('Selected source timed out before opening the media stream') from None
+                raise
             with upstream_response as response:
                 byte_start=0
                 match=re.match(r'bytes (\d+)-',response.headers.get('Content-Range',''))
@@ -3162,9 +3174,19 @@ class Handler(BaseHTTPRequestHandler):
                 # the TV waiting on an already successful empty video stream.
                 initial=b''
                 if self.command!='HEAD':
-                    with playback_phase(key,'first_video_bytes'):
-                        initial=read_bounded(response,1,data_deadline)
-                        if not initial:raise RuntimeError('No initial video bytes')
+                    try:
+                        with playback_phase(key,'first_video_bytes'):
+                            initial=read_bounded(response,1,data_deadline)
+                    except TimeoutError:
+                        if parts[0]=='play' and not progress:
+                            exclude_stalled_playback_source(key,selected)
+                            raise SourceStalled('Selected source timed out before the first media bytes') from None
+                        raise
+                    if not initial:
+                        if parts[0]=='play' and not progress:
+                            exclude_stalled_playback_source(key,selected)
+                            raise SourceStalled('Selected source returned no initial media bytes')
+                        raise RuntimeError('No initial video bytes')
                 playback_event(key,'stream_ready',stream_started,'ok')
                 self.send_response(response.status)
                 response_started=True
