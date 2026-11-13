@@ -21,6 +21,7 @@ INFO={'streams':[{'index':0,'codec_type':'video','codec_name':'h264','pix_fmt':'
 class SlowSource(BaseHTTPRequestHandler):
     def log_message(self,*args):pass
     def do_GET(self):
+        if self.path=='/open-timeout':time.sleep(.6)
         if self.path=='/range':
             self.send_response(206);self.send_header('Content-Length','4');self.send_header('Content-Range','bytes 10-13/100');self.end_headers();self.wfile.write(b'data');return
         if self.path=='/short':
@@ -57,7 +58,7 @@ class DeadlineTests(unittest.TestCase):
         bridge=ThreadingHTTPServer(('127.0.0.1',0),a.Handler)
         thread=threading.Thread(target=bridge.serve_forever,daemon=True);thread.start()
         try:
-            with patch.object(a,'signature',return_value='fixture'),patch.object(a.REL,'lookup',return_value=SELECTED) as resolve,patch.object(a,'upstream',return_value=self.url+'/empty'),patch.object(a,'torr_headers',return_value={}),patch.object(a,'FIRST_DATA_SECONDS',.15),patch.object(a.F,'validation_result') as invalidated:
+            with patch.object(a,'signature',return_value='fixture'),patch.object(a.REL,'lookup',return_value=SELECTED) as resolve,patch.object(a,'upstream',return_value=self.url+'/empty'),patch.object(a,'torr_headers',return_value={}),patch.object(a,'FIRST_DATA_SECONDS',.15),patch.object(a.F,'validation_result') as invalidated,patch.object(a.REL,'exclude') as exclude,patch.object(a.DIAG,'recheck',return_value=True) as recheck:
                 started=time.monotonic()
                 with self.assertRaises(a.urllib.error.HTTPError) as error:
                     a.R.urlopen('http://127.0.0.1:'+str(bridge.server_port)+'/play/'+KEY+'?sig=fixture&source='+('a'*64),timeout=2)
@@ -65,6 +66,22 @@ class DeadlineTests(unittest.TestCase):
                 self.assertLess(time.monotonic()-started,.7)
                 resolve.assert_called_once()
                 invalidated.assert_not_called()
+                exclude.assert_called_once_with(KEY,SELECTED,900)
+                recheck.assert_called_once()
+                self.assertIsInstance(recheck.call_args.args[1],a.SourceStalled)
+        finally:bridge.shutdown();bridge.server_close();thread.join()
+
+    def test_initial_upstream_timeout_excludes_source_and_schedules_fresh_check(self):
+        bridge=ThreadingHTTPServer(('127.0.0.1',0),a.Handler)
+        thread=threading.Thread(target=bridge.serve_forever,daemon=True);thread.start()
+        try:
+            with patch.object(a,'signature',return_value='fixture'),patch.object(a.REL,'lookup',return_value=SELECTED),patch.object(a,'upstream',return_value=self.url+'/open-timeout'),patch.object(a,'torr_headers',return_value={}),patch.object(a,'FIRST_DATA_SECONDS',.15),patch.object(a.REL,'exclude') as exclude,patch.object(a.DIAG,'recheck',return_value=True) as recheck:
+                with self.assertRaises(a.urllib.error.HTTPError) as error:
+                    a.R.urlopen('http://127.0.0.1:'+str(bridge.server_port)+'/play/'+KEY+'?sig=fixture&source='+('a'*64),timeout=2)
+                self.assertEqual(error.exception.code,503)
+                exclude.assert_called_once_with(KEY,SELECTED,900)
+                recheck.assert_called_once()
+                self.assertIsInstance(recheck.call_args.args[1],a.SourceStalled)
         finally:bridge.shutdown();bridge.server_close();thread.join()
 
     def test_http_range_is_preserved_by_stream_proxy(self):
