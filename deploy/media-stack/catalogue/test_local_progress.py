@@ -11,9 +11,19 @@ from unittest.mock import patch
 
 from local_progress import (LIFECYCLE_LIMIT,LIFECYCLE_TTL,LifecycleRecorder,
                             Progress,ProgressProxy,prune_lifecycle_artifacts,
-                            response_offset)
+                            response_offset,worker_lifecycle_paths)
 
 class ProgressTests(unittest.TestCase):
+ def test_job_state_resolves_lifecycle_marker_at_worker_data_root(self):
+  with tempfile.TemporaryDirectory() as directory:
+   root=Path(directory);state=root/'title-jobs'/'job-id'/'state'
+   trace,marker=worker_lifecycle_paths(state)
+   self.assertEqual(trace,root/'proxy-lifecycle.jsonl')
+   self.assertEqual(marker,root/'proxy-lifecycle-observe-until')
+   marker.write_text(str(time.time()+300));recorder=LifecycleRecorder(trace,marker,'trace-path-test')
+   recorder.emit('proxy_start')
+   self.assertEqual(json.loads(trace.read_text())['event'],'proxy_start')
+
  def test_unique_ranges_only_reset_watchdog(self):
   p=Progress('http://fixture.invalid/file',100)
   with patch('local_progress.time.monotonic',return_value=10):p.delivered(0,20)

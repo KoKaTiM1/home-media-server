@@ -41,7 +41,7 @@ def verify(payload,state,output,budget_seconds=470):
     from verification_title import validate_task
     from verification_media import execute,validate_result
     from reliability import Reliability,Checkpoint,DecodeFailure,SourceStalled
-    from local_progress import ProgressProxy
+    from local_progress import ProgressProxy,worker_lifecycle_paths
     validate_task(payload);key=payload['key'];state.mkdir(parents=True,exist_ok=True)
     a.DATA=state;a.TORR=os.environ.get('LOCAL_TORRSERVER_URL','http://home-media-verification-torrserver:8090')
     a.torr_headers=lambda:{}
@@ -140,8 +140,8 @@ def verify(payload,state,output,budget_seconds=470):
         db.execute('INSERT OR IGNORE INTO validation(key,state,proof,reason) VALUES (?,?,?,?)',(key,prior.get('state','pending'),json.dumps(prior['proof']) if prior.get('proof') else None,prior.get('reason','')))
         if prior.get('requested'):db.execute('INSERT OR IGNORE INTO manual_rechecks(key,requested,status) VALUES (?,?,?)',(key,prior['requested'],'pending'))
     # Start metadata retrieval without any connection to Debian's torrent engine.
-    data_root=state.parent.parent
-    proxy=ProgressProxy(data_root/'proxy-lifecycle.jsonl',data_root/'proxy-lifecycle-observe-until')
+    lifecycle_path,observation_marker=worker_lifecycle_paths(state)
+    proxy=ProgressProxy(lifecycle_path,observation_marker)
     phase('torrent resolution')
     try:
         a.prepared(key,background=True)

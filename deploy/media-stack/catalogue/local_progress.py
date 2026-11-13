@@ -15,6 +15,12 @@ LIFECYCLE_LIMIT=1024*1024
 LIFECYCLE_TTL=24*60*60
 OBSERVATION_MAX_SECONDS=60*60
 
+def worker_lifecycle_paths(state_dir):
+    """Locate worker-wide lifecycle artifacts from its per-job state folder."""
+    data_root=Path(state_dir).parents[2]
+    return (data_root/'proxy-lifecycle.jsonl',
+            data_root/'proxy-lifecycle-observe-until')
+
 class LifecycleRecorder:
     """Write a short-lived, allowlisted request lifecycle trace when opted in."""
     def __init__(self,path,observe_until_path,trace_id=None):

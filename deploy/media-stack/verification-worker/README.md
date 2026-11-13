@@ -1,6 +1,6 @@
 # Windows V6 verification workers
 
-Launcher package **0.4.14** uses verifier image **0.4.13** and TorrServer image **0.3.0**. This package adds an opt-in, sanitized request lifecycle trace for proxy start/stop/handler close. The window is capped at one hour; the per-worker log is capped at 1 MiB and expires after 24 hours. It does not change the decoder protocol, V6 policy, torrent selection, cleanup behavior, or proof acceptance. The trace omits titles, hashes, URLs, IPs and media payloads. HEVC Main 8-bit SDR up to 1080p remains supported after the owner TV picture/audio test. Replay/seek acceptance remains tracked separately; HDR, Main10, 4K and AV1 are excluded. Verifiers
+Launcher package **0.4.15** uses verifier image **0.4.14** and TorrServer image **0.3.0**. This package fixes the opt-in lifecycle marker lookup for each worker's shared data folder. The window is capped at one hour; the per-worker log is capped at 1 MiB and expires after 24 hours. It does not change the decoder protocol, V6 policy, torrent selection, cleanup behavior, or proof acceptance. The trace omits titles, hashes, URLs, IPs and media payloads. HEVC Main 8-bit SDR up to 1080p remains supported after the owner TV picture/audio test. Replay/seek acceptance remains tracked separately; HDR, Main10, 4K and AV1 are excluded. Verifiers
 run with Docker `--init` to reap orphaned decoder children after cancellations.
 Start/Update automatically drains and recreates containers with a mismatched
 image or missing init while preserving identities, config, data and backend state.
@@ -206,6 +206,13 @@ Existing operational diagnostic fields remain unchanged and still control retry
 and fallback behavior. OMV shows separate root-cause counts; old clients remain
 compatible but cannot supply this additional evidence. Package availability
 does not establish physical installation: confirm the reported client version.
+
+## Proxy lifecycle observation path fix in 0.4.14
+
+The opt-in trace marker and log are resolved from the worker's `/data` root,
+even though each job stores isolated state under `/data/title-jobs/<job>/state`.
+A regression test verifies both the path mapping and marker activation. Tracing
+remains disabled when no valid marker is present.
 
 
 ## Verified TorrServer settings bootstrap
