@@ -1,5 +1,6 @@
 """Separate metadata preparation: bounded admission and exclusive fetching."""
 import json,time,unittest
+from pathlib import Path
 from unittest.mock import patch
 import test_metadata_lan as fixtures
 app=fixtures.app
@@ -249,6 +250,37 @@ class PoolTests(unittest.TestCase):
         self.assertTrue(stop.exists())
 
 class SourcePacingTests(unittest.TestCase):
+    def test_unadmitted_background_pacing_yields_without_ticket_or_sleep(self):
+        app.BUDGET.validation_background=True
+        path=app.DATA/'yield-provider.lock'
+        app.remember('yield-control',{'next':time.time()+120,'cooldown':0},300)
+        original=app.cached('yield-control')
+        with patch.object(app.BUDGET,'provider_yield',True,create=True),patch.object(app.time,'sleep',side_effect=AssertionError('producer slept')):
+            with self.assertRaises(app.SourceProviderWait) as caught:
+                with app.serialized_provider_slot(path,'yield-control'):self.fail('early upstream admission')
+        self.assertEqual(caught.exception.reason,'pacing')
+        self.assertGreater(caught.exception.retry_after,119)
+        self.assertFalse(Path(str(path)+'.waiters').exists())
+        self.assertEqual(app.cached('yield-control'),original)
+        app.remember('yield-control',{'next':time.time()-1,'cooldown':0},300)
+        with patch.object(app.BUDGET,'provider_yield',True,create=True),patch.object(app.time,'sleep',side_effect=AssertionError('due producer slept')):
+            with app.serialized_provider_slot(path,'yield-control'):pass
+
+    def test_yield_keeps_cooldown_and_urgent_admission_policy(self):
+        app.BUDGET.validation_background=True
+        clock=[1000.0]
+        with patch.object(app.BUDGET,'provider_yield',True,create=True),patch.object(app.time,'time',side_effect=lambda:clock[0]):
+            app.remember('urgent-control',{'next':1002,'cooldown':1010},300)
+            with patch.object(app.time,'sleep',side_effect=AssertionError('cooldown slept')):
+                with self.assertRaises(app.SourceProviderWait) as caught:
+                    with app.serialized_provider_slot(app.DATA/'urgent.lock','urgent-control',priority=1):pass
+            self.assertEqual(caught.exception.reason,'cooldown')
+            app.remember('urgent-control',{'next':1002,'cooldown':0},300)
+            with patch.object(app.time,'sleep',side_effect=lambda seconds:clock.__setitem__(0,clock[0]+seconds)) as sleeper:
+                with app.serialized_provider_slot(app.DATA/'urgent.lock','urgent-control',priority=1):pass
+            self.assertTrue(sleeper.called)
+            self.assertGreaterEqual(clock[0],1002)
+
     def setUp(self):
         fixtures.ImportTests.setUp(self)
         self.old_budget={name:getattr(app.BUDGET,name,None) for name in ('validation_background','remote_verification','worker_deadline','deadline','cancel')}
@@ -505,6 +537,33 @@ class SourcePacingTests(unittest.TestCase):
             wait=c.execute('SELECT expires FROM metadata_waits WHERE key=?',(KEY,)).fetchone()
         self.assertIsNotNone(wait)
         self.assertGreaterEqual(wait[0],time.time()+899)
+        self.assertEqual(app.F.first_sweep_candidate()[0][1],other)
+    def test_pacing_yield_uses_durable_due_and_releases_claim(self):
+        app.REL.db().close()
+        other='movie:tt0000002'
+        with app.F.db() as c:
+            c.execute("INSERT INTO validation(key,state,priority) VALUES (?,'pending',1)",(other,))
+            c.execute('UPDATE validation SET priority=100 WHERE key=?',(KEY,))
+        app.F.start_verification_sweep()
+        with app.F.db() as c:
+            c.execute("UPDATE verification_sweep_attempts SET outcome='queued',started=0,finished=0 WHERE sweep_id=1 AND key=?",(KEY,))
+        from contextlib import ExitStack
+        with ExitStack() as stack:
+            for name in ('seed_validation','repair_cached_series'):
+                stack.enter_context(patch.object(app.F,name))
+            stack.enter_context(patch.object(app.REL,'schedule'))
+            stack.enter_context(patch.object(app.F,'foreground_busy',return_value=False))
+            stack.enter_context(patch.object(app.F,'jf',return_value=[]))
+            stack.enter_context(patch.object(app.F,'first_sweep_candidate',return_value=((1,KEY),True)))
+            stack.enter_context(patch.object(app.F,'metadata_admission_blocked',return_value=False))
+            stack.enter_context(patch.object(app,'prepared',side_effect=app.SourceProviderWait('Source provider request deferred',reason='pacing',retry_after=120)))
+            app.F.warm_availability(limit=1)
+        with app.F.db() as c:
+            self.assertEqual(tuple(c.execute('SELECT outcome,finished FROM verification_sweep_attempts WHERE key=?',(KEY,)).fetchone()),('queued',0))
+            self.assertEqual(c.execute('SELECT count(*) FROM verification_claims').fetchone()[0],0)
+            wait=c.execute('SELECT expires FROM metadata_waits WHERE key=?',(KEY,)).fetchone()
+        self.assertIsNotNone(wait)
+        self.assertGreaterEqual(wait[0],time.time()+119)
         self.assertEqual(app.F.first_sweep_candidate()[0][1],other)
 
 class FallbackTests(unittest.TestCase):

@@ -1820,6 +1820,8 @@ class Features:
                 sweep_attempt=bool(sweep_candidate and sweep_candidate[1]==key and self.mark_first_sweep_attempt(key))
                 budget=self.g['BUDGET'];previous_sweep_flag=getattr(budget,'first_sweep_attempt',False)
                 previous_attempt_deadline=getattr(budget,'worker_deadline',None)
+                previous_provider_yield=getattr(budget,'provider_yield',False)
+                budget.provider_yield=True
                 budget.preparation_key=key
                 budget.first_sweep_attempt=sweep_attempt
                 # Keep this outer coordinator deadline aligned with the
@@ -1925,7 +1927,7 @@ class Features:
                         # handler runs. Keep the first-sweep item queued, but
                         # let the provider FIFO drain other titles before this
                         # same oldest candidate is eligible again.
-                        if reason=='capacity':retry_after=getattr(error,'retry_after',None) or 30
+                        if reason in ('capacity','pacing'):retry_after=getattr(error,'retry_after',None) or 30
                         elif reason=='queue_timeout':retry_after=900
                         elif reason in ('cooldown','recovery'):retry_after=getattr(error,'retry_after',None) or 300
                         else:retry_after=30
@@ -2025,6 +2027,7 @@ class Features:
                     if sweep_original:self.finish_first_sweep_attempt(key,sweep_outcome,attempt_diagnostic,attempt_started)
                     budget.preparation_key=None
                     budget.first_sweep_attempt=previous_sweep_flag
+                    budget.provider_yield=previous_provider_yield
                     if sweep_attempt:budget.worker_deadline=previous_attempt_deadline
                     self.release_verification(key,claim)
                     if remote:

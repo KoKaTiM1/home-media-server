@@ -398,6 +398,12 @@ def serialized_provider_slot(lock_path,control_key,priority=0,queue_slots=None,q
     state=cached(control_key) or {}
     cooldown=state.get('cooldown',0)-time.time()
     if cooldown>0:_provider_wait('Source provider cooldown active',control_key,'cooldown',cooldown,slot_started)
+    # Ordinary verifier work can return to its durable scheduler before it
+    # owns a FIFO ticket. Already admitted and urgent callers retain the
+    # existing queue/priority policy; no reserved turn is discarded.
+    pacing=state.get('next',0)-time.time()
+    if background and getattr(BUDGET,'provider_yield',False) and priority<=0 and pacing>0:
+        _provider_wait('Source provider pacing deferred',control_key,'pacing',max(1,pacing),slot_started)
     ticket=None;ticket_fd=None;queue_dir=None
     if background:
         queue_dir=Path(str(lock_path)+'.waiters')
