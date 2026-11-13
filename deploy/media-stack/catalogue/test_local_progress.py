@@ -79,6 +79,28 @@ class ProgressTests(unittest.TestCase):
     self.assertEqual({event['trace'] for event in events},{proxy.lifecycle.trace_id})
    finally:c.close();release.set();proxy.close();server.shutdown();server.server_close();t.join(timeout=2)
 
+ def test_opt_in_trace_records_upstream_status_and_last_byte_timing_only(self):
+  class Handler(BaseHTTPRequestHandler):
+   def log_message(self,*a):pass
+   def do_GET(self):
+    self.send_response(206);self.send_header('Content-Range','bytes 10-19/100');self.send_header('Content-Length','10');self.end_headers();self.wfile.write(b'0123456789')
+  with tempfile.TemporaryDirectory() as directory:
+   root=Path(directory);marker=root/'observe-until';marker.write_text(str(time.time()+300));trace=root/'trace.jsonl'
+   server=ThreadingHTTPServer(('127.0.0.1',0),Handler);server.daemon_threads=True;t=threading.Thread(target=server.serve_forever,daemon=True);t.start();proxy=ProgressProxy(trace,marker)
+   url=proxy.source('http://127.0.0.1:'+str(server.server_port)+'/private-hash-url',100)
+   try:
+    c=http.client.HTTPConnection('127.0.0.1',proxy.server.server_port,timeout=3);c.request('GET',url[len(proxy.prefix):],headers={'Range':'bytes=10-19'});response=c.getresponse()
+    self.assertEqual(response.status,206);self.assertEqual(response.read(),b'0123456789');c.close();proxy.close()
+    events=[json.loads(line) for line in trace.read_text().splitlines()]
+    header=next(event for event in events if event['event']=='handler_response')
+    closed=next(event for event in events if event['event']=='handler_close')
+    self.assertEqual(header['response_status'],206);self.assertEqual(header['response_range_kind'],'partial');self.assertEqual(header['response_content_length'],10)
+    self.assertEqual(closed['upstream_bytes'],10);self.assertEqual(closed['bytes_sent'],10)
+    self.assertGreaterEqual(closed['last_byte_elapsed_ms'],0);self.assertGreaterEqual(closed['last_byte_age_ms'],0)
+    self.assertEqual(closed['unique_bytes'],10);self.assertGreaterEqual(closed['unique_progress_age_ms'],0)
+    self.assertTrue(all(not ({'url','hash','title','path','ip','range'}&event.keys()) for event in events))
+   finally:proxy.close();server.shutdown();server.server_close();t.join(timeout=2)
+
  def test_lifecycle_is_opt_in_allowlisted_and_size_bounded(self):
   with tempfile.TemporaryDirectory() as directory:
    root=Path(directory);marker=root/'observe-until';marker.write_text(str(time.time()+300));path=root/'trace.jsonl'

@@ -1,4 +1,4 @@
-Launcher package 0.4.15; verifier image 0.4.14, TorrServer remains 0.3.0.
+Launcher package 0.4.16; verifier image 0.4.15, TorrServer remains 0.3.0.
 This adds an opt-in, sanitized proxy lifecycle trace for a maximum one-hour observation; verification and V6 policy are unchanged.
 Use UpdateLane for the selected worker lane; then preserve existing config, data, and torrent-state folders.
 

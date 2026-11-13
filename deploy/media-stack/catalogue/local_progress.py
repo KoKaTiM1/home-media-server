@@ -36,7 +36,10 @@ class LifecycleRecorder:
         return 0
     def emit(self,event,**fields):
         if not self.expires_at or time.time()>=self.expires_at:return
-        allowed={'request_id','route_id','method','reason','elapsed_ms','bytes_sent','active_handlers'}
+        allowed={'request_id','route_id','method','reason','elapsed_ms','bytes_sent','active_handlers',
+                 'response_status','response_range_kind','response_content_length',
+                 'upstream_bytes','last_byte_elapsed_ms','last_byte_age_ms',
+                 'unique_bytes','unique_progress_age_ms','transport_error'}
         row={'time':round(time.time(),3),'trace':self.trace_id,'event':event}
         row.update({k:v for k,v in fields.items() if k in allowed and isinstance(v,(str,int,float))})
         encoded=(json.dumps(row,separators=(',',':'),allow_nan=False)+'\n').encode()
@@ -116,7 +119,9 @@ class Handler(BaseHTTPRequestHandler):
     def copy(self):
         progress=self.server.routes.get(self.path)
         if not progress or progress.stop.is_set():self.send_error(404);return
-        request_id=uuid.uuid4().hex[:12];started=time.monotonic();sent=0;reason=None
+        request_id=uuid.uuid4().hex[:12];started=time.monotonic();sent=0;upstream_bytes=0;reason=None
+        response_status=None;response_range_kind=None;response_content_length=None
+        last_byte_at=None;transport_error=None
         self.server.lifecycle.emit('handler_start',request_id=request_id,route_id=progress.route_id,method=self.command)
         with self.server.active_lock:self.server.active_handlers+=1
         origin=urllib.parse.urlsplit(progress.url);connection=http.client.HTTPConnection(origin.hostname,origin.port,timeout=60)
@@ -145,6 +150,13 @@ class Handler(BaseHTTPRequestHandler):
             if self.headers.get('Range'):headers['Range']=self.headers['Range']
             connection.request(self.command,urllib.parse.urlunsplit(('', '',origin.path,origin.query,'')),headers=headers)
             response=connection.getresponse()
+            response_status=response.status if isinstance(response.status,int) and 100<=response.status<=599 else None
+            response_range_kind='partial' if response_status==206 else 'full' if response_status==200 else 'other'
+            raw_length=response.getheader('Content-Length')
+            if raw_length and raw_length.isdigit() and len(raw_length)<=20:response_content_length=int(raw_length)
+            self.server.lifecycle.emit('handler_response',request_id=request_id,route_id=progress.route_id,
+                response_status=response_status,response_range_kind=response_range_kind,
+                response_content_length=response_content_length)
             lo,limit=response_offset(response.status,response.getheader('Content-Range'),headers.get('Range'),progress.length)
             self.send_response(response.status)
             for name in ('Content-Type','Content-Length','Content-Range','Accept-Ranges'):
@@ -155,6 +167,7 @@ class Handler(BaseHTTPRequestHandler):
                     part=response.read1(min(65536,limit-lo)) if lo<limit else b''
                     if not part:
                         set_reason('response_complete' if lo>=limit else 'upstream_eof');break
+                    upstream_bytes+=len(part);last_byte_at=time.monotonic()
                     self.wfile.write(part);sent+=len(part);progress.delivered(lo,lo+len(part));lo+=len(part)
             if reason is None:
                 if progress.stop.is_set():set_reason('verifier_stop')
@@ -162,11 +175,23 @@ class Handler(BaseHTTPRequestHandler):
                 else:set_reason('response_complete' if self.command=='HEAD' or lo>=limit else 'handler_exit')
         except ValueError:
             progress.error='range_mismatch';self.close_connection=True;set_reason('range_mismatch')
-        except (OSError,http.client.HTTPException):
+        except (OSError,http.client.HTTPException) as error:
+            transport_error=type(error).__name__
             progress.error='local_transport';self.close_connection=True;set_reason('request_transport')
         finally:
             done.set();connection.close();watcher.join(timeout=1)
-            self.server.lifecycle.emit('handler_close',request_id=request_id,route_id=progress.route_id,reason=reason or 'handler_exit',elapsed_ms=round((time.monotonic()-started)*1000),bytes_sent=sent)
+            now=time.monotonic()
+            with progress.lock:
+                unique_bytes=progress.bytes
+                unique_progress_age_ms=round(max(0,now-progress.last)*1000)
+            self.server.lifecycle.emit('handler_close',request_id=request_id,route_id=progress.route_id,
+                reason=reason or 'handler_exit',elapsed_ms=round((now-started)*1000),bytes_sent=sent,
+                response_status=response_status,response_range_kind=response_range_kind,
+                response_content_length=response_content_length,upstream_bytes=upstream_bytes,
+                last_byte_elapsed_ms=round((last_byte_at-started)*1000) if last_byte_at is not None else None,
+                last_byte_age_ms=round((now-last_byte_at)*1000) if last_byte_at is not None else None,
+                unique_bytes=unique_bytes,unique_progress_age_ms=unique_progress_age_ms,
+                transport_error=transport_error)
             with self.server.active_lock:self.server.active_handlers=max(0,self.server.active_handlers-1)
 
 class ProgressProxy:
