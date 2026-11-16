@@ -1,6 +1,6 @@
 # Windows V6 verification workers
 
-Launcher package **0.4.16** uses verifier image **0.4.15** and TorrServer image **0.3.0**. This package adds opt-in upstream range response status and byte-progress timing to the bounded lifecycle trace. The window is capped at one hour; each worker's log is capped at 1 MiB and expires after 24 hours. It does not change the decoder protocol, V6 policy, torrent selection, cleanup behavior, playback, or proof acceptance. Trace fields exclude titles, hashes, URLs, IPs, range values and media payloads. HEVC Main 8-bit SDR up to 1080p remains supported after the owner TV picture/audio test. Replay/seek acceptance remains tracked separately; HDR, Main10, 4K and AV1 are excluded. Verifiers
+Launcher package **0.4.17** uses verifier image **0.4.16** and TorrServer image **0.3.0**. This package adds opt-in TorrServer cache/reader snapshots to failed or stalled proxy traces. The window is capped at one hour; each worker's log is capped at 1 MiB and expires after 24 hours. It does not change the decoder protocol, V6 policy, torrent selection, cleanup behavior, playback, or proof acceptance. Trace fields exclude titles, hashes, URLs, IPs, range values and media payloads. HEVC Main 8-bit SDR up to 1080p remains supported after the owner TV picture/audio test. Replay/seek acceptance remains tracked separately; HDR, Main10, 4K and AV1 are excluded. Verifiers
 run with Docker `--init` to reap orphaned decoder children after cancellations.
 Start/Update automatically drains and recreates containers with a mismatched
 image or missing init while preserving identities, config, data and backend state.
@@ -15,12 +15,19 @@ validates every proof before changing library readiness.
 
 For a bounded investigation, create `data/proxy-lifecycle-observe-until` in one
 worker's data folder and write a Unix epoch expiry no more than 3,600 seconds in
-the future. The worker records only random trace/request IDs, fixed lifecycle
-event names, GET/HEAD method, elapsed milliseconds, bytes sent and coarse close
-reasons in `data/proxy-lifecycle.jsonl`. It records no title, source hash, URL,
-IP address or media payload. The file is capped at 1 MiB; expired records are
-pruned and the file is removed 24 hours after its last event. The worker removes
-the observation marker after it expires. Delete the marker to stop immediately.
+the future. The worker records random trace/request IDs, fixed lifecycle event
+names, GET/HEAD method, upstream response status, byte timing, byte counts and
+coarse close/error categories in `data/proxy-lifecycle.jsonl`. When an observed
+request has a transport error or at least 30 seconds without unique-range
+progress, it also makes one bounded (500 ms) `/cache` status query to its local
+TorrServer and records only whether the cache hash matched, whether it is filled,
+the reader count, piece count and a coarse API result. The hash is used only for
+that in-memory query and is never written to the trace; titles, hashes, URLs, IP
+addresses, range values and media payloads are excluded. The trace file is
+capped at 1 MiB; expired records are pruned and the file is removed 24 hours
+after its last event. The worker removes the observation marker after it expires.
+Delete the marker to stop immediately. These diagnostic-only queries do not
+change source selection, timeouts, V6 decisions, playback or proof acceptance.
 
 ## Configure capacity
 

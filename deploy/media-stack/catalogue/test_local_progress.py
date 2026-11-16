@@ -101,6 +101,29 @@ class ProgressTests(unittest.TestCase):
     self.assertTrue(all(not ({'url','hash','title','path','ip','range'}&event.keys()) for event in events))
    finally:proxy.close();server.shutdown();server.server_close();t.join(timeout=2)
 
+ def test_transport_failure_correlates_sanitized_torrserver_snapshot(self):
+  class Handler(BaseHTTPRequestHandler):
+   def log_message(self,*a):pass
+   def do_GET(self):
+    self.send_response(206);self.send_header('Content-Range','bytes 0-9/100');self.send_header('Content-Length','10');self.end_headers()
+    self.wfile.write(b'123');self.wfile.flush()
+  with tempfile.TemporaryDirectory() as directory:
+   root=Path(directory);marker=root/'observe-until';marker.write_text(str(time.time()+300));trace=root/'trace.jsonl'
+   server=ThreadingHTTPServer(('127.0.0.1',0),Handler);server.daemon_threads=True;t=threading.Thread(target=server.serve_forever,daemon=True);t.start()
+   proxy=ProgressProxy(trace,marker);snapshot={'snapshot_status':'ok','cache_match':True,'cache_filled':False,'reader_count':1,'piece_count':3,'hash':'private'}
+   url=proxy.source('http://127.0.0.1:'+str(server.server_port)+'/private-hash-url',100,lambda:snapshot)
+   try:
+    c=http.client.HTTPConnection('127.0.0.1',proxy.server.server_port,timeout=3);c.request('GET',url[len(proxy.prefix):],headers={'Range':'bytes=0-9'});response=c.getresponse()
+    self.assertEqual(response.status,206)
+    with self.assertRaises((OSError,http.client.HTTPException)):response.read()
+    c.close();proxy.close();events=[json.loads(line) for line in trace.read_text().splitlines()]
+    status=next(event for event in events if event['event']=='torrserver_snapshot')
+    closed=next(event for event in events if event['event']=='handler_close')
+    self.assertEqual(status['request_id'],closed['request_id']);self.assertEqual(status['reader_count'],1)
+    self.assertTrue(status['cache_match']);self.assertFalse(status['cache_filled']);self.assertEqual(status['piece_count'],3)
+    self.assertFalse({'hash','url','title','source_hash'}&status.keys())
+   finally:proxy.close();server.shutdown();server.server_close();t.join(timeout=2)
+
  def test_lifecycle_is_opt_in_allowlisted_and_size_bounded(self):
   with tempfile.TemporaryDirectory() as directory:
    root=Path(directory);marker=root/'observe-until';marker.write_text(str(time.time()+300));path=root/'trace.jsonl'

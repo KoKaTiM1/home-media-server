@@ -39,7 +39,8 @@ class LifecycleRecorder:
         allowed={'request_id','route_id','method','reason','elapsed_ms','bytes_sent','active_handlers',
                  'response_status','response_range_kind','response_content_length',
                  'upstream_bytes','last_byte_elapsed_ms','last_byte_age_ms',
-                 'unique_bytes','unique_progress_age_ms','transport_error'}
+                 'unique_bytes','unique_progress_age_ms','transport_error','snapshot_status',
+                 'cache_match','cache_filled','reader_count','piece_count'}
         row={'time':round(time.time(),3),'trace':self.trace_id,'event':event}
         row.update({k:v for k,v in fields.items() if k in allowed and isinstance(v,(str,int,float))})
         encoded=(json.dumps(row,separators=(',',':'),allow_nan=False)+'\n').encode()
@@ -61,6 +62,8 @@ class LifecycleRecorder:
                 try:self.path.chmod(0o600)
                 except OSError:pass
             except OSError:pass
+    def enabled(self):
+        return bool(self.expires_at and time.time()<self.expires_at)
 
 def prune_lifecycle_artifacts(data_folder,now=None):
     """Expire the opt-in window and its bounded trace without touching task data."""
@@ -77,10 +80,11 @@ def prune_lifecycle_artifacts(data_folder,now=None):
     except OSError:pass
 
 class Progress:
-    def __init__(self,url,length,lifecycle=None):
+    def __init__(self,url,length,lifecycle=None,snapshot=None):
         self.url=url;self.length=length;self.ranges=[];self.last=time.monotonic()
         self.bytes=0;self.error=None;self.stop=threading.Event();self.lock=threading.RLock()
-        self.lifecycle=lifecycle or _NullRecorder();self.route_id=uuid.uuid4().hex[:12];self.stop_reason=None
+        self.lifecycle=lifecycle or _NullRecorder();self.snapshot=snapshot
+        self.route_id=uuid.uuid4().hex[:12];self.stop_reason=None
     def request_stop(self,reason):
         with self.lock:
             if self.stop.is_set():return
@@ -179,11 +183,21 @@ class Handler(BaseHTTPRequestHandler):
             transport_error=type(error).__name__
             progress.error='local_transport';self.close_connection=True;set_reason('request_transport')
         finally:
-            done.set();connection.close();watcher.join(timeout=1)
+            done.set()
             now=time.monotonic()
             with progress.lock:
                 unique_bytes=progress.bytes
                 unique_progress_age_ms=round(max(0,now-progress.last)*1000)
+            if progress.snapshot and self.server.lifecycle.enabled() and (transport_error or reason in ('request_transport','upstream_eof') or unique_progress_age_ms>=30000):
+                try:
+                    snapshot=progress.snapshot()
+                    if isinstance(snapshot,dict):
+                        self.server.lifecycle.emit('torrserver_snapshot',request_id=request_id,route_id=progress.route_id,
+                            **snapshot)
+                except Exception:
+                    self.server.lifecycle.emit('torrserver_snapshot',request_id=request_id,route_id=progress.route_id,
+                        snapshot_status='unavailable')
+            connection.close();watcher.join(timeout=1)
             self.server.lifecycle.emit('handler_close',request_id=request_id,route_id=progress.route_id,
                 reason=reason or 'handler_exit',elapsed_ms=round((now-started)*1000),bytes_sent=sent,
                 response_status=response_status,response_range_kind=response_range_kind,
@@ -203,10 +217,10 @@ class ProgressProxy:
         self.prefix='http://127.0.0.1:'+str(self.server.server_port)
         self.thread=threading.Thread(target=self.server.serve_forever,kwargs={'poll_interval':.1},daemon=True);self.thread.start()
         self.lifecycle.emit('proxy_start')
-    def source(self,url,length):
+    def source(self,url,length,snapshot=None):
         parsed=urllib.parse.urlsplit(url)
         if parsed.scheme!='http' or not parsed.hostname or parsed.username or parsed.password or type(length) is not int or length<=0:raise ValueError('Invalid progress source')
-        path='/'+uuid.uuid4().hex;self.server.routes[path]=Progress(url,length,self.lifecycle);return self.prefix+path
+        path='/'+uuid.uuid4().hex;self.server.routes[path]=Progress(url,length,self.lifecycle,snapshot);return self.prefix+path
     def operation(self,command):
         return next((self.server.routes.get(x[len(self.prefix):]) for x in command if isinstance(x,str) and x.startswith(self.prefix+'/')),None)
     def close(self):

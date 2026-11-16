@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import subprocess
 import time
+import urllib.error
 
 
 SAFE_DIAGNOSTIC_CODES=frozenset((
@@ -70,7 +71,31 @@ def verify(payload,state,output,budget_seconds=470):
             except Exception as error:
                 selected=args[1] if len(args)>1 else kwargs.get('selected')
                 record_failure(error,current_phase,selected);raise
-        def source_url(self,route,key,selected,progress=None):return proxy.source(a.upstream(selected),selected['length'])
+        def source_url(self,route,key,selected,progress=None):
+            def torrent_snapshot():
+                source_hash=selected.get('hash','')
+                if not isinstance(source_hash,str) or not re.fullmatch(r'[0-9a-fA-F]{40}',source_hash):
+                    return {'snapshot_status':'invalid_source'}
+                try:
+                    cache=a.fetch(a.TORR+'/cache',{'action':'get','hash':source_hash},
+                                  a.torr_headers(),timeout=.5) or {}
+                except urllib.error.HTTPError as error:
+                    return {'snapshot_status':'http_4xx' if 400<=error.code<500 else 'http_5xx'}
+                except TimeoutError:
+                    return {'snapshot_status':'timeout'}
+                except (urllib.error.URLError,OSError):
+                    return {'snapshot_status':'unavailable'}
+                except Exception:
+                    return {'snapshot_status':'invalid_response'}
+                if not isinstance(cache,dict):return {'snapshot_status':'invalid_response'}
+                readers=cache.get('Readers');pieces=cache.get('Pieces')
+                snapshot={'snapshot_status':'ok',
+                          'reader_count':len(readers) if isinstance(readers,list) else -1,
+                          'piece_count':len(pieces) if isinstance(pieces,dict) else -1}
+                if isinstance(cache.get('Hash'),str):snapshot['cache_match']=cache['Hash'].lower()==source_hash.lower()
+                if isinstance(cache.get('Filled'),bool):snapshot['cache_filled']=cache['Filled']
+                return snapshot
+            return proxy.source(a.upstream(selected),selected['length'],torrent_snapshot)
         @contextmanager
         def lock(self,name):
             nonlocal lock_wait_seconds
