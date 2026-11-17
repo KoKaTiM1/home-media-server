@@ -14,6 +14,8 @@ from pathlib import Path
 LIFECYCLE_LIMIT=1024*1024
 LIFECYCLE_TTL=24*60*60
 OBSERVATION_MAX_SECONDS=7*60*60
+SOURCE_PROVIDERS=frozenset(('torrentio','mediafusion','jackett','other','mixed','none'))
+TORRSERVER_BACKENDS=frozenset('torrserver-'+str(n) for n in range(1,9))|frozenset(('other','none'))
 
 def worker_lifecycle_paths(state_dir):
     """Locate worker-wide lifecycle artifacts from its per-job state folder."""
@@ -41,7 +43,8 @@ class LifecycleRecorder:
                  'upstream_response_elapsed_ms','upstream_bytes','first_byte_elapsed_ms',
                  'last_byte_elapsed_ms','last_byte_age_ms',
                  'unique_bytes','unique_progress_age_ms','transport_error','snapshot_status',
-                 'cache_match','cache_filled','reader_count','piece_count'}
+                 'cache_match','cache_filled','reader_count','piece_count','source_provider',
+                 'torrserver_backend'}
         row={'time':round(time.time(),3),'trace':self.trace_id,'event':event}
         row.update({k:v for k,v in fields.items() if k in allowed and isinstance(v,(str,int,float))})
         encoded=(json.dumps(row,separators=(',',':'),allow_nan=False)+'\n').encode()
@@ -81,16 +84,19 @@ def prune_lifecycle_artifacts(data_folder,now=None):
     except OSError:pass
 
 class Progress:
-    def __init__(self,url,length,lifecycle=None,snapshot=None):
+    def __init__(self,url,length,lifecycle=None,snapshot=None,source_provider='none',torrserver_backend='none'):
         self.url=url;self.length=length;self.ranges=[];self.last=time.monotonic()
         self.bytes=0;self.error=None;self.stop=threading.Event();self.lock=threading.RLock()
         self.lifecycle=lifecycle or _NullRecorder();self.snapshot=snapshot
+        self.source_provider=source_provider if source_provider in SOURCE_PROVIDERS else 'none'
+        self.torrserver_backend=torrserver_backend if torrserver_backend in TORRSERVER_BACKENDS else 'other'
         self.route_id=uuid.uuid4().hex[:12];self.stop_reason=None
     def request_stop(self,reason):
         with self.lock:
             if self.stop.is_set():return
             self.stop_reason=reason;self.stop.set()
-        self.lifecycle.emit('request_stop_signal',route_id=self.route_id,reason=reason)
+        self.lifecycle.emit('request_stop_signal',route_id=self.route_id,reason=reason,
+                            source_provider=self.source_provider,torrserver_backend=self.torrserver_backend)
     def delivered(self,start,end):
         with self.lock:
             merged=[]
@@ -127,7 +133,8 @@ class Handler(BaseHTTPRequestHandler):
         request_id=uuid.uuid4().hex[:12];started=time.monotonic();sent=0;upstream_bytes=0;reason=None
         response_status=None;response_range_kind=None;response_content_length=None;upstream_response_elapsed_ms=None
         first_byte_at=None;last_byte_at=None;transport_error=None
-        self.server.lifecycle.emit('handler_start',request_id=request_id,route_id=progress.route_id,method=self.command)
+        self.server.lifecycle.emit('handler_start',request_id=request_id,route_id=progress.route_id,method=self.command,
+            source_provider=progress.source_provider,torrserver_backend=progress.torrserver_backend)
         with self.server.active_lock:self.server.active_handlers+=1
         origin=urllib.parse.urlsplit(progress.url);connection=http.client.HTTPConnection(origin.hostname,origin.port,timeout=60)
         done=threading.Event()
@@ -138,7 +145,8 @@ class Handler(BaseHTTPRequestHandler):
                 if reason is None:
                     reason=value
                     if value in ('verifier_stop','proxy_shutdown','client_disconnect'):
-                        self.server.lifecycle.emit('handler_stop_observed',request_id=request_id,route_id=progress.route_id,reason=value)
+                        self.server.lifecycle.emit('handler_stop_observed',request_id=request_id,route_id=progress.route_id,reason=value,
+                            source_provider=progress.source_provider,torrserver_backend=progress.torrserver_backend)
         def watch():
             while not done.wait(.2):
                 if progress.stop.is_set():set_reason('verifier_stop')
@@ -163,7 +171,8 @@ class Handler(BaseHTTPRequestHandler):
             self.server.lifecycle.emit('handler_response',request_id=request_id,route_id=progress.route_id,
                 response_status=response_status,response_range_kind=response_range_kind,
                 response_content_length=response_content_length,
-                upstream_response_elapsed_ms=upstream_response_elapsed_ms)
+                upstream_response_elapsed_ms=upstream_response_elapsed_ms,
+                source_provider=progress.source_provider,torrserver_backend=progress.torrserver_backend)
             lo,limit=response_offset(response.status,response.getheader('Content-Range'),headers.get('Range'),progress.length)
             self.send_response(response.status)
             for name in ('Content-Type','Content-Length','Content-Range','Accept-Ranges'):
@@ -197,10 +206,11 @@ class Handler(BaseHTTPRequestHandler):
                     snapshot=progress.snapshot()
                     if isinstance(snapshot,dict):
                         self.server.lifecycle.emit('torrserver_snapshot',request_id=request_id,route_id=progress.route_id,
-                            **snapshot)
+                            source_provider=progress.source_provider,torrserver_backend=progress.torrserver_backend,**snapshot)
                 except Exception:
                     self.server.lifecycle.emit('torrserver_snapshot',request_id=request_id,route_id=progress.route_id,
-                        snapshot_status='unavailable')
+                        snapshot_status='unavailable',source_provider=progress.source_provider,
+                        torrserver_backend=progress.torrserver_backend)
             connection.close();watcher.join(timeout=1)
             self.server.lifecycle.emit('handler_close',request_id=request_id,route_id=progress.route_id,
                 reason=reason or 'handler_exit',elapsed_ms=round((now-started)*1000),bytes_sent=sent,
@@ -211,7 +221,8 @@ class Handler(BaseHTTPRequestHandler):
                 last_byte_elapsed_ms=round((last_byte_at-started)*1000) if last_byte_at is not None else None,
                 last_byte_age_ms=round((now-last_byte_at)*1000) if last_byte_at is not None else None,
                 unique_bytes=unique_bytes,unique_progress_age_ms=unique_progress_age_ms,
-                transport_error=transport_error)
+                transport_error=transport_error,source_provider=progress.source_provider,
+                torrserver_backend=progress.torrserver_backend)
             with self.server.active_lock:self.server.active_handlers=max(0,self.server.active_handlers-1)
 
 class ProgressProxy:
@@ -223,10 +234,14 @@ class ProgressProxy:
         self.prefix='http://127.0.0.1:'+str(self.server.server_port)
         self.thread=threading.Thread(target=self.server.serve_forever,kwargs={'poll_interval':.1},daemon=True);self.thread.start()
         self.lifecycle.emit('proxy_start')
-    def source(self,url,length,snapshot=None):
+    def source(self,url,length,snapshot=None,source_provider='none',torrserver_backend='none'):
         parsed=urllib.parse.urlsplit(url)
         if parsed.scheme!='http' or not parsed.hostname or parsed.username or parsed.password or type(length) is not int or length<=0:raise ValueError('Invalid progress source')
-        path='/'+uuid.uuid4().hex;self.server.routes[path]=Progress(url,length,self.lifecycle,snapshot);return self.prefix+path
+        if source_provider not in SOURCE_PROVIDERS:source_provider='none'
+        if torrserver_backend not in TORRSERVER_BACKENDS:torrserver_backend='other'
+        path='/'+uuid.uuid4().hex
+        self.server.routes[path]=Progress(url,length,self.lifecycle,snapshot,source_provider,torrserver_backend)
+        return self.prefix+path
     def operation(self,command):
         return next((self.server.routes.get(x[len(self.prefix):]) for x in command if isinstance(x,str) and x.startswith(self.prefix+'/')),None)
     def close(self):

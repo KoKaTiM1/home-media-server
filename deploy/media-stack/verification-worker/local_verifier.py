@@ -9,6 +9,7 @@ import re
 import subprocess
 import time
 import urllib.error
+from urllib.parse import urlsplit
 
 
 SAFE_DIAGNOSTIC_CODES=frozenset((
@@ -23,13 +24,19 @@ SAFE_DIAGNOSTIC_CODES=frozenset((
 from source_failure_diagnostics import ffmpeg_failure_code, record as record_source_failure, sanitize as sanitize_failure_evidence
 
 
-def failure_diagnostic(error, stage, selected=None):
+def failure_diagnostic(error, stage, selected=None, source_provider=None,torrserver_backend=None):
     """Return bounded diagnostics; attach a source hash only to a speed rejection."""
     typ=type(error).__name__
     category={'SourceTooSlow':'speed_rejected','SourceStalled':'stream_stall','DecodeFailure':'decoder','ResourceCheckpoint':'resource','TimeoutError':'torrent_timeout' if stage=='torrent resolution' else 'stream_stall'}.get(typ,'transport')
     code=getattr(error,'code','unclassified')
     if code not in SAFE_DIAGNOSTIC_CODES:code='unclassified'
+    provider=(selected.get('source_provider') or selected.get('provider')) if isinstance(selected,dict) else None
+    provider=provider or source_provider
     value={'category':category,'failure_type':typ,'phase':stage,'code':code}
+    if provider in ('torrentio','mediafusion','jackett','other','mixed','none'):
+        value['source_provider']=provider
+    if torrserver_backend in tuple('torrserver-'+str(n) for n in range(1,9))+('other','none'):
+        value['torrserver_backend']=torrserver_backend
     if category=='speed_rejected' and isinstance(selected,dict):
         source_hash=selected.get('hash')
         if isinstance(source_hash,str) and re.fullmatch(r'[a-f0-9]{40}',source_hash.lower()):
@@ -46,10 +53,18 @@ def verify(payload,state,output,budget_seconds=470):
     validate_task(payload);key=payload['key'];state.mkdir(parents=True,exist_ok=True)
     a.DATA=state;a.TORR=os.environ.get('LOCAL_TORRSERVER_URL','http://home-media-verification-torrserver:8090')
     a.torr_headers=lambda:{}
+    # The child process is isolated per job; opt in only to bounded discovery
+    # attribution so the normal coordinator/provider behavior remains intact.
+    previous_capture=getattr(a.BUDGET,'capture_provider_attempts',False)
+    a.BUDGET.capture_provider_attempts=True
+    torr_host=(urlsplit(a.TORR).hostname or '').lower()
+    backend_match=re.fullmatch(r'home-media-verification-torrserver(?:-([1-8]))?',torr_host)
+    torrserver_backend=('torrserver-'+(backend_match.group(1) or '1')) if backend_match else 'other'
     diagnostic={};lock_wait_seconds=0.0;run_started=time.monotonic()
     def record_failure(error,stage,selected=None):
         record_source_failure(a.BUDGET,error,stage,(selected or {}).get('hash'))
-        diagnostic.clear();diagnostic.update(failure_diagnostic(error,stage,selected))
+        diagnostic.clear();diagnostic.update(failure_diagnostic(
+            error,stage,selected,getattr(a.BUDGET,'remote_provider','none'),torrserver_backend))
     current_phase='torrent resolution';phase_started=time.monotonic();phase_totals={}
     progress=state/'progress.json'
     def phase(name):
@@ -95,7 +110,8 @@ def verify(payload,state,output,budget_seconds=470):
                 if isinstance(cache.get('Hash'),str):snapshot['cache_match']=cache['Hash'].lower()==source_hash.lower()
                 if isinstance(cache.get('Filled'),bool):snapshot['cache_filled']=cache['Filled']
                 return snapshot
-            return proxy.source(a.upstream(selected),selected['length'],torrent_snapshot)
+            return proxy.source(a.upstream(selected),selected['length'],torrent_snapshot,
+                selected.get('source_provider',getattr(a.BUDGET,'remote_provider','none')),torrserver_backend)
         @contextmanager
         def lock(self,name):
             nonlocal lock_wait_seconds
@@ -190,8 +206,13 @@ def verify(payload,state,output,budget_seconds=470):
             # caught rejection or wrapper checkpoint carries richer evidence.
             evidence['root_cause']={k:diagnostic[k] for k in ('category','failure_type','phase','code')}
         diagnostic.update(evidence)
+        attempts=getattr(a.BUDGET,'provider_attempts',None)
+        if isinstance(attempts,list) and attempts:diagnostic['provider_attempts']=attempts[-8:]
+        if proxy.lifecycle.enabled():diagnostic['lifecycle_trace']=proxy.lifecycle.trace_id
         result={'status':'checkpoint','reason':'transport','diagnostic':diagnostic,'data':{'backend':'windows-torrent'}}
-    finally:proxy.close()
+    finally:
+        proxy.close()
+        a.BUDGET.capture_provider_attempts=previous_capture
     phase_totals[current_phase]=phase_totals.get(current_phase,0)+time.monotonic()-phase_started
     result['metrics']={'phase_seconds':{k:round(v,3) for k,v in phase_totals.items()},'lock_wait_seconds':round(lock_wait_seconds,3),'active_seconds':round(max(0,time.monotonic()-run_started-lock_wait_seconds),3)}
     tmp=output.with_suffix('.tmp');tmp.write_text(json.dumps(result));tmp.replace(output)

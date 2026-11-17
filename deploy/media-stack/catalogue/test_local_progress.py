@@ -113,7 +113,8 @@ class ProgressTests(unittest.TestCase):
    root=Path(directory);marker=root/'observe-until';marker.write_text(str(time.time()+300));trace=root/'trace.jsonl'
    server=ThreadingHTTPServer(('127.0.0.1',0),Handler);server.daemon_threads=True;t=threading.Thread(target=server.serve_forever,daemon=True);t.start()
    proxy=ProgressProxy(trace,marker);snapshot={'snapshot_status':'ok','cache_match':True,'cache_filled':False,'reader_count':1,'piece_count':3,'hash':'private'}
-   url=proxy.source('http://127.0.0.1:'+str(server.server_port)+'/private-hash-url',100,lambda:snapshot)
+   url=proxy.source('http://127.0.0.1:'+str(server.server_port)+'/private-hash-url',100,lambda:snapshot,
+                    source_provider='mediafusion',torrserver_backend='torrserver-2')
    try:
     c=http.client.HTTPConnection('127.0.0.1',proxy.server.server_port,timeout=3);c.request('GET',url[len(proxy.prefix):],headers={'Range':'bytes=0-9'});response=c.getresponse()
     self.assertEqual(response.status,206)
@@ -123,6 +124,7 @@ class ProgressTests(unittest.TestCase):
     closed=next(event for event in events if event['event']=='handler_close')
     self.assertEqual(status['request_id'],closed['request_id']);self.assertEqual(status['reader_count'],1)
     self.assertTrue(status['cache_match']);self.assertFalse(status['cache_filled']);self.assertEqual(status['piece_count'],3)
+    self.assertEqual(status['source_provider'],'mediafusion');self.assertEqual(status['torrserver_backend'],'torrserver-2')
     self.assertFalse({'hash','url','title','source_hash'}&status.keys())
    finally:proxy.close();server.shutdown();server.server_close();t.join(timeout=2)
 

@@ -18,6 +18,36 @@ DIAGNOSTIC_CODES = frozenset(('preparation_lock_busy','probe_stalled','decode_st
 CANCEL_CODES = frozenset(('queue_timeout','execution_timeout','controller_lost','lease_expired','controller_budget','foreground_interrupted','controller_error','receipt_interrupted','navigation_interrupted','playback_interrupted','session_unavailable','title_claim_lost','worker_unavailable','controller_cancelled','controller_database','controller_transport','controller_busy','unclassified'))
 MAX_WORKERS = 16
 CLIENT_TABLES = ('client','second_client','third_client','fourth_client')
+SOURCE_PROVIDERS = frozenset(('torrentio','mediafusion','jackett','other','mixed','none'))
+TORRSERVER_BACKENDS = frozenset('torrserver-'+str(n) for n in range(1,9))|frozenset(('other','none'))
+PROVIDER_ATTEMPT_REASONS = frozenset(('network','timeout','invalid_response','wait_busy','wait_queue_timeout','wait_cooldown','wait_pacing','wait_capacity','wait_recovery','checkpoint','other'))
+
+def sanitize_worker_correlation(diagnostic):
+    """Keep only bounded labels and random lifecycle IDs from worker telemetry."""
+    if not isinstance(diagnostic,dict):return diagnostic
+    diagnostic=dict(diagnostic)
+    if diagnostic.get('source_provider') not in SOURCE_PROVIDERS:diagnostic.pop('source_provider',None)
+    if diagnostic.get('torrserver_backend') not in TORRSERVER_BACKENDS:diagnostic.pop('torrserver_backend',None)
+    if not isinstance(diagnostic.get('lifecycle_trace'),str) or not re.fullmatch('[a-f0-9]{16}',diagnostic['lifecycle_trace']):
+        diagnostic.pop('lifecycle_trace',None)
+    attempts=diagnostic.get('provider_attempts')
+    if isinstance(attempts,list):
+        safe=[]
+        for item in attempts[-8:]:
+            if not isinstance(item,dict):continue
+            provider=item.get('provider');outcome=item.get('outcome')
+            if provider not in ('torrentio','mediafusion','jackett','other','mixed') or outcome not in ('compatible','empty','error'):continue
+            entry={'provider':provider,'outcome':outcome}
+            reason=item.get('reason')
+            if isinstance(reason,str) and (reason in PROVIDER_ATTEMPT_REASONS or re.fullmatch(r'http_[1-5][0-9]{2}',reason)):entry['reason']=reason
+            for name in ('queue_wait_ms','http_ms'):
+                value=item.get(name)
+                if type(value) is int and 0<=value<=600000:entry[name]=value
+            safe.append(entry)
+        if safe:diagnostic['provider_attempts']=safe
+        else:diagnostic.pop('provider_attempts',None)
+    else:diagnostic.pop('provider_attempts',None)
+    return diagnostic
 
 class InvalidJob(ValueError): pass
 class WorkerWait(RuntimeError): pass
@@ -254,6 +284,8 @@ class DecodeJobs:
                              for candidate in candidates))
             if not matched:diagnostic.pop('source_hash',None)
             result['diagnostic']=diagnostic
+        if isinstance(result.get('diagnostic'),dict):
+            result['diagnostic']=sanitize_worker_correlation(result['diagnostic'])
         from source_failure_diagnostics import sanitize as sanitize_failure_evidence
         if isinstance(result.get('diagnostic'),dict):
             d=dict(result['diagnostic']);d.pop('root_cause',None);d.pop('source_failures',None)
@@ -275,6 +307,7 @@ class DecodeJobs:
                 assigned={x.get('infoHash') for x in params.get('candidates',[]) if isinstance(x,dict)}
                 safe=sanitize_failure_evidence(diagnostic,assigned)
                 diagnostic=dict(diagnostic);diagnostic.pop('root_cause',None);diagnostic.pop('source_failures',None)
+                diagnostic=sanitize_worker_correlation(diagnostic)
                 diagnostic.update(safe);result['diagnostic']=diagnostic
                 raw=json.dumps(result,sort_keys=True,separators=(',',':'),allow_nan=False)
             category=diagnostic.get('category','') if isinstance(diagnostic,dict) else ''

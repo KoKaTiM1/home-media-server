@@ -1937,6 +1937,24 @@ def source_provider_event(provider,outcome,cache='miss',provider_rows=None,stats
     if measured:
         event.update(measured)
         record_provider_timing(provider,measured,indexer=indexer,error=error)
+    # Keep a bounded, sanitized per-job path for Windows first-sweep failures.
+    # This shows whether Torrentio was skipped by cooldown and which fallback
+    # ran, without retaining titles, hashes, URLs, IPs, or exception text.
+    if getattr(BUDGET,'validation_background',False) and getattr(BUDGET,'capture_provider_attempts',False):
+        attempts=getattr(BUDGET,'provider_attempts',None)
+        if not isinstance(attempts,list):attempts=[];BUDGET.provider_attempts=attempts
+        label=('jackett' if provider.startswith('jackett') else 'mixed' if '+' in provider else provider) if isinstance(provider,str) else 'other'
+        if label not in ('torrentio','mediafusion','jackett','other','mixed'):label='other'
+        item={'provider':label,'outcome':outcome if outcome in ('compatible','empty','error') else 'error'}
+        reason=event.get('error')
+        if (reason in ('network','timeout','invalid_response','wait_busy','wait_queue_timeout','wait_cooldown','wait_pacing','wait_capacity','wait_recovery','checkpoint','other')
+                or isinstance(reason,str) and re.fullmatch(r'http_[1-5][0-9]{2}',reason)):
+            item['reason']=reason
+        for name in ('queue_wait_ms','http_ms'):
+            value=measured.get(name)
+            if type(value) is int and 0<=value<=600000:item[name]=value
+        attempts.append(item)
+        del attempts[:-8]
     if primary_cache is not None:event['primary_cache']=primary_cache
     try:
         if cache=='miss' and outcome in ('compatible','empty') and provider in ('torrentio','mediafusion','jackett'):
@@ -2033,6 +2051,8 @@ def stream_candidates(key):
 
 def stream_candidates_impl(key):
     BUDGET.provider_timings={}
+    if getattr(BUDGET,'validation_background',False) and getattr(BUDGET,'capture_provider_attempts',False):
+        BUDGET.provider_attempts=[]
     # Stable, publisher-distributed open-film source for setup/playback checks.
     # Preserve HTTP web seeds by adding its actual .torrent rather than a magnet.
     open_film={'infoHash':'dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c',

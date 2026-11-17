@@ -39,6 +39,25 @@ class DiagnosticsTests(unittest.TestCase):
         with closing(self.ledger.connect()) as c:self.assertEqual(c.execute('select count(*) from latest').fetchone()[0],2)
     def test_error_classification_does_not_copy_secret_message(self):
         r=classify_error(RuntimeError('https://private.invalid/?token=secret'));self.assertEqual(r['code'],'unknown');self.assertNotIn('secret',str(r))
+    def test_worker_provider_and_lifecycle_correlation_survive_as_safe_labels(self):
+        ident=self.q.submit('movie:tt0000001','a'*64,'probe',{},'http://localhost/raw/movie:tt0000001',120)
+        task=self.q.claim('fixture')
+        diagnostic={'category':'transport','failure_type':'Checkpoint','phase':'video probe','code':'probe_stalled',
+                    'source_provider':'mediafusion','torrserver_backend':'torrserver-2','lifecycle_trace':'0123456789abcdef',
+                    'provider_attempts':[{'provider':'torrentio','outcome':'error','reason':'wait_cooldown','queue_wait_ms':120,'title':'private'},
+                                         {'provider':'mediafusion','outcome':'compatible','http_ms':840,'url':'https://private.invalid'}]}
+        self.q.receive('fixture',task,{'result_id':uuid.uuid4().hex,'status':'checkpoint','reason':'transport','diagnostic':diagnostic})
+        self.q.finish(ident);self.q.flush_diagnostics()
+        with closing(self.ledger.connect()) as c:
+            event=json.loads(c.execute('select payload from latest').fetchone()[0])
+        self.assertEqual(event['selected_provider'],'mediafusion')
+        self.assertEqual(event['torrserver_backend'],'torrserver-2')
+        self.assertEqual(event['lifecycle_trace'],'0123456789abcdef')
+        self.assertEqual(event['provider_attempts'],[
+            {'provider':'torrentio','outcome':'error','reason':'wait_cooldown','queue_wait_ms':120},
+            {'provider':'mediafusion','outcome':'compatible','http_ms':840},
+        ])
+        self.assertNotIn('private.invalid',str(event));self.assertNotIn('private',str(event))
 
 import test_metadata_lan as metadata_fixtures
 class SweepReceiptTests(unittest.TestCase):

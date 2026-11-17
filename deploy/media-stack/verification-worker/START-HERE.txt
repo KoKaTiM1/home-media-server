@@ -1,4 +1,4 @@
-Launcher package 0.4.18; verifier image 0.4.17, TorrServer remains 0.3.0.
+Launcher package 0.4.19; verifier image 0.4.18, TorrServer remains 0.3.0.
 This adds opt-in, sanitized TorrServer cache/reader snapshots and response/first-byte timings to failed or stalled proxy traces; verification and V6 policy are unchanged. Observation markers may run for up to seven hours.
 Use UpdateLane for the selected worker lane; then preserve existing config, data, and torrent-state folders.
 

@@ -390,6 +390,10 @@ class TitleTests(unittest.TestCase):
                          {'category':'speed_rejected','failure_type':'SourceTooSlow','phase':'speed verification','code':'unclassified','source_hash':HASH})
         self.assertNotIn('source_hash',module.failure_diagnostic(SourceStalled(),'video probe',{'hash':HASH}))
         self.assertNotIn('source_hash',module.failure_diagnostic(SourceTooSlow(),'speed verification',{'hash':'secret'}))
+        tagged=module.failure_diagnostic(SourceStalled(),'video probe',
+            {'source_provider':'mediafusion'},torrserver_backend='torrserver-3')
+        self.assertEqual(tagged['source_provider'],'mediafusion')
+        self.assertEqual(tagged['torrserver_backend'],'torrserver-3')
 
     def test_local_ffmpeg_diagnostics_are_allowlisted_and_never_echo_stderr(self):
         import importlib.util

@@ -95,4 +95,18 @@ class ChainTests(unittest.TestCase):
   with patch.object(app,'fetch',side_effect=AssertionError('must not request')):
    with self.assertRaises(app.SourceProviderWait):app.jackett_streams('movie:tt0000001')
   self.assertFalse((app.DATA/'jackett-yts.lock.waiters').exists())
+ def test_remote_discovery_attempts_record_cooldown_then_fallback_without_private_data(self):
+  attempts=[];wait=app.SourceProviderWait('private title and URL','torrentio','cooldown',45)
+  with patch.object(app.BUDGET,'validation_background',True,create=True),\
+       patch.object(app.BUDGET,'capture_provider_attempts',True,create=True),\
+       patch.object(app.BUDGET,'provider_attempts',attempts,create=True),\
+       patch.object(app,'note_discovery_coverage'),\
+       patch.object(app,'record_provider_timing'):
+   app.source_provider_event('torrentio','error',error=wait,timing={'queue_wait_ms':120})
+   app.source_provider_event('mediafusion','compatible',provider_rows=3,timing={'http_ms':840})
+  self.assertEqual(attempts,[
+   {'provider':'torrentio','outcome':'error','reason':'wait_cooldown','queue_wait_ms':120},
+   {'provider':'mediafusion','outcome':'compatible','http_ms':840},
+  ])
+  self.assertNotIn('private title',str(attempts));self.assertNotIn('URL',str(attempts))
 if __name__=='__main__':unittest.main()

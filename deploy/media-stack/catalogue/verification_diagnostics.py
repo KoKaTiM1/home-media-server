@@ -69,6 +69,30 @@ def final_event(row,version,phases,accepted=None):
             'execution_budget_seconds':row['execution_seconds'],'execution_profile':'first_sweep' if params.get('execution_policy',{}).get('profile')=='first_sweep' else 'legacy',
             'queue_seconds':round(max(0,(claimed or finished)-created),3),'execution_seconds':round(max(0,finished-claimed),3) if claimed else 0,
             'active_seconds':row['active_seconds'],'lock_wait_seconds':row['lock_wait_seconds'],'phase_seconds':json.loads(row['worker_phase_seconds']) or dict(phases),'phase_timing':'worker_reported' if json.loads(row['worker_phase_seconds']) else 'coordinator_observed'}
+    if isinstance(diagnostic,dict):
+        selected_provider=diagnostic.get('source_provider')
+        backend=diagnostic.get('torrserver_backend')
+        trace=diagnostic.get('lifecycle_trace')
+        if selected_provider in ('torrentio','mediafusion','jackett','other','mixed','none'):
+            event['selected_provider']=selected_provider
+        if backend in tuple('torrserver-'+str(n) for n in range(1,9))+('other','none'):
+            event['torrserver_backend']=backend
+        if isinstance(trace,str) and re.fullmatch('[a-f0-9]{16}',trace):event['lifecycle_trace']=trace
+        attempts=diagnostic.get('provider_attempts')
+        if isinstance(attempts,list):
+            safe=[]
+            for item in attempts[-8:]:
+                if not isinstance(item,dict):continue
+                if item.get('provider') not in ('torrentio','mediafusion','jackett','other','mixed') or item.get('outcome') not in ('compatible','empty','error'):continue
+                entry={'provider':item['provider'],'outcome':item['outcome']}
+                reason=item.get('reason')
+                if isinstance(reason,str) and (reason in ('network','timeout','invalid_response','wait_busy','wait_queue_timeout','wait_cooldown','wait_pacing','wait_capacity','wait_recovery','checkpoint','other') or re.fullmatch(r'http_[1-5][0-9]{2}',reason)):
+                    entry['reason']=reason
+                for name in ('queue_wait_ms','http_ms'):
+                    value=item.get(name)
+                    if type(value) is int and 0<=value<=600000:entry[name]=value
+                safe.append(entry)
+            if safe:event['provider_attempts']=safe
     if outcome not in ('ok','operation_ok'):
         event.update(sanitize_failure_evidence(diagnostic,{c.get('infoHash') for c in candidates if isinstance(c,dict)}))
     return event
