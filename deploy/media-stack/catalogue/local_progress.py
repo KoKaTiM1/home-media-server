@@ -13,7 +13,7 @@ from pathlib import Path
 
 LIFECYCLE_LIMIT=1024*1024
 LIFECYCLE_TTL=24*60*60
-OBSERVATION_MAX_SECONDS=60*60
+OBSERVATION_MAX_SECONDS=7*60*60
 
 def worker_lifecycle_paths(state_dir):
     """Locate worker-wide lifecycle artifacts from its per-job state folder."""
@@ -38,7 +38,8 @@ class LifecycleRecorder:
         if not self.expires_at or time.time()>=self.expires_at:return
         allowed={'request_id','route_id','method','reason','elapsed_ms','bytes_sent','active_handlers',
                  'response_status','response_range_kind','response_content_length',
-                 'upstream_bytes','last_byte_elapsed_ms','last_byte_age_ms',
+                 'upstream_response_elapsed_ms','upstream_bytes','first_byte_elapsed_ms',
+                 'last_byte_elapsed_ms','last_byte_age_ms',
                  'unique_bytes','unique_progress_age_ms','transport_error','snapshot_status',
                  'cache_match','cache_filled','reader_count','piece_count'}
         row={'time':round(time.time(),3),'trace':self.trace_id,'event':event}
@@ -124,8 +125,8 @@ class Handler(BaseHTTPRequestHandler):
         progress=self.server.routes.get(self.path)
         if not progress or progress.stop.is_set():self.send_error(404);return
         request_id=uuid.uuid4().hex[:12];started=time.monotonic();sent=0;upstream_bytes=0;reason=None
-        response_status=None;response_range_kind=None;response_content_length=None
-        last_byte_at=None;transport_error=None
+        response_status=None;response_range_kind=None;response_content_length=None;upstream_response_elapsed_ms=None
+        first_byte_at=None;last_byte_at=None;transport_error=None
         self.server.lifecycle.emit('handler_start',request_id=request_id,route_id=progress.route_id,method=self.command)
         with self.server.active_lock:self.server.active_handlers+=1
         origin=urllib.parse.urlsplit(progress.url);connection=http.client.HTTPConnection(origin.hostname,origin.port,timeout=60)
@@ -154,13 +155,15 @@ class Handler(BaseHTTPRequestHandler):
             if self.headers.get('Range'):headers['Range']=self.headers['Range']
             connection.request(self.command,urllib.parse.urlunsplit(('', '',origin.path,origin.query,'')),headers=headers)
             response=connection.getresponse()
+            upstream_response_elapsed_ms=round((time.monotonic()-started)*1000)
             response_status=response.status if isinstance(response.status,int) and 100<=response.status<=599 else None
             response_range_kind='partial' if response_status==206 else 'full' if response_status==200 else 'other'
             raw_length=response.getheader('Content-Length')
             if raw_length and raw_length.isdigit() and len(raw_length)<=20:response_content_length=int(raw_length)
             self.server.lifecycle.emit('handler_response',request_id=request_id,route_id=progress.route_id,
                 response_status=response_status,response_range_kind=response_range_kind,
-                response_content_length=response_content_length)
+                response_content_length=response_content_length,
+                upstream_response_elapsed_ms=upstream_response_elapsed_ms)
             lo,limit=response_offset(response.status,response.getheader('Content-Range'),headers.get('Range'),progress.length)
             self.send_response(response.status)
             for name in ('Content-Type','Content-Length','Content-Range','Accept-Ranges'):
@@ -172,6 +175,7 @@ class Handler(BaseHTTPRequestHandler):
                     if not part:
                         set_reason('response_complete' if lo>=limit else 'upstream_eof');break
                     upstream_bytes+=len(part);last_byte_at=time.monotonic()
+                    if first_byte_at is None:first_byte_at=last_byte_at
                     self.wfile.write(part);sent+=len(part);progress.delivered(lo,lo+len(part));lo+=len(part)
             if reason is None:
                 if progress.stop.is_set():set_reason('verifier_stop')
@@ -202,6 +206,8 @@ class Handler(BaseHTTPRequestHandler):
                 reason=reason or 'handler_exit',elapsed_ms=round((now-started)*1000),bytes_sent=sent,
                 response_status=response_status,response_range_kind=response_range_kind,
                 response_content_length=response_content_length,upstream_bytes=upstream_bytes,
+                upstream_response_elapsed_ms=upstream_response_elapsed_ms,
+                first_byte_elapsed_ms=round((first_byte_at-started)*1000) if first_byte_at is not None else None,
                 last_byte_elapsed_ms=round((last_byte_at-started)*1000) if last_byte_at is not None else None,
                 last_byte_age_ms=round((now-last_byte_at)*1000) if last_byte_at is not None else None,
                 unique_bytes=unique_bytes,unique_progress_age_ms=unique_progress_age_ms,

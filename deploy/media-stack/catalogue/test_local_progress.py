@@ -79,7 +79,7 @@ class ProgressTests(unittest.TestCase):
     self.assertEqual({event['trace'] for event in events},{proxy.lifecycle.trace_id})
    finally:c.close();release.set();proxy.close();server.shutdown();server.server_close();t.join(timeout=2)
 
- def test_opt_in_trace_records_upstream_status_and_last_byte_timing_only(self):
+ def test_opt_in_trace_records_upstream_status_and_byte_timing_only(self):
   class Handler(BaseHTTPRequestHandler):
    def log_message(self,*a):pass
    def do_GET(self):
@@ -95,7 +95,9 @@ class ProgressTests(unittest.TestCase):
     header=next(event for event in events if event['event']=='handler_response')
     closed=next(event for event in events if event['event']=='handler_close')
     self.assertEqual(header['response_status'],206);self.assertEqual(header['response_range_kind'],'partial');self.assertEqual(header['response_content_length'],10)
+    self.assertGreaterEqual(header['upstream_response_elapsed_ms'],0)
     self.assertEqual(closed['upstream_bytes'],10);self.assertEqual(closed['bytes_sent'],10)
+    self.assertGreaterEqual(closed['upstream_response_elapsed_ms'],0);self.assertGreaterEqual(closed['first_byte_elapsed_ms'],0)
     self.assertGreaterEqual(closed['last_byte_elapsed_ms'],0);self.assertGreaterEqual(closed['last_byte_age_ms'],0)
     self.assertEqual(closed['unique_bytes'],10);self.assertGreaterEqual(closed['unique_progress_age_ms'],0)
     self.assertTrue(all(not ({'url','hash','title','path','ip','range'}&event.keys()) for event in events))
@@ -139,9 +141,12 @@ class ProgressTests(unittest.TestCase):
     for n in range(20):recorder.emit('handler_close',request_id=str(n),reason='response_complete',elapsed_ms=n,bytes_sent=n)
    self.assertLessEqual(path.stat().st_size,300)
 
- def test_observation_window_cannot_be_extended_past_one_hour(self):
+ def test_observation_window_allows_seven_hours_but_rejects_longer(self):
   with tempfile.TemporaryDirectory() as directory:
-   root=Path(directory);marker=root/'observe-until';marker.write_text(str(time.time()+3601));path=root/'trace.jsonl'
+   root=Path(directory);marker=root/'observe-until';path=root/'trace.jsonl'
+   marker.write_text(str(time.time()+7*60*60-1));recorder=LifecycleRecorder(path,marker,'trace-seven-hours');recorder.emit('proxy_start')
+   self.assertTrue(path.exists())
+   marker.write_text(str(time.time()+7*60*60+1));path.unlink()
    recorder=LifecycleRecorder(path,marker,'trace-too-long');recorder.emit('proxy_start')
    self.assertFalse(path.exists())
 

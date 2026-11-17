@@ -1,6 +1,6 @@
 # Windows V6 verification workers
 
-Launcher package **0.4.17** uses verifier image **0.4.16** and TorrServer image **0.3.0**. This package adds opt-in TorrServer cache/reader snapshots to failed or stalled proxy traces. The window is capped at one hour; each worker's log is capped at 1 MiB and expires after 24 hours. It does not change the decoder protocol, V6 policy, torrent selection, cleanup behavior, playback, or proof acceptance. Trace fields exclude titles, hashes, URLs, IPs, range values and media payloads. HEVC Main 8-bit SDR up to 1080p remains supported after the owner TV picture/audio test. Replay/seek acceptance remains tracked separately; HDR, Main10, 4K and AV1 are excluded. Verifiers
+Launcher package **0.4.18** uses verifier image **0.4.17** and TorrServer image **0.3.0**. This package adds opt-in TorrServer cache/reader snapshots and upstream response/first-byte timing to failed or stalled proxy traces. The window is capped at seven hours; each worker's log is capped at 1 MiB and expires after 24 hours. It does not change the decoder protocol, V6 policy, torrent selection, cleanup behavior, playback, or proof acceptance. Trace fields exclude titles, hashes, URLs, IPs, range values and media payloads. HEVC Main 8-bit SDR up to 1080p remains supported after the owner TV picture/audio test. Replay/seek acceptance remains tracked separately; HDR, Main10, 4K and AV1 are excluded. Verifiers
 run with Docker `--init` to reap orphaned decoder children after cancellations.
 Start/Update automatically drains and recreates containers with a mismatched
 image or missing init while preserving identities, config, data and backend state.
@@ -14,9 +14,10 @@ validates every proof before changing library readiness.
 ### Opt-in proxy lifecycle observation
 
 For a bounded investigation, create `data/proxy-lifecycle-observe-until` in one
-worker's data folder and write a Unix epoch expiry no more than 3,600 seconds in
-the future. The worker records random trace/request IDs, fixed lifecycle event
-names, GET/HEAD method, upstream response status, byte timing, byte counts and
+worker's data folder and write a Unix epoch expiry no more than 25,200 seconds
+(seven hours) in the future. The worker records random trace/request IDs, fixed lifecycle event
+names, GET/HEAD method, upstream response status, time to response headers and
+first byte, last-byte timing, byte counts and
 coarse close/error categories in `data/proxy-lifecycle.jsonl`. When an observed
 request has a transport error or at least 30 seconds without unique-range
 progress, it also makes one bounded (500 ms) `/cache` status query to its local
@@ -223,7 +224,7 @@ remains disabled when no valid marker is present.
 
 ## Upstream range trace in 0.4.15
 
-The existing one-hour opt-in lifecycle trace records upstream HTTP status,
+The original one-hour opt-in lifecycle trace records upstream HTTP status,
 full/partial response kind, advertised content length, upstream bytes read, the
 time of the last upstream bytes, their age when the handler closes, and the age
 of the last unique-range progress. This is diagnostic-only: it does not change
