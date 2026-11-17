@@ -17,8 +17,12 @@ For a bounded investigation, create `data/proxy-lifecycle-observe-until` in one
 worker's data folder and write a Unix epoch expiry no more than 25,200 seconds
 (seven hours) in the future. The worker records random trace/request IDs, fixed lifecycle event
 names, GET/HEAD method, upstream response status, time to response headers and
-first byte, last-byte timing, byte counts and
-coarse close/error categories in `data/proxy-lifecycle.jsonl`. When an observed
+first byte, last-byte timing, byte counts, the selected provider label and the
+numbered TorrServer backend in `data/proxy-lifecycle.jsonl`. On failed jobs, a
+separate bounded summary records up to eight provider outcomes such as
+`torrentio:wait_cooldown` followed by a MediaFusion result, plus safe queue/HTTP
+timings. The final failure receipt carries only those fixed labels and the random
+trace ID, allowing the two records to be correlated. When an observed
 request has a transport error or at least 30 seconds without unique-range
 progress, it also makes one bounded (500 ms) `/cache` status query to its local
 TorrServer and records only whether the cache hash matched, whether it is filled,
